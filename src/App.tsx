@@ -24,6 +24,7 @@ import {
   Zap,
   History,
   Trash2,
+  Edit2,
   Image as ImageIcon,
   CheckCircle,
   Scissors,
@@ -42,6 +43,7 @@ import {
   Maximize2,
   Minimize2,
   RotateCw,
+  RotateCcw,
   PlusCircle,
   Undo,
   Redo,
@@ -2090,7 +2092,7 @@ export default function App() {
   const [editingImageUrl, setEditingImageUrl] = useState<string | null>(null);
   const [imageEditorCallback, setImageEditorCallback] = useState<{ cb: (newUrl: string) => void }>({ cb: () => {} });
   const [currentView, setCurrentView] = useState<'home' | 'educator-suite' | 'lesson-plan' | 'slides' | 'worksheet' | 'poster' | 'admin'>('home');
-  const [adminTab, setAdminTab] = useState<'overview' | 'timetable' | 'teachers' | 'plans' | 'members'>('overview');
+  const [adminTab, setAdminTab] = useState<'overview' | 'timetable' | 'teachers' | 'assignments' | 'plans' | 'members'>('overview');
   const [allMembers, setAllMembers] = useState<any[]>([]);
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
   
@@ -2164,23 +2166,163 @@ export default function App() {
     }
   };
 
-  const [teachers, setTeachers] = useState<{id: string, name: string, subjects: string[]}[]>(
-    Array.from({length: 13}, (_, i) => ({
-      id: `t-${i}`,
-      name: `Teacher ${i + 1}`,
-      subjects: [`Subject ${i % 13 + 1}`]
-    }))
+  const [teachers, setTeachers] = useState<{id: string, name: string, role: string, subjects: string[], maxPeriods: number}[]>(
+    [
+      { id: 'c-1', name: 'MS KANIMOZHI', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 'c-2', name: 'Head Coordinator 2', role: 'Coordinator', subjects: [], maxPeriods: 28 },
+      { id: 't-1', name: 'MS NURLIANA ASYIKIN', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-2', name: 'MS KONG YOKE LAN', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-3', name: 'MS KATHY LIM LE SHAN', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-4', name: 'MS AUNI ZARIFAH', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-5', name: 'MR TOMMY WONG SHENG-HANG', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-6', name: 'MS NUR SHAHIDAH', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-7', name: 'MR ISAAC LOO KAM FEI', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-8', name: 'MS NUR HAZIRAH', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-9', name: 'MS FARHAH', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-10', name: 'MS NUR FARAHALYA', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-11', name: 'MS PERVINA NAIR', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-12', name: 'MS M.ROSHINI', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-13', name: 'MR ABDUL WAFI', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      ...Array.from({length: 6}, (_, i) => ({
+        id: `t-${i + 14}`,
+        name: `Teacher ${i + 14}`,
+        role: 'Teacher',
+        subjects: [],
+        maxPeriods: 28
+      }))
+    ]
   );
   
   const subjects = [
-    "English", "Mathematics", "Science", "History", "Geography", 
-    "Art", "Music", "Physical Education", "ICT", "Foreign Language",
-    "Social Studies", "Moral Education", "Library"
+    "ASSEMBLY/ HOMEROOM", "SILENT READING", "ENGLISH", "MATHEMATICS", 
+    "SCIENCE", "MANDARIN", "MALAY", "GLOBAL PERSPECTIVES", 
+    "PHYSICAL EDUCATION", "DIGITAL LITERACY", "MUSIC", 
+    "ART & DESIGN", "WELLBEING", "LIBRARY", "CCA"
   ];
 
-  const yearGroups = ["Year 1", "Year 2", "Year 3", "Year 4", "Year 5", "Year 6", "Year 7", "Year 8", "Year 9", "Year 10"];
+  const yearGroups = ["Year 1", "Year 2", "Year 3", "Year 4", "Year 5", "Year 6", "Year 7", "Year 8", "Year 9", "Year 10", "Year 11"];
+  const [editingTeacher, setEditingTeacher] = useState<any>(null);
+  const [staffAssignments, setStaffAssignments] = useState<Record<string, string>>(() => {
+    const initial: Record<string, string> = {};
+    
+    // Explicit Year 1 Assignments
+    const y1Mappings: Record<string, string> = {
+      "ASSEMBLY/ HOMEROOM": "c-1", "SILENT READING": "c-1", "ENGLISH": "c-1", "MATHEMATICS": "t-1",
+      "SCIENCE": "t-2", "MANDARIN": "t-3", "MALAY": "c-1", "GLOBAL PERSPECTIVES": "t-4",
+      "PHYSICAL EDUCATION": "t-5", "DIGITAL LITERACY": "t-6", "MUSIC": "t-7",
+      "ART & DESIGN": "t-6", "WELLBEING": "c-1", "LIBRARY": "t-6", "CCA": ""
+    };
+    Object.entries(y1Mappings).forEach(([sub, tId]) => { initial[`Year 1-${sub}`] = tId; });
+
+    // Explicit Year 2 Assignments
+    const y2Mappings: Record<string, string> = {
+      "ASSEMBLY/ HOMEROOM": "t-2", "SILENT READING": "t-2", "ENGLISH": "t-8", "MATHEMATICS": "t-1",
+      "SCIENCE": "t-2", "MANDARIN": "t-3", "MALAY": "c-1", "GLOBAL PERSPECTIVES": "t-4",
+      "PHYSICAL EDUCATION": "t-5", "DIGITAL LITERACY": "t-6", "MUSIC": "t-7",
+      "ART & DESIGN": "c-1", "WELLBEING": "t-2", "LIBRARY": "t-6", "CCA": ""
+    };
+    Object.entries(y2Mappings).forEach(([sub, tId]) => { initial[`Year 2-${sub}`] = tId; });
+
+    // Explicit Year 3 Assignments
+    const y3Mappings: Record<string, string> = {
+      "ASSEMBLY/ HOMEROOM": "t-1", "SILENT READING": "t-1", "ENGLISH": "t-8", "MATHEMATICS": "t-1",
+      "SCIENCE": "t-9", "MANDARIN": "t-3", "MALAY": "t-1", "GLOBAL PERSPECTIVES": "t-4",
+      "PHYSICAL EDUCATION": "t-5", "DIGITAL LITERACY": "t-6", "MUSIC": "t-7",
+      "ART & DESIGN": "c-1", "WELLBEING": "t-1", "LIBRARY": "t-6", "CCA": ""
+    };
+    Object.entries(y3Mappings).forEach(([sub, tId]) => { initial[`Year 3-${sub}`] = tId; });
+
+    // Explicit Year 4 Assignments
+    const y4Mappings: Record<string, string> = {
+      "ASSEMBLY/ HOMEROOM": "t-10", "SILENT READING": "t-10", "ENGLISH": "t-8", "MATHEMATICS": "t-10",
+      "SCIENCE": "t-9", "MANDARIN": "t-3", "MALAY": "t-1", "GLOBAL PERSPECTIVES": "t-4",
+      "PHYSICAL EDUCATION": "t-5", "DIGITAL LITERACY": "t-6", "MUSIC": "t-7",
+      "ART & DESIGN": "t-10", "WELLBEING": "t-10", "LIBRARY": "t-6", "CCA": ""
+    };
+    Object.entries(y4Mappings).forEach(([sub, tId]) => { initial[`Year 4-${sub}`] = tId; });
+
+    // Explicit Year 5 Assignments
+    const y5Mappings: Record<string, string> = {
+      "ASSEMBLY/ HOMEROOM": "t-11", "SILENT READING": "t-11", "ENGLISH": "t-11", "MATHEMATICS": "t-12",
+      "SCIENCE": "c-1", "MANDARIN": "t-3", "MALAY": "c-1", "GLOBAL PERSPECTIVES": "t-4",
+      "PHYSICAL EDUCATION": "t-5", "DIGITAL LITERACY": "t-6", "MUSIC": "t-7",
+      "ART & DESIGN": "t-13", "WELLBEING": "t-11", "LIBRARY": "t-6", "CCA": ""
+    };
+    Object.entries(y5Mappings).forEach(([sub, tId]) => { initial[`Year 5-${sub}`] = tId; });
+
+    // Explicit Year 6 Assignments (Same as Year 5)
+    const y6Mappings: Record<string, string> = {
+      "ASSEMBLY/ HOMEROOM": "t-11", "SILENT READING": "t-11", "ENGLISH": "t-11", "MATHEMATICS": "t-12",
+      "SCIENCE": "c-1", "MANDARIN": "t-3", "MALAY": "c-1", "GLOBAL PERSPECTIVES": "t-4",
+      "PHYSICAL EDUCATION": "t-5", "DIGITAL LITERACY": "t-6", "MUSIC": "t-7",
+      "ART & DESIGN": "t-13", "WELLBEING": "t-11", "LIBRARY": "t-6", "CCA": ""
+    };
+    Object.entries(y6Mappings).forEach(([sub, tId]) => { initial[`Year 6-${sub}`] = tId; });
+
+    // Random assignments for other years
+    const otherYears = yearGroups.filter(y => !["Year 1", "Year 2", "Year 3", "Year 4", "Year 5", "Year 6"].includes(y));
+    otherYears.forEach((yg, ygIdx) => {
+      subjects.forEach((s, sIdx) => {
+        initial[`${yg}-${s}`] = `t-${((ygIdx + sIdx) % 6) + 14}`;
+      });
+    });
+    return initial;
+  });
   const [sidebarTab, setSidebarTab] = useState<'templates' | 'slides'>('slides');
   const [workspaceMode, setWorkspaceMode] = useState<'slides' | 'poster' | 'worksheet' | 'lesson-plan'>('slides');
+
+  // --- Drag and Drop Timetable States ---
+  const [assignmentQuotas, setAssignmentQuotas] = useState<{id: string, teacherId: string, subject: string, yearGroup: string, total: number}[]>(() => {
+    const list: any[] = [];
+    
+    yearGroups.forEach(yg => {
+      subjects.forEach(sub => {
+        const tId = staffAssignments[`${yg}-${sub}`];
+        list.push({
+          id: `q-${yg}-${sub}-${Math.random().toString(36).substr(2, 5)}`,
+          teacherId: tId || (sub === 'ENGLISH' ? 't-8' : 't-1'),
+          subject: sub,
+          yearGroup: yg,
+          total: 2
+        });
+      });
+    });
+    return list;
+  });
+
+  const [timetableGrid, setTimetableGrid] = useState<Record<string, Record<string, (null | {teacherId: string, subject: string})[]>>>(() => {
+    const grid: any = {};
+    yearGroups.forEach(yg => {
+      grid[yg] = {};
+      ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach(day => {
+        grid[yg][day] = Array(12).fill(null);
+      });
+    });
+    return grid;
+  });
+
+  const getRemainingPeriods = (teacherId: string, subject: string, yg: string) => {
+    const quota = assignmentQuotas.find(q => q.teacherId === teacherId && q.subject === subject && q.yearGroup === yg);
+    if (!quota) return 0;
+    
+    // Count how many times this (teacher, sub, yg) is in the grid
+    let used = 0;
+    const yearData = timetableGrid[yg] || {};
+    (Object.values(yearData) as any[][]).forEach((daySlots) => {
+      daySlots.forEach((slot: any) => {
+        if (slot && slot.teacherId === teacherId && slot.subject === subject) {
+          used++;
+        }
+      });
+    });
+    
+    return quota.total - used;
+  };
+
+  const [draggedAssignment, setDraggedAssignment] = useState<any>(null);
+  const [schedulerViewMode, setSchedulerViewMode] = useState<'class' | 'teacher'>('class');
+  const [selectedTeacherSchedule, setSelectedTeacherSchedule] = useState<string>('');
+  const [schedulerYearGroup, setSchedulerYearGroup] = useState("Year 1");
 
   // Clear local storage on initial mount to ensure a fresh start
   useEffect(() => {
@@ -2219,32 +2361,178 @@ export default function App() {
 
   const renderAdmin = () => {
     const isPrimary = (yg: string) => ["Year 1", "Year 2", "Year 3", "Year 4", "Year 5", "Year 6"].includes(yg);
-    
+
+    const year1Pool = [
+      ...Array(1).fill("ASSEMBLY/ HOMEROOM"),
+      ...Array(7).fill("ENGLISH"),
+      ...Array(6).fill("MATHEMATICS"),
+      ...Array(4).fill("SCIENCE"),
+      ...Array(3).fill("MANDARIN"),
+      ...Array(3).fill("MALAY"),
+      ...Array(2).fill("GLOBAL PERSPECTIVES"),
+      ...Array(2).fill("PHYSICAL EDUCATION"),
+      ...Array(2).fill("DIGITAL LITERACY"),
+      ...Array(2).fill("MUSIC"), // Indices 30, 31
+      ...Array(1).fill("SILENT READING"), // Index 32: Friday 8:30 AM
+      ...Array(2).fill("ART & DESIGN"),
+      ...Array(1).fill("WELLBEING"),
+      ...Array(1).fill("LIBRARY"),
+      ...Array(1).fill("CCA")
+    ];
+
+    const year2Pool = [...year1Pool]; 
+    const year3Pool = [...year1Pool];
+    const year4Pool = [...year1Pool];
+    const year5Pool = [...year1Pool];
+    const year6Pool = [...year1Pool];
+
     // Time slot generation
     const getSlots = (day: string, yearGroup: string) => {
-      const slots = [];
-      let current = new Date();
-      current.setHours(8, 30, 0, 0);
+      const isPrimaryYear = isPrimary(yearGroup);
+      const isMon = day === "Monday";
       
-      const isFri = day === "Friday";
-      const endHour = isFri ? 13 : (isPrimary(yearGroup) ? 14 : 15);
-      const endMin = isFri ? 10 : (isPrimary(yearGroup) ? 30 : 0);
-      
-      const endTime = new Date();
-      endTime.setHours(endHour, endMin, 0, 0);
-      
-      while (current < endTime) {
-        const slotEnd = new Date(current.getTime() + 35 * 60000);
-        if (slotEnd > endTime) break;
-        
-        slots.push({
-          start: current.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          end: slotEnd.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        });
-        current = slotEnd;
+      const sessionTimes = [
+        { start: "08:00", end: "08:30", type: "registration" },
+        { start: "08:30", end: "09:05", type: "period" },
+        { start: "09:05", end: "09:40", type: "period" },
+        { start: "09:40", end: "10:20", type: "period" },
+        { start: "10:20", end: "10:55", type: "breakfast" },
+        { start: "10:55", end: "11:30", type: isMon ? "assembly" : "period" },
+        { start: "11:30", end: "12:05", type: "period" },
+        { start: "12:05", end: "12:40", type: "period" },
+        { start: "12:40", end: "13:15", type: "lunch" },
+        { start: "13:15", end: "13:50", type: "period" },
+        { start: "13:50", end: "14:25", type: "period" },
+      ];
+
+      // Add 9th period for secondary
+      if (!isPrimaryYear) {
+        sessionTimes.push({ start: "14:25", end: "15:00", type: "period" });
       }
-      return slots;
+
+      return sessionTimes;
     };
+
+    const autoGenerateTimetable = () => {
+      // 1. Reset the grid completely
+      const newGrid: Record<string, Record<string, (null | {teacherId: string, subject: string})[]>> = {};
+      yearGroups.forEach(yg => {
+        newGrid[yg] = {};
+        ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach(day => {
+          newGrid[yg][day] = Array(12).fill(null);
+        });
+      });
+
+      // 2. Prepare assignments - sort by priority (e.g., core subjects or teachers with fewer subjects)
+      const assignments = [...assignmentQuotas].sort((a, b) => b.total - a.total);
+      
+      // 3. For each assignment, try to place periods
+      assignments.forEach(assignment => {
+        let placed = 0;
+        const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+        
+        // --- START NEW DOUBLE PERIOD LOGIC ---
+        // If a subject has exactly 2 periods, try to place them together as a double period first
+        if (assignment.total === 2) {
+          const shuffledDays = [...days].sort(() => Math.random() - 0.5);
+          for (const day of shuffledDays) {
+            const slots = getSlots(day, assignment.yearGroup);
+            for (let sIdx = 0; sIdx < slots.length - 1; sIdx++) {
+              // Check if both are 'period' type and empty
+              if (slots[sIdx].type === 'period' && slots[sIdx+1].type === 'period' &&
+                  newGrid[assignment.yearGroup][day][sIdx] === null && 
+                  newGrid[assignment.yearGroup][day][sIdx+1] === null) {
+                
+                // Check teacher availability for both slots
+                let teacherBusy = false;
+                if (assignment.teacherId) {
+                  for (const yg of yearGroups) {
+                    if (newGrid[yg][day][sIdx]?.teacherId === assignment.teacherId ||
+                        newGrid[yg][day][sIdx+1]?.teacherId === assignment.teacherId) {
+                      teacherBusy = true;
+                      break;
+                    }
+                  }
+                }
+
+                if (!teacherBusy) {
+                  newGrid[assignment.yearGroup][day][sIdx] = { teacherId: assignment.teacherId, subject: assignment.subject };
+                  newGrid[assignment.yearGroup][day][sIdx+1] = { teacherId: assignment.teacherId, subject: assignment.subject };
+                  placed = 2;
+                  break;
+                }
+              }
+            }
+            if (placed === 2) break;
+          }
+        }
+        // --- END NEW DOUBLE PERIOD LOGIC ---
+
+        // Attempt to distribute periods across days (standard logic for others or if double failed)
+        for (let pass = 0; pass < 12 && placed < assignment.total; pass++) {
+          const shuffledDays = [...days].sort(() => Math.random() - 0.5);
+          
+          for (const day of shuffledDays) {
+            if (placed >= assignment.total) break;
+            
+            const slots = getSlots(day, assignment.yearGroup);
+            for (let sIdx = 0; sIdx < slots.length; sIdx++) {
+              if (placed >= assignment.total) break;
+              
+              if (slots[sIdx].type !== 'period') continue;
+              if (newGrid[assignment.yearGroup][day][sIdx] !== null) continue;
+              
+              let teacherIsBusy = false;
+              if (assignment.teacherId) {
+                for (const yg of yearGroups) {
+                  if (newGrid[yg][day][sIdx]?.teacherId === assignment.teacherId) {
+                    teacherIsBusy = true;
+                    break;
+                  }
+                }
+              }
+              
+              if (teacherIsBusy) continue;
+
+              let subjectToday = 0;
+              newGrid[assignment.yearGroup][day].forEach(slot => {
+                if (slot?.subject === assignment.subject) subjectToday++;
+              });
+              if (pass < 2 && subjectToday >= 2 && assignment.total < 10) continue;
+
+              newGrid[assignment.yearGroup][day][sIdx] = {
+                teacherId: assignment.teacherId,
+                subject: assignment.subject
+              };
+              placed++;
+            }
+          }
+        }
+      });
+
+      setTimetableGrid(newGrid);
+      alert("Whole-school timetable generated successfully!");
+    };
+    
+    // Calculate teacher loads
+    const calculateAllLoads = () => {
+      const loads: Record<string, number> = {};
+      
+      // Count actual assignments in the grid
+      Object.values(timetableGrid).forEach(yearData => {
+        Object.values(yearData).forEach(daySlots => {
+          daySlots.forEach(slot => {
+            if (slot && slot.teacherId) {
+              loads[slot.teacherId] = (loads[slot.teacherId] || 0) + 1;
+            }
+          });
+        });
+      });
+
+      return loads;
+    };
+    
+    const teacherLoads = calculateAllLoads();
 
     return (
       <div className="flex-1 flex flex-col h-screen bg-[#F0FDF4] overflow-hidden">
@@ -2253,7 +2541,7 @@ export default function App() {
           <div className="flex items-center gap-8">
             <h2 className="text-2xl font-black text-[#064E3B]">Admin Dashboard</h2>
             <nav className="flex gap-4">
-              {['overview', 'timetable', 'teachers', 'plans', 'members'].map((tab) => (
+              {['overview', 'timetable', 'teachers', 'assignments', 'plans', 'members'].map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setAdminTab(tab as any)}
@@ -2325,18 +2613,18 @@ export default function App() {
               <div className="bg-white rounded-3xl p-10 shadow-2xl space-y-6">
                 <h3 className="text-2xl font-black text-[#064E3B]">School Logistics</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <button onClick={() => setAdminTab('timetable')} className="p-6 rounded-2xl bg-[#D1FAE5] border-2 border-[#10B981]/20 flex items-center gap-4 hover:scale-[1.02] transition-all">
-                    <div className="p-3 bg-white rounded-xl shadow-sm"><LayoutGrid className="text-[#059669]" /></div>
-                    <div className="text-left">
-                      <p className="font-black text-[#064E3B]">Master Timetable</p>
-                      <p className="text-xs font-bold text-[#064E3B]/60">Manage student and teacher schedules</p>
+                  <button onClick={() => setAdminTab('assignments')} className="p-6 rounded-2xl bg-[#D1FAE5] border-2 border-[#10B981]/20 flex items-center gap-4 hover:scale-[1.02] transition-all text-left">
+                    <div className="p-3 bg-white rounded-xl shadow-sm"><UserPlus className="text-[#059669]" /></div>
+                    <div>
+                      <p className="font-black text-[#064E3B]">Staff Assignments</p>
+                      <p className="text-xs font-bold text-[#064E3B]/60">Map subjects and set period quotas</p>
                     </div>
                   </button>
-                  <button onClick={() => setAdminTab('teachers')} className="p-6 rounded-2xl bg-[#D1FAE5] border-2 border-[#10B981]/20 flex items-center gap-4 hover:scale-[1.02] transition-all">
-                    <div className="p-3 bg-white rounded-xl shadow-sm"><Users className="text-[#059669]" /></div>
-                    <div className="text-left">
-                      <p className="font-black text-[#064E3B]">Teacher Database</p>
-                      <p className="text-xs font-bold text-[#064E3B]/60">Assign subjects for auto-scheduling</p>
+                  <button onClick={() => setAdminTab('timetable')} className="p-6 rounded-2xl bg-[#D1FAE5] border-2 border-[#10B981]/20 flex items-center gap-4 hover:scale-[1.02] transition-all text-left">
+                    <div className="p-3 bg-white rounded-xl shadow-sm"><LayoutGrid className="text-[#059669]" /></div>
+                    <div>
+                      <p className="font-black text-[#064E3B]">Master Timetable</p>
+                      <p className="text-xs font-bold text-[#064E3B]/60">Generate and view full school schedule</p>
                     </div>
                   </button>
                 </div>
@@ -2344,6 +2632,263 @@ export default function App() {
             </div>
           )}
 
+          {adminTab === 'assignments' && (
+            <div className="max-w-7xl mx-auto space-y-10 pb-20">
+              {/* Header with Global Actions */}
+              <div className="flex justify-between items-center">
+                <div>
+                  <h3 className="text-3xl font-black text-[#064E3B]">Staff Assignments Dashboard</h3>
+                  <p className="text-[#064E3B]/60 font-bold mt-1">Map subjects to teachers and define period quotas for auto-scheduling.</p>
+                </div>
+                <div className="flex gap-4">
+                  <button 
+                    onClick={autoGenerateTimetable}
+                    className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest flex items-center gap-3 shadow-xl hover:brightness-110 hover:scale-105 transition-all text-sm"
+                  >
+                    <Zap size={20} className="fill-current" /> Auto-Generate (All Classes)
+                  </button>
+                  <button 
+                    onClick={() => setAdminTab('timetable')}
+                    className="bg-white text-[#064E3B] border-2 border-[#FEFCE8] px-6 py-4 rounded-2xl font-bold flex items-center gap-2 shadow-lg hover:bg-gray-50 transition-colors"
+                  >
+                    <LayoutGrid size={20} /> View Timetables
+                  </button>
+                </div>
+              </div>
+
+              {/* Subject Mapping Table */}
+              <div className="bg-white rounded-3xl p-10 shadow-2xl space-y-6">
+                <div className="flex justify-between items-center mb-4">
+                   <div className="flex items-center gap-6">
+                     <h4 className="text-xl font-black text-[#064E3B] uppercase tracking-widest">Yearly Subject Mapping</h4>
+                     <button 
+                       onClick={() => {
+                         setStaffAssignments({});
+                         setAssignmentQuotas([]);
+                         // Reset the grid completely
+                         const newGrid: Record<string, Record<string, (null | {teacherId: string, subject: string})[]>> = {};
+                         yearGroups.forEach(yg => {
+                           newGrid[yg] = {};
+                           ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach(day => {
+                             newGrid[yg][day] = Array(12).fill(null);
+                           });
+                         });
+                         setTimetableGrid(newGrid);
+                       }}
+                       className="px-4 py-2 border-2 border-red-100 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-50 transition-colors flex items-center gap-2"
+                     >
+                       <RotateCcw size={12} /> Reset Mapping
+                     </button>
+                   </div>
+                   <p className="text-[10px] font-black text-[#064E3B]/40 uppercase">Assign teachers to specific subjects per year group</p>
+                </div>
+                
+                <div className="overflow-x-auto min-h-[400px]">
+                  <table className="w-full border-separate border-spacing-y-2">
+                    <thead>
+                      <tr className="text-[#064E3B]/40 text-[10px] uppercase font-black tracking-widest text-left">
+                        <th className="px-4 py-2 sticky left-0 bg-white z-10">Year Group</th>
+                        {subjects.map(s => <th key={s} className="px-4 py-2 min-w-[140px]">{s}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {yearGroups.map(yg => (
+                        <tr key={yg} className="group">
+                          <td className="px-4 py-3 bg-[#FDFBF7] rounded-l-2xl font-black text-[#064E3B] text-sm whitespace-nowrap sticky left-0 z-10 border-r border-[#FACC15]/20">{yg}</td>
+                          {subjects.map(s => {
+                            const assignmentKey = `${yg}-${s}`;
+                            const assignedId = staffAssignments[assignmentKey];
+                            const currentQuota = assignmentQuotas.find(q => q.yearGroup === yg && q.subject === s);
+
+                            return (
+                              <td key={s} className="px-1 py-1">
+                                <div className="space-y-1.5 p-1 bg-white border border-gray-50 rounded-xl transition-all hover:border-[#FACC15]/30">
+                                  <select 
+                                    value={assignedId || ""}
+                                    onChange={(e) => {
+                                      const tId = e.target.value;
+                                      setStaffAssignments(prev => ({ ...prev, [assignmentKey]: tId }));
+                                      
+                                      setAssignmentQuotas(prev => {
+                                        const filtered = prev.filter(q => !(q.yearGroup === yg && q.subject === s));
+                                        if (tId) {
+                                          return [...filtered, {
+                                            id: `q-${yg}-${s}-${Math.random().toString(36).substr(2, 5)}`,
+                                            teacherId: tId,
+                                            subject: s,
+                                            yearGroup: yg,
+                                            total: currentQuota?.total || 2
+                                          }];
+                                        }
+                                        return filtered;
+                                      });
+                                    }}
+                                    className={cn(
+                                      "w-full px-2 py-1.5 text-[9px] font-black rounded-lg border-2 transition-all outline-none",
+                                      assignedId ? "bg-[#064E3B] text-white border-[#064E3B]" : "bg-gray-50 border-gray-100 text-[#064E3B]/30 opacity-40 hover:opacity-100 focus:opacity-100"
+                                    )}
+                                  >
+                                    <option value="">No Teacher</option>
+                                    {teachers.map(t => (
+                                      <option key={t.id} value={t.id}>{t.name}</option>
+                                    ))}
+                                  </select>
+
+                                  {assignedId && (
+                                    <div className="flex items-center justify-between gap-1 px-2 py-1 bg-[#FEFCE8]/50 rounded-lg border border-[#FACC15]/20">
+                                      <span className="text-[8px] font-black text-[#064E3B]/40 uppercase tracking-tighter">Pds:</span>
+                                      <input 
+                                        type="number"
+                                        value={currentQuota?.total || 2}
+                                        onChange={(e) => {
+                                          const val = parseInt(e.target.value) || 0;
+                                          setAssignmentQuotas(prev => prev.map(q => 
+                                            (q.yearGroup === yg && q.subject === s) ? { ...q, total: val } : q
+                                          ));
+                                        }}
+                                        className="w-full bg-transparent text-[10px] font-black text-[#064E3B] outline-none text-right"
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Teacher Period Quotas Dashboard */}
+              <div className="space-y-6">
+                <div className="flex justify-between items-end">
+                   <div>
+                     <h4 className="text-xl font-black text-[#064E3B] uppercase tracking-widest">Teacher Load & Period Quotas</h4>
+                     <p className="text-[#064E3B]/60 font-bold mt-1">Set how many periods each teacher should teach for their assigned subjects.</p>
+                   </div>
+                   <button 
+                    onClick={() => {
+                      const name = prompt("Teacher Name?");
+                      if(name) {
+                        const role = confirm("Is this a Head Coordinator?") ? "Coordinator" : "Teacher";
+                        setTeachers([...teachers, { 
+                          id: `t-${Date.now()}`, 
+                          name, 
+                          role, 
+                          subjects: [], 
+                          maxPeriods: 28 
+                        }]);
+                      }
+                    }}
+                    className="bg-[#064E3B] text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-lg hover:bg-[#059669] transition-colors text-xs"
+                  >
+                    <Plus size={16} /> Add New Teacher
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                  {teachers.map(teacher => {
+                    // Filter quotas specifically for subjects mapped to this teacher in the table
+                    const mappedAssignments = Object.entries(staffAssignments)
+                      .filter(([key, val]) => val === teacher.id)
+                      .map(([key]) => {
+                        const [yg, sub] = key.split(/-(.+)/);
+                        return { yg, sub };
+                      });
+
+                    const teacherQuotas = assignmentQuotas.filter(q => q.teacherId === teacher.id);
+                    const totalAssignedPeriods = teacherQuotas.reduce((acc, q) => acc + q.total, 0);
+
+                    return (
+                      <div key={teacher.id} className="bg-white rounded-[2rem] p-8 shadow-xl border-2 border-[#FEFCE8] hover:border-[#FACC15]/30 transition-all flex flex-col space-y-6">
+                        <div className="flex justify-between items-start">
+                          <div className="flex items-center gap-4">
+                            <div className={cn(
+                              "w-12 h-12 rounded-2xl flex items-center justify-center text-white font-black text-xl shadow-lg",
+                              teacher.role === 'Coordinator' ? "bg-amber-500" : "bg-[#064E3B]"
+                            )}>
+                              {teacher.name[0]}
+                            </div>
+                            <div>
+                              <p className="font-black text-lg text-[#064E3B]">{teacher.name}</p>
+                              <p className="text-[10px] font-black uppercase tracking-widest text-[#064E3B]/40">{teacher.role}</p>
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={() => setEditingTeacher(teacher)} className="p-2 hover:bg-gray-50 rounded-xl text-blue-500 transition-colors"><Edit2 size={18} /></button>
+                            <button onClick={() => setTeachers(teachers.filter(t => t.id !== teacher.id))} className="p-2 hover:bg-red-50 rounded-xl text-red-500 transition-colors"><Trash2 size={18} /></button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3">
+                          <div className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-100">
+                             <p className="text-[10px] font-black uppercase text-[#064E3B]/40 tracking-widest">Total Periods</p>
+                             <div className="flex items-center gap-2">
+                               <span className={cn("text-lg font-black", totalAssignedPeriods > teacher.maxPeriods ? "text-red-500" : "text-[#064E3B]")}>{totalAssignedPeriods}</span>
+                               <span className="text-[10px] font-black text-gray-300">/</span>
+                               <span className="text-[10px] font-black text-gray-400">{teacher.maxPeriods}</span>
+                             </div>
+                          </div>
+                          <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div className={cn("h-full transition-all", totalAssignedPeriods > teacher.maxPeriods ? "bg-red-500" : "bg-[#FACC15]")} style={{ width: `${Math.min(100, (totalAssignedPeriods/teacher.maxPeriods)*100)}%` }} />
+                          </div>
+                        </div>
+
+                        <div className="space-y-3 pt-4 border-t border-gray-100">
+                           <p className="text-[10px] font-black uppercase text-[#064E3B]/40 tracking-widest">Subject Load (Click to Edit)</p>
+                           <div className="space-y-2">
+                             {mappedAssignments.length === 0 ? (
+                               <p className="text-[10px] font-bold text-gray-300 italic italic">No subjects assigned in the table above.</p>
+                             ) : (
+                               mappedAssignments.map(({yg, sub}) => {
+                                 const q = assignmentQuotas.find(qq => qq.teacherId === teacher.id && qq.subject === sub && qq.yearGroup === yg);
+                                 return (
+                                   <div key={`${yg}-${sub}`} className="flex items-center justify-between text-xs p-2 bg-[#FDFBF7] rounded-xl border border-[#FACC15]/10">
+                                     <div className="flex flex-col">
+                                       <span className="font-black text-[#064E3B]">{sub}</span>
+                                       <span className="text-[8px] font-bold uppercase text-gray-400">{yg}</span>
+                                     </div>
+                                     <div className="flex items-center gap-2">
+                                       <input 
+                                         type="number" 
+                                         className="w-12 p-1 text-[10px] font-black bg-white border-2 border-transparent focus:border-[#FACC15] outline-none rounded-lg text-center"
+                                         value={q?.total || 0}
+                                         onChange={(e) => {
+                                           const val = parseInt(e.target.value) || 0;
+                                           setAssignmentQuotas(prev => prev.map(qq => 
+                                             (qq.teacherId === teacher.id && qq.subject === sub && qq.yearGroup === yg) ? { ...qq, total: val } : qq
+                                           ));
+                                         }}
+                                       />
+                                       <span className="text-[10px] font-black text-gray-300">Pds</span>
+                                     </div>
+                                   </div>
+                                 );
+                               })
+                             )}
+                           </div>
+                        </div>
+
+                        <button 
+                          onClick={() => {
+                            setAdminTab('timetable');
+                            setSchedulerViewMode('teacher');
+                            setSelectedTeacherSchedule(teacher.id);
+                          }}
+                          className="w-full py-3 bg-gray-50 text-[#064E3B] rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-[#FACC15] transition-all flex items-center justify-center gap-2"
+                        >
+                          <LayoutGrid size={14} /> View Teacher Schedule
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+          
           {adminTab === 'plans' && (
             <div className="max-w-6xl mx-auto bg-white rounded-[3rem] p-10 shadow-2xl pb-20 border-8 border-white ring-1 ring-black/5">
               <div className="flex justify-between items-center mb-10">
@@ -2372,11 +2917,20 @@ export default function App() {
                 <button 
                   onClick={() => {
                     const name = prompt("Teacher Name?");
-                    if(name) setTeachers([...teachers, { id: `t-${Date.now()}`, name, subjects: [] }]);
+                    if(name) {
+                      const role = confirm("Is this a Head Coordinator?") ? "Coordinator" : "Teacher";
+                      setTeachers([...teachers, { 
+                        id: `t-${Date.now()}`, 
+                        name, 
+                        role, 
+                        subjects: [], 
+                        maxPeriods: 28 
+                      }]);
+                    }
                   }}
                   className="bg-[#064E3B] text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-lg"
                 >
-                  <Plus size={20} /> Add Teacher
+                  <Plus size={20} /> Add Staff
                 </button>
               </div>
               
@@ -2388,23 +2942,52 @@ export default function App() {
                         <div className="w-10 h-10 bg-[#064E3B] rounded-xl flex items-center justify-center text-white font-bold">
                           {teacher.name[0]}
                         </div>
-                        <div>
-                          <p className="font-black text-[#064E3B]">{teacher.name}</p>
-                          <p className="text-[10px] font-bold text-[#064E3B]/40 uppercase tracking-widest">{teacher.subjects.length} Subjects</p>
+                         <div>
+                           <p className="font-black text-[#064E3B]">{teacher.name}</p>
+                           <div className="flex flex-col gap-1 mt-1">
+                              <div className="flex gap-2">
+                                <p className="text-[9px] font-black bg-[#F0FDF4] px-1.5 py-0.5 rounded text-[#059669] uppercase tracking-widest">{teacher.role}</p>
+                                <p className="text-[9px] font-black bg-gray-100 px-1.5 py-0.5 rounded text-gray-500 uppercase tracking-widest">Max: {teacher.maxPeriods} Periods</p>
+                              </div>
+                              <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden mt-1">
+                                <div 
+                                  className={cn(
+                                    "h-full transition-all",
+                                    (teacherLoads[teacher.id] || 0) > teacher.maxPeriods ? "bg-red-500" : "bg-[#FACC15]"
+                                  )}
+                                  style={{ width: `${Math.min(100, ((teacherLoads[teacher.id] || 0) / teacher.maxPeriods) * 100)}%` }}
+                                />
+                              </div>
+                              <p className={cn(
+                                "text-[8px] font-black uppercase tracking-widest",
+                                (teacherLoads[teacher.id] || 0) > teacher.maxPeriods ? "text-red-500" : "text-[#064E3B]/40"
+                              )}>
+                                Current: {teacherLoads[teacher.id] || 0} / {teacher.maxPeriods} Periods
+                                {(teacherLoads[teacher.id] || 0) > teacher.maxPeriods && " (OVERLOAD)"}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => setEditingTeacher(teacher)}
+                            className="text-blue-400 hover:text-blue-600 transition-all cursor-pointer p-1"
+                          >
+                            <Edit2 size={16} />
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setTeachers(teachers.filter(t => String(t.id) !== String(teacher.id)));
+                            }} 
+                            className="text-red-400 hover:text-red-600 transition-all cursor-pointer p-1"
+                          >
+                            <Trash2 size={16} />
+                          </button>
                         </div>
                       </div>
-                      <button 
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setTeachers(teachers.filter(t => String(t.id) !== String(teacher.id)));
-                        }} 
-                        className="text-red-400 hover:text-red-600 transition-all cursor-pointer p-1"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
                     <div className="flex flex-wrap gap-1">
                       {subjects.map(s => (
                         <button 
@@ -2427,6 +3010,70 @@ export default function App() {
                   </div>
                 ))}
               </div>
+
+              {/* Edit Teacher Modal */}
+              {editingTeacher && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+                  <motion.div 
+                    initial={{ scale: 0.95, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl space-y-6"
+                  >
+                    <div className="flex justify-between items-center">
+                      <h4 className="text-2xl font-black text-[#064E3B]">Edit Teacher</h4>
+                      <button onClick={() => setEditingTeacher(null)} className="p-2 hover:bg-gray-100 rounded-full">
+                        <X size={20} />
+                      </button>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div>
+                        <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Full Name</label>
+                        <input 
+                          type="text" 
+                          value={editingTeacher.name}
+                          onChange={(e) => setEditingTeacher({...editingTeacher, name: e.target.value})}
+                          className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Position / Role</label>
+                        <select 
+                          value={editingTeacher.role}
+                          onChange={(e) => setEditingTeacher({...editingTeacher, role: e.target.value})}
+                          className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold"
+                        >
+                          <option value="Teacher">Teacher</option>
+                          <option value="Coordinator">Coordinator</option>
+                          <option value="Principal">Principal</option>
+                          <option value="Admin">Admin Staff</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Max Periods per Week</label>
+                        <input 
+                          type="number" 
+                          value={editingTeacher.maxPeriods}
+                          onChange={(e) => setEditingTeacher({...editingTeacher, maxPeriods: parseInt(e.target.value) || 0})}
+                          className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold"
+                        />
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={() => {
+                        setTeachers(teachers.map(t => t.id === editingTeacher.id ? editingTeacher : t));
+                        setEditingTeacher(null);
+                      }}
+                      className="w-full py-4 bg-[#064E3B] text-white rounded-2xl font-black uppercase tracking-widest hover:bg-[#059669] transition-all shadow-lg shadow-[#064E3B]/20"
+                    >
+                      Save Changes
+                    </button>
+                  </motion.div>
+                </div>
+              )}
             </div>
           )}
 
@@ -2434,89 +3081,352 @@ export default function App() {
             <div className="max-w-7xl mx-auto space-y-10 pb-20">
               <div className="flex justify-between items-end">
                 <div>
-                  <h3 className="text-3xl font-black text-[#064E3B]">Master Scheduler</h3>
-                  <p className="text-[#064E3B]/60 font-bold mt-1 tracking-tight">Auto-arranged 35-minute periods with conflict prevention</p>
+                  <h3 className="text-3xl font-black text-[#064E3B]">Interactive Scheduler</h3>
+                  <div className="flex items-center gap-3 mt-4">
+                    <button 
+                      onClick={() => setAdminTab('assignments')}
+                      className="px-6 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm flex items-center gap-2 hover:bg-indigo-100"
+                    >
+                      <UserPlus size={14} /> Staff Assignments
+                    </button>
+                    <button 
+                      onClick={() => setSchedulerViewMode('class')}
+                      className={cn(
+                        "px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm",
+                        schedulerViewMode === 'class' ? "bg-[#064E3B] text-white" : "bg-white text-[#064E3B] border-2 border-[#FEFCE8]"
+                      )}
+                    >
+                      Class View
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setSchedulerViewMode('teacher');
+                        if (!selectedTeacherSchedule && teachers.length > 0) {
+                          setSelectedTeacherSchedule(teachers[0].id);
+                        }
+                      }}
+                      className={cn(
+                        "px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm",
+                        schedulerViewMode === 'teacher' ? "bg-[#064E3B] text-white" : "bg-white text-[#064E3B] border-2 border-[#FEFCE8]"
+                      )}
+                    >
+                      Teacher View
+                    </button>
+                    <button 
+                      onClick={autoGenerateTimetable}
+                      className="px-6 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg hover:brightness-110 flex items-center gap-2"
+                    >
+                      <Zap size={14} className="fill-current" /> Auto-Generate
+                    </button>
+                  </div>
                 </div>
                 <div className="flex gap-4">
                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-black uppercase text-[#064E3B]/40 ml-1">View Group</label>
-                      <select 
-                        className="bg-white border-2 border-[#D1FAE5] px-4 py-2 rounded-xl font-bold text-[#064E3B] outline-none"
-                        value={yearGroup}
-                        onChange={(e) => setYearGroup(e.target.value)}
-                      >
-                        {yearGroups.map(yg => <option key={yg} value={yg}>{yg}</option>)}
-                      </select>
+                      <label className="text-[10px] font-black uppercase text-[#064E3B]/40 ml-1">
+                        {schedulerViewMode === 'class' ? 'Select Year Group' : 'Select Teacher'}
+                      </label>
+                      {schedulerViewMode === 'class' ? (
+                        <select 
+                          className="bg-white border-2 border-[#FEFCE8] px-4 py-2.5 rounded-xl font-black text-[#064E3B] outline-none shadow-sm min-w-[200px]"
+                          value={schedulerYearGroup}
+                          onChange={(e) => setSchedulerYearGroup(e.target.value)}
+                        >
+                          {yearGroups.map(yg => <option key={yg} value={yg}>{yg}</option>)}
+                        </select>
+                      ) : (
+                        <select 
+                          className="bg-white border-2 border-[#FEFCE8] px-4 py-2.5 rounded-xl font-black text-[#064E3B] outline-none shadow-sm min-w-[200px]"
+                          value={selectedTeacherSchedule}
+                          onChange={(e) => setSelectedTeacherSchedule(e.target.value)}
+                        >
+                          {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                        </select>
+                      )}
                    </div>
                    <button 
                     onClick={() => {
-                      // Trigger a re-render/shuffle
-                      setTeachers([...teachers]);
+                      const newGrid = { ...timetableGrid };
+                      newGrid[schedulerYearGroup] = {};
+                      ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach(day => {
+                        newGrid[schedulerYearGroup][day] = Array(12).fill(null);
+                      });
+                      setTimetableGrid(newGrid);
                     }}
-                    className="self-end px-6 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black uppercase text-xs tracking-widest shadow-md hover:bg-yellow-400 transition-colors"
+                    className="self-end px-6 py-2 bg-red-50 text-red-600 rounded-xl font-black uppercase text-xs tracking-widest shadow-md hover:bg-red-500 hover:text-white transition-colors"
                    >
-                     <Wand2 size={16} /> Re-Shuffle
+                     Reset Grid
                    </button>
                 </div>
               </div>
 
-              <div className="bg-white rounded-[3rem] p-10 shadow-2xl overflow-x-auto border-8 border-white ring-1 ring-black/5">
-                <div className="grid grid-cols-6 gap-4 min-w-[1200px]">
-                  <div className="h-16" /> {/* Corner Spacer */}
-                  {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => (
-                    <div key={day} className="h-16 flex flex-col items-center justify-center bg-[#FEFCE8]/50 rounded-2xl border-2 border-[#FACC15]/20">
-                      <p className="font-black text-[#064E3B] uppercase tracking-widest text-sm">{day}</p>
-                      <p className="text-[10px] font-bold text-[#064E3B]/60">{day === "Friday" ? "1:10pm Finish" : isPrimary(yearGroup) ? "2:30pm Finish" : "3:00pm Finish"}</p>
-                    </div>
-                  ))}
-
-                  {/* Period Mapping */}
-                  {getSlots("Monday", yearGroup).map((slot, sIdx) => (
-                    <React.Fragment key={sIdx}>
-                      <div className="flex flex-col items-end justify-center pr-4">
-                        <p className="text-xs font-black text-[#064E3B] opacity-40 uppercase tracking-tighter">Period {sIdx + 1}</p>
-                        <p className="text-sm font-black text-[#064E3B]">{slot.start}</p>
-                      </div>
-                      {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => {
-                        const daySlots = getSlots(day, yearGroup);
-                        if (sIdx >= daySlots.length) return <div key={day} className="bg-gray-50/30 rounded-2xl border-2 border-dashed border-gray-100" title="End of Day" />;
-                        
-                        // Smart Auto-Arrange Logic:
-                        // Find a subject/teacher that works for this slot for this year group
-                        // For demo, we use deterministic shuffling based on YG + Day + Slot
-                        const ygIndex = yearGroups.indexOf(yearGroup);
-                        const dayIndex = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].indexOf(day);
-                        const subjectIndex = (ygIndex * 13 + dayIndex * 8 + sIdx * 5) % subjects.length;
-                        const targetSubject = subjects[subjectIndex];
-                        
-                        // Find teachers who can teach this
-                        const eligibleTeachers = teachers.filter(t => t.subjects.includes(targetSubject));
-                        const assignedTeacher = eligibleTeachers.length > 0 
-                          ? eligibleTeachers[(ygIndex + dayIndex + sIdx) % eligibleTeachers.length]
-                          : teachers[subjectIndex % teachers.length];
-
-                        return (
-                          <div key={day} className="group relative bg-white p-5 rounded-2xl border-2 border-[#FEFCE8] hover:border-[#FACC15] transition-all hover:scale-[1.02] cursor-default shadow-sm hover:shadow-md">
-                            <div className="flex justify-between items-start mb-2">
-                              <p className="text-[10px] font-black uppercase text-[#064E3B]/60 tracking-wider leading-none">{targetSubject}</p>
-                              <div className="w-1.5 h-1.5 rounded-full bg-[#FACC15] shadow-[0_0_8px_#FACC15]" />
-                            </div>
-                            <p className="text-sm font-black text-[#064E3B] truncate">{assignedTeacher.name}</p>
-                            <div className="mt-2 flex items-center gap-1 opacity-20">
-                               <div className="h-1 flex-1 bg-gray-100 rounded-full" />
-                            </div>
-                            
-                            {/* Slot Details Tooltip or Reveal */}
-                            <div className="absolute inset-0 bg-[#064E3B]/95 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity p-5 flex flex-col justify-center text-white">
-                               <p className="text-[10px] font-black uppercase text-[#FACC15]">{slot.start} - {slot.end}</p>
-                               <p className="text-sm font-black leading-tight mt-1">{targetSubject} with {assignedTeacher.name}</p>
-                               <p className="text-[8px] font-bold opacity-60 mt-2">Classroom Area {Math.floor(sIdx/2) + 1}</p>
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-start">
+                {/* Assignments Sidebar */}
+                <div className="lg:col-span-1 bg-white rounded-3xl p-6 shadow-xl border-2 border-[#FEFCE8] space-y-6 max-h-[800px] overflow-y-auto custom-scrollbar">
+                  <h4 className="font-black text-[#064E3B] uppercase text-xs tracking-widest border-b pb-2 mb-4">Available Periods ({schedulerYearGroup})</h4>
+                  <div className="space-y-3">
+                    {assignmentQuotas.filter(q => q.yearGroup === schedulerYearGroup).map((quota) => {
+                      const remaining = getRemainingPeriods(quota.teacherId, quota.subject, schedulerYearGroup);
+                      const teacher = teachers.find(t => t.id === quota.teacherId);
+                      return (
+                        <div 
+                          key={quota.id}
+                          draggable={remaining > 0}
+                          onDragStart={() => setDraggedAssignment(quota)}
+                          className={cn(
+                            "p-3 rounded-2xl border-2 transition-all cursor-move group",
+                            remaining > 0 
+                              ? "bg-[#FEFCE8]/30 border-[#FACC15]/20 hover:border-[#FACC15] hover:shadow-md" 
+                              : "bg-gray-50 border-gray-100 opacity-50 cursor-not-allowed"
+                          )}
+                        >
+                          <div className="flex justify-between items-start">
+                            <p className="text-[10px] font-black uppercase text-[#064E3B]/60">{quota.subject}</p>
+                            <div className="flex items-center gap-2">
+                              <span className={cn(
+                                "text-[10px] font-black px-2 py-0.5 rounded-full",
+                                remaining > 0 ? "bg-[#FACC15] text-[#064E3B]" : "bg-gray-200 text-gray-400"
+                              )}>{remaining} Left</span>
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setAssignmentQuotas(assignmentQuotas.filter(q => !(q.teacherId === quota.teacherId && q.subject === quota.subject)));
+                                }}
+                                className="text-red-400 hover:text-red-600 transition-colors p-1"
+                              >
+                                <Trash2 size={12} />
+                              </button>
                             </div>
                           </div>
-                        );
-                      })}
-                    </React.Fragment>
-                  ))}
+                          <p className="text-sm font-black text-[#064E3B] mt-1 mb-2">{teacher?.name || 'Unknown'}</p>
+                          <div className="flex items-center gap-2 pt-2 border-t border-[#FACC15]/10">
+                            <input 
+                              type="number"
+                              className="w-12 p-1 text-[10px] font-black border-2 border-[#FACC15]/20 rounded-lg bg-white outline-none focus:border-[#FACC15]"
+                              value={quota.total}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value) || 0;
+                                // Sync total periods across all year groups for this teacher/subject
+                                setAssignmentQuotas(assignmentQuotas.map(q => 
+                                  (q.teacherId === quota.teacherId && q.subject === quota.subject) 
+                                  ? { ...q, total: val } 
+                                  : q
+                                ));
+                              }}
+                            />
+                            <span className="text-[9px] font-black uppercase text-[#064E3B]/30 tracking-tight">Total Periods (Global)</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="lg:col-span-3 bg-white rounded-[3rem] p-10 shadow-2xl overflow-x-auto border-8 border-white ring-1 ring-black/5">
+                  <div className="grid grid-cols-6 gap-4 min-w-[900px]">
+                    <div className="h-16" /> {/* Corner Spacer */}
+                    {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => (
+                      <div key={day} className="h-16 flex flex-col items-center justify-center bg-[#FEFCE8]/50 rounded-2xl border-2 border-[#FACC15]/20">
+                        <p className="font-black text-[#064E3B] uppercase tracking-widest text-sm">{day}</p>
+                        <p className="text-[10px] font-bold text-[#064E3B]/60 font-mono tracking-tight">{day === "Friday" ? "1:10pm" : isPrimary(schedulerYearGroup) ? "2:30pm" : "3:00pm"}</p>
+                      </div>
+                    ))}
+
+                    {/* Period Mapping */}
+                    {getSlots("Monday", schedulerViewMode === 'class' ? yearGroup : "Year 7").map((slot, sIdx) => {
+                      const isTeaching = slot.type === "period" || (slot.type === "assembly" && schedulerViewMode === 'class');
+                      
+                      return (
+                      <React.Fragment key={sIdx}>
+                        <div className="flex flex-col items-end justify-center pr-6 py-2 border-r-2 border-[#FEFCE8]/50">
+                          {slot.type === "period" ? (
+                            <p className="text-[10px] font-black text-[#064E3B] opacity-40 uppercase tracking-widest leading-none mb-1">P{sIdx + 1}</p>
+                          ) : (
+                            <p className="text-[10px] font-black text-amber-600 opacity-60 uppercase tracking-widest leading-none mb-1">{slot.type.replace('_', ' ')}</p>
+                          )}
+                          <p className="text-sm font-black text-[#064E3B] whitespace-nowrap">{slot.start}</p>
+                          <p className="text-[10px] font-bold text-[#064E3B]/40 leading-none mt-1">{slot.end}</p>
+                        </div>
+                        {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => {
+                          const daySlots = getSlots(day, schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7");
+                          if (sIdx >= daySlots.length) return <div key={day} className="bg-gray-50/20 rounded-2xl border-2 border-dashed border-gray-100 flex items-center justify-center min-h-[100px]"><p className="text-[10px] font-black text-gray-200 rotate-45 uppercase tracking-tighter">Day Finished</p></div>;
+                          
+                          const currentSlot = daySlots[sIdx];
+                          let cellContent = null;
+
+                          if (currentSlot.type !== "period" && currentSlot.type !== "assembly" && currentSlot.type !== "registration") {
+                            cellContent = (
+                              <div className="min-h-[90px] p-4 rounded-2xl bg-amber-50/30 border-2 border-dashed border-amber-200/50 flex items-center justify-center">
+                                <p className="text-[10px] font-black text-amber-600/40 uppercase tracking-[0.2em]">{currentSlot.type.replace('_', ' ')}</p>
+                              </div>
+                            );
+                          } else if (schedulerViewMode === 'class') {
+                            const isAssembly = currentSlot.type === "assembly";
+                            const isRegistration = currentSlot.type === "registration";
+                            const manualAssignment = timetableGrid[schedulerYearGroup]?.[day]?.[sIdx];
+                            const teacher = manualAssignment ? teachers.find(t => t.id === manualAssignment.teacherId) : null;
+                            
+                            if (isAssembly) {
+                              cellContent = (
+                                <div className="min-h-[90px] p-4 rounded-2xl bg-indigo-50 border-2 border-indigo-100 flex flex-col justify-center items-center text-center">
+                                  <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Assembly</p>
+                                  <p className="text-xs font-black text-indigo-900 leading-tight">Whole School Gathering</p>
+                                </div>
+                              );
+                            } else if (isRegistration) {
+                              const homeroomTeacherId = staffAssignments[`${schedulerYearGroup}-ASSEMBLY/ HOMEROOM`];
+                              const homeroomTeacher = teachers.find(t => t.id === homeroomTeacherId);
+                              cellContent = (
+                                <div className="min-h-[90px] p-4 rounded-2xl bg-[#ECFDF5] border-2 border-[#10B981]/20 flex flex-col justify-center items-center text-center">
+                                  <p className="text-[10px] font-black text-[#059669] uppercase tracking-widest mb-1">Registration</p>
+                                  <p className="text-xs font-black text-[#064E3B] leading-tight">{homeroomTeacher?.name || "Homeroom Teacher"}</p>
+                                </div>
+                              );
+                            } else {
+                              cellContent = (
+                                <div 
+                                  className={cn(
+                                    "group relative min-h-[90px] p-4 rounded-2xl border-2 transition-all flex flex-col justify-center",
+                                    manualAssignment 
+                                      ? "bg-white border-[#FACC15] shadow-sm hover:scale-[1.02]" 
+                                      : "bg-[#FDFBF7] border-dashed border-gray-200 hover:border-[#FACC15]/40"
+                                  )}
+                                  onDragOver={(e) => e.preventDefault()}
+                                  onDrop={() => {
+                                    if (!draggedAssignment) return;
+
+                                    // Check if teacher is already busy at this time in another year group
+                                    let isBusy = false;
+                                    let busyYg = "";
+                                    Object.entries(timetableGrid).forEach(([yg, days]) => {
+                                      if (days[day]?.[sIdx]?.teacherId === draggedAssignment.teacherId) {
+                                        isBusy = true;
+                                        busyYg = yg;
+                                      }
+                                    });
+
+                                    if (isBusy) {
+                                      alert(`Conflict: This teacher is already scheduled for ${busyYg} during this time slot.`);
+                                      return;
+                                    }
+
+                                    const remaining = getRemainingPeriods(draggedAssignment.teacherId, draggedAssignment.subject, schedulerYearGroup);
+                                    if (remaining <= 0) {
+                                      alert("No periods remaining for this teacher/subject.");
+                                      return;
+                                    }
+                                    const nextGrid = { ...timetableGrid };
+                                    if (!nextGrid[schedulerYearGroup][day]) nextGrid[schedulerYearGroup][day] = [];
+                                    nextGrid[schedulerYearGroup][day][sIdx] = { 
+                                      teacherId: draggedAssignment.teacherId, 
+                                      subject: draggedAssignment.subject 
+                                    };
+                                    setTimetableGrid(nextGrid);
+                                    setDraggedAssignment(null);
+                                  }}
+                                >
+                                  {manualAssignment ? (
+                                    <>
+                                      <div className="flex justify-between items-start mb-1">
+                                        <p className="text-[9px] font-black uppercase text-[#064E3B]/60 leading-none">{manualAssignment.subject}</p>
+                                        <button 
+                                          onClick={() => {
+                                            const nextGrid = { ...timetableGrid };
+                                            nextGrid[schedulerYearGroup][day][sIdx] = null;
+                                            setTimetableGrid(nextGrid);
+                                          }}
+                                          className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-500 transition-opacity"
+                                        >
+                                          <Trash2 size={12} />
+                                        </button>
+                                      </div>
+                                      <p className="text-xs font-black text-[#064E3B]">{teacher?.name}</p>
+                                      <p className="text-[10px] font-bold text-[#FACC15] mt-1">{currentSlot.start}</p>
+                                    </>
+                                  ) : (
+                                    <div className="text-center opacity-20 group-hover:opacity-100 transition-opacity">
+                                      <p className="text-[8px] font-black uppercase tracking-widest text-[#064E3B]">Drag Here</p>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            }
+                          } else {
+                            // Teacher View
+                            let assignedYearGroup = "";
+                            let assignedSubject = "";
+                            const isAssembly = currentSlot.type === "assembly";
+                            const isRegistration = currentSlot.type === "registration";
+                            
+                            Object.entries(timetableGrid).forEach(([yg, days]) => {
+                              const slotData = days[day]?.[sIdx];
+                              if (slotData && slotData.teacherId === selectedTeacherSchedule) {
+                                assignedYearGroup = yg;
+                                assignedSubject = slotData.subject;
+                              }
+                            });
+
+                            if (isRegistration) {
+                              let homeroomFor = "";
+                              Object.entries(staffAssignments).forEach(([key, tId]) => {
+                                if (key.endsWith("-ASSEMBLY/ HOMEROOM") && tId === selectedTeacherSchedule) {
+                                  homeroomFor = key.replace("-ASSEMBLY/ HOMEROOM", "");
+                                }
+                              });
+
+                              if (homeroomFor) {
+                                cellContent = (
+                                  <div className="min-h-[90px] p-4 rounded-2xl bg-[#0F766E] border-2 border-[#115E59] text-white flex flex-col justify-center items-center text-center shadow-md">
+                                    <p className="text-[10px] font-black opacity-60 uppercase tracking-widest mb-1">Registration</p>
+                                    <p className="text-xs font-black leading-tight">{homeroomFor}</p>
+                                  </div>
+                                );
+                              } else {
+                                cellContent = (
+                                  <div className="min-h-[90px] p-4 rounded-2xl bg-gray-100/50 border-2 border-dashed border-gray-200 flex items-center justify-center opacity-30">
+                                    <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest">No Assignment</p>
+                                  </div>
+                                );
+                              }
+                            } else {
+                              cellContent = (
+                                <div className={cn(
+                                  "group relative min-h-[90px] p-4 rounded-2xl border-2 transition-all flex flex-col justify-center",
+                                  isAssembly ? "bg-indigo-50 border-indigo-100" :
+                                  assignedYearGroup 
+                                    ? "bg-[#064E3B] border-[#064E3B] text-white shadow-md shadow-emerald-900/20" 
+                                    : "bg-gray-50 border-gray-100 opacity-40 hover:opacity-100"
+                                )}>
+                                  {isAssembly ? (
+                                    <div className="text-center">
+                                      <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Assembly</p>
+                                      <p className="text-[10px] font-bold text-indigo-900/60 font-mono tracking-tight">Mon Only</p>
+                                    </div>
+                                  ) : assignedYearGroup ? (
+                                    <>
+                                      <p className="text-[9px] font-black uppercase text-[#FACC15] mb-1">{assignedSubject}</p>
+                                      <p className="text-xs font-black">{assignedYearGroup}</p>
+                                      <p className="text-[9px] font-bold opacity-60 mt-1">{currentSlot.start}</p>
+                                    </>
+                                  ) : (
+                                    <div className="text-center">
+                                      <p className="text-[8px] font-black uppercase tracking-widest text-gray-300">Free</p>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            }
+                          }
+
+                          return (
+                            <div key={day}>
+                              {cellContent}
+                            </div>
+                          );
+                        })}
+                      </React.Fragment>
+                    );})}
+                  </div>
                 </div>
               </div>
             </div>
