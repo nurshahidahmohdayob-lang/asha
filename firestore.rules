@@ -1,0 +1,108 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.get('email', '').lower() == 'nurshahidahmohdayob@gmail.com' ||
+        request.auth.token.get('email', '').lower() == 'shahidah.a@zera.edu.my' ||
+        request.auth.token.get('email', '').lower() == 'shahidah.a@zera.edumy' ||
+        request.auth.token.get('email', '').lower() == 'nurshahidah@zera.edu.my' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roles', []).hasAny(['admin']))
+      );
+    }
+
+    // --- Entities ---
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'teacherName', 'roles', 'createdAt']) &&
+             data.keys().size() == 5 &&
+             data.uid is string && (data.uid == request.auth.uid || isAdmin()) &&
+             data.email is string && data.email.size() <= 200 &&
+             data.teacherName is string && data.teacherName.size() <= 100 &&
+             data.roles is list &&
+             data.createdAt is string;
+    }
+
+    function isValidProject(data) {
+      return data.keys().hasAll(['id', 'userId', 'timestamp', 'title', 'category', 'status', 'content']) &&
+             data.id is string && data.id.size() <= 128 &&
+             data.userId is string && (data.userId == request.auth.uid || isAdmin()) &&
+             data.timestamp is number &&
+             data.title is string && data.title.size() <= 500 &&
+             data.category in ['lesson-plan', 'worksheet', 'slides', 'poster', 'all'] &&
+             data.status in ['draft', 'submitted'] &&
+             data.content is map &&
+             (!data.keys().hasAny(['folderId']) || (data.folderId is string && data.folderId.size() <= 128)) &&
+             (!data.keys().hasAny(['teacherName']) || (data.teacherName is string && data.teacherName.size() <= 200)) &&
+             (!data.keys().hasAny(['settings']) || data.settings is map);
+    }
+
+    function isValidFolder(data) {
+      return data.keys().hasAll(['id', 'userId', 'name', 'timestamp']) &&
+             data.keys().size() == 4 &&
+             data.id is string && data.id.size() <= 128 &&
+             data.userId is string && (data.userId == request.auth.uid || isAdmin()) &&
+             data.name is string && data.name.size() <= 200 &&
+             data.timestamp is number;
+    }
+
+    // --- Matches ---
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(incoming()) && 
+                    incoming().uid == existing().uid && 
+                    incoming().email == existing().email;
+      allow delete: if isAdmin();
+    }
+
+    match /projects/{projectId} {
+      allow get: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidProject(incoming());
+      allow update: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin()) && isValidProject(incoming()) &&
+                    incoming().id == existing().id &&
+                    incoming().userId == existing().userId;
+      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    match /folders/{folderId} {
+      allow get: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidFolder(incoming());
+      allow update: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin()) && isValidFolder(incoming()) &&
+                    incoming().id == existing().id &&
+                    incoming().userId == existing().userId;
+      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "teacherName": { "type": "string" },
+        "roles": { "type": "array", "items": { "type": "string", "enum": ["educator", "admin"] } },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "roles", "createdAt"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Educational project/lesson content",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "folderId": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "title": { "type": "string" },
+        "category": { "type": "string", "enum": ["lesson-plan", "worksheet", "slides", "poster", "all"] },
+        "status": { "type": "string", "enum": ["draft", "submitted"] },
+        "teacherName": { "type": "string" },
+        "content": { "type": "object" },
+        "settings": { "type": "object" }
+      },
+      "required": ["id", "userId", "timestamp", "title", "category", "status", "content"]
+    },
+    "Folder": {
+      "title": "Folder",
+      "description": "Folder for organizing projects",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["id", "userId", "name", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Individual user profiles"
+    },
+    "/projects/{projectId}": {
+      "schema": "Project",
+      "description": "User educational projects"
+    },
+    "/folders/{folderId}": {
+      "schema": "Folder",
+      "description": "User organization folders"
+    }
+  }
+}
