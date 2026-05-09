@@ -2764,9 +2764,9 @@ export default function App() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
               {[
-                { id: 'lesson-plan', name: 'Lesson Plan', icon: BookOpen, desc: '6-Week Pedagogical Programs' },
+                { id: 'lesson-plan', name: 'Lesson Plan', icon: BookOpen, desc: 'Pedagogical Programs' },
                 { id: 'slides', name: 'Presentation', icon: Presentation, desc: 'Interactive Visual Materials' },
-                { id: 'worksheet', name: 'Worksheet', icon: FileText, desc: 'Academic Practice Papers' },
+                { id: 'worksheet', name: 'Assessment Hub', icon: FileText, desc: 'Academic Practice Papers' },
                 { id: 'poster', name: 'Poster Studio', icon: ImageIcon, desc: 'Educational Graphics & Signage' },
               ].map(tool => (
                 <button
@@ -3060,7 +3060,7 @@ export default function App() {
                 "px-4 py-2 bg-[#059669] text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#047857] transition-all shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait"
               )}
             >
-              <BookOpen size={14} /> {isGenerating ? 'Wait...' : 'Create Worksheet'}
+              <BookOpen size={14} /> {isGenerating ? 'Wait...' : 'Create Assessment'}
             </button>
             <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
             <button 
@@ -4135,14 +4135,14 @@ export default function App() {
          </div>
         <div className="flex items-center gap-2">
           <FileText className="text-[#FACC15]" size={24} />
-          <h2 className="text-xl font-black text-[#064E3B]">Worksheet Lab</h2>
+          <h2 className="text-xl font-black text-[#064E3B]">Assessment Hub</h2>
         </div>
         <div className="flex items-center gap-3">
           <button 
             onClick={resetWorksheet}
             className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-white/80 transition-all shadow-sm flex items-center gap-2"
           >
-            <Plus size={14} /> New Worksheet
+            <Plus size={14} /> New Assessment
           </button>
           <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
           {content?.worksheet && (
@@ -4167,7 +4167,7 @@ export default function App() {
       <div className="flex-1 flex overflow-hidden">
         <aside className="w-80 bg-white border-r-2 border-[#D1FAE5] p-6 space-y-6 overflow-y-auto">
           <div className="space-y-4">
-            <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest leading-none">Worksheet Settings</h3>
+            <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest leading-none">Assessment Settings</h3>
             <div className="space-y-2">
               <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Grade</label>
               <select value={yearGroup} onChange={(e) => setYearGroup(e.target.value)} className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold">
@@ -4261,7 +4261,7 @@ export default function App() {
               disabled={isGenerating || !lessonInput.trim()}
               className="w-full py-3 bg-[#059669] text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#047857] transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              {isGenerating ? <Loader2 className="animate-spin" /> : <Sparkles />} Generate Worksheet
+              {isGenerating ? <Loader2 className="animate-spin" /> : <Sparkles />} Generate Assessment
             </button>
             {content?.worksheet && (
               <button 
@@ -4313,7 +4313,7 @@ export default function App() {
                         <div className="p-2 bg-white rounded-xl shadow-sm text-[#064E3B]">
                           <Info size={20} />
                         </div>
-                        <h2 className="text-xl font-black uppercase tracking-tight text-[#064E3B]">Worksheet Description</h2>
+                        <h2 className="text-xl font-black uppercase tracking-tight text-[#064E3B]">Assessment Description</h2>
                       </div>
                       <p className="text-lg font-medium text-[#064E3B]/80 leading-relaxed">
                         {content.worksheet.description}
