@@ -42,6 +42,18 @@
         "timestamp": { "type": "number" }
       },
       "required": ["id", "userId", "name", "timestamp"]
+    },
+    "Timetable": {
+      "title": "Timetable",
+      "description": "School timetable configuration and data",
+      "type": "object",
+      "properties": {
+        "staffAssignments": { "type": "object" },
+        "assignmentQuotas": { "type": "array" },
+        "timetableGrid": { "type": "object" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["staffAssignments", "assignmentQuotas", "timetableGrid", "updatedAt"]
     }
   },
   "firestore": {
@@ -56,6 +68,10 @@
     "/folders/{folderId}": {
       "schema": "Folder",
       "description": "User organization folders"
+    },
+    "/school_config/timetable": {
+      "schema": "Timetable",
+      "description": "Global school timetable data"
     }
   }
 }

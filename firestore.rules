@@ -73,6 +73,14 @@ service cloud.firestore {
              data.timestamp is number;
     }
 
+    function isValidTimetable(data) {
+      return data.keys().hasAll(['staffAssignments', 'assignmentQuotas', 'timetableGrid', 'updatedAt']) &&
+             data.staffAssignments is map &&
+             data.assignmentQuotas is list &&
+             data.timetableGrid is map &&
+             data.updatedAt is number;
+    }
+
     // --- Matches ---
 
     match /users/{userId} {
@@ -103,6 +111,11 @@ service cloud.firestore {
                     incoming().id == existing().id &&
                     incoming().userId == existing().userId;
       allow delete: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    match /school_config/timetable {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() && isValidTimetable(incoming());
     }
   }
 }

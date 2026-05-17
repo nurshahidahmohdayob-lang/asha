@@ -42,6 +42,12 @@ export interface FontSettings {
   size?: number;
   color?: string;
   weight?: string;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  isVisible?: boolean;
+  rotation?: number;
 }
 
 export interface Sticker {
@@ -57,22 +63,29 @@ export interface Sticker {
   fontSettings?: FontSettings;
 }
 
-export interface PosterContent {
+export interface ReadingBook {
   title: string;
-  titleSettings?: FontSettings;
-  subTitle?: string;
-  subTitleSettings?: FontSettings;
-  keyPoints: string[];
+  author: string;
+  lexileLevel: string;
   summary: string;
-  summarySettings?: FontSettings;
-  ctaText?: string;
-  ctaSettings?: FontSettings;
-  illustrationPrompt: string;
-  colorPalette?: string[];
-  visualStyle?: string;
-  icons?: string[];
-  customImages?: Record<string, string>;
-  stickers?: Sticker[];
+  themes: string[];
+  vocabulary: string[];
+  comprehensionQuestions: string[];
+}
+
+export interface ReadingProgram {
+  title: string;
+  description: string;
+  gradeLevel: string;
+  focusArea: string; // e.g., Phonics, Comprehension, Fluency
+  duration: string; // e.g., 4 weeks
+  weeklyGoals: string[];
+  recommendedBooks: ReadingBook[];
+  milestones: {
+    week: number;
+    objective: string;
+    task: string;
+  }[];
 }
 
 export interface WeeklyPlan {
@@ -116,7 +129,7 @@ export interface EduContent {
     methodology?: string;
     sections: WorksheetSection[];
   };
-  poster?: PosterContent;
+  readingProgram?: ReadingProgram;
   lessonPlan?: LessonPlan;
   metadata: {
     yearGroup: string;

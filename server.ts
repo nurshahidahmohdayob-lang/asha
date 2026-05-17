@@ -40,13 +40,13 @@ async function startServer() {
     }
 
     try {
-      const { generateSlides, generateWorksheet, generatePoster, generateLessonPlan, generateWeeklyPlan, generateEduContent, suggestWeeklyInput } = await import("./src/services/geminiService.ts");
+      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateWeeklyPlan, generateEduContent, suggestWeeklyInput } = await import("./src/services/geminiService.ts");
       
       let result;
       switch (type) {
         case 'slides': result = await generateSlides(lessonInput, options); break;
         case 'worksheet': result = await generateWorksheet(lessonInput, options); break;
-        case 'poster': result = await generatePoster(lessonInput, "Professional educational poster", options); break;
+        case 'readingProgram': result = await generateReadingProgram(lessonInput, options); break;
         case 'lessonPlan': result = await generateLessonPlan(lessonInput, options); break;
         case 'weeklyPlan': result = await generateWeeklyPlan(lessonInput, options.weekNum, options, options.unit, options.topic); break;
         case 'suggest': result = await suggestWeeklyInput(lessonInput as any, options, options.weekNum); break;

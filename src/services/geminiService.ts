@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { EduContent, SlideContent, WorksheetSection, PosterContent, LessonPlan, WeeklyPlan } from "../types";
+import { EduContent, SlideContent, WorksheetSection, ReadingProgram, LessonPlan, WeeklyPlan } from "../types";
 
 // The platform injects GEMINI_API_KEY into the process.env at runtime.
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY as string });
@@ -34,7 +34,7 @@ export interface EduOptions {
   numQuestions: number;
   questionTypes: string[];
   includeStory?: boolean;
-  posterOnly?: boolean;
+  readingProgramOnly?: boolean;
   templateMode?: 'strict' | 'custom';
   metadataHints?: { description?: string, methodology?: string };
   fileContext?: {
@@ -53,6 +53,51 @@ export interface EduOptions {
   topics?: string[];
 }
 
+const CAMBRIDGE_CURRICULUM_INFO = `
+Cambridge Primary (Stages 1–6) & Lower Secondary (Stages 7–9) SUBJECT CODES:
+- English (0058/0861)
+- Mathematics (0096/0862)
+- Science (0097/0893)
+- Digital Literacy (0072/0082)
+- Computing (0059/0860)
+
+OFFICIAL LEARNING OBJECTIVE (LO) CODE FORMAT:
+Objectives MUST follow the [Stage][Strand].[Number] format. 
+Example for Stage 3 Digital Literacy: 3TC.01
+
+STRAND INITIALS BY SUBJECT:
+1. Digital Literacy (0072/0082):
+   - Tools and Content Creation (TC)
+   - Safety and Wellbeing (SW)
+   - The Digital World (DW)
+   *Correct Examples: 3TC.01, 3SW.02, 3DW.04*
+
+2. English (0058/0861):
+   - Reading (Rf)
+   - Writing (Wv)
+   - Speaking and Listening (SL)
+   *Correct Examples: 3Rf.01, 3Wv.05*
+
+3. Mathematics (0096/0862):
+   - Number (N)
+   - Geometry and Measure (G)
+   - Statistics and Probability (S)
+   - Thinking and Working Mathematically (TWM)
+   *Correct Examples: 3N.01, 3G.05*
+
+4. Science (0097/0893):
+   - Thinking and Working Scientifically (TW)
+   - Biology (Bs)
+   - Chemistry (Cs)
+   - Physics (Ps)
+   - Earth and Space (Es)
+   *Correct Examples: 3TW.01, 3Bs.02*
+
+Cambridge Primary: Art & Design (0067), Computing (0059), Digital Literacy (0072), English (0058), English as a Second Language (0057), Global Perspectives (0838), Humanities (0065), Mathematics (0096), Modern Foreign Language (0064), Music (0068), Physical Education (0069), Science (0097), Wellbeing (0034).
+Cambridge Lower Secondary: Art & Design (0073), Computing (0860), Digital Literacy (0082), English (0861), English as a Second Language (0876), Global Perspectives (1129), Humanities (0896), Mathematics (0862), Modern Foreign Language (0897), Music (0078), Physical Education (0081), Science (0893), Wellbeing (0859).
+Cambridge IGCSE / Upper Secondary: Physics (0625), Biology (0610), Chemistry (0620), Mathematics (0580), etc.
+`;
+
 export async function generateSlides(lessonInput: string, options: EduOptions): Promise<{ slides: SlideContent[], metadata: { description: string, methodology: string } }> {
   try {
     const contents: any[] = [];
@@ -61,8 +106,14 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
     }
 
     let mainPrompt = options.templateMode === 'strict'
-      ? `Generate educational slides for the topic: "${lessonInput}". Subject: ${options.subject}, Year Group: ${options.yearGroup}.`
-      : `Generate exactly ${options.numSlides} educational slides for: "${lessonInput}". Subject: ${options.subject}, Year Group: ${options.yearGroup}, ${options.lexileLevel !== 'None' ? `Lexile: ${options.lexileLevel}` : ''}.`;
+      ? `As an expert Cambridge Educator, generate educational slides for the topic: "${lessonInput}". Subject: ${options.subject}, Year Group: ${options.yearGroup}.`
+      : `As an expert Cambridge Educator, generate exactly ${options.numSlides} educational slides for: "${lessonInput}". Subject: ${options.subject}, Year Group: ${options.yearGroup}, ${options.lexileLevel !== 'None' ? `Lexile: ${options.lexileLevel}` : ''}.`;
+
+    mainPrompt += `\n\nCURRICULUM ALIGNMENT:
+    - Align with Cambridge International Framework, Scheme of Work, and official textbooks/references.
+    - Reference relevant subject codes and use the OFFICIAL LO CODE FORMAT (Stage+Strand+Number, e.g., 3TC.01) from the following list: ${CAMBRIDGE_CURRICULUM_INFO}
+    - Ensure logical progression and high academic terminology consistent with Cambridge standards.
+    - CRITICAL: Use the provided subject "${options.subject}" exactly as given. Do not substitute it with a similar subject (e.g. do not change Digital Literacy to Computer Science).`;
 
     if (options.metadataHints?.description) {
       mainPrompt += `\nLesson Description/Goal: ${options.metadataHints.description}`;
@@ -73,14 +124,15 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
 
     contents.push(mainPrompt);
     contents.push(`Format: JSON object with "slides" (array of {title, type, content, illustrationPrompt}) AND "metadata" (object with "description": string, "methodology": string).
-    "methodology": A concise string describing the lesson focus and pedagogical approach. IF methodology hints were provided in the prompt, expand on them while adhering to them strictly.
+    "methodology": A concise string describing the lesson focus and pedagogical approach (mention Cambridge framework alignment and specific subject code). IF methodology hints were provided in the prompt, expand on them while adhering to them strictly.
     "description": A high-level overview. IF description hints were provided, incorporate them.
     "type" for slides: one of title, content, activity, quiz.
     "illustrationPrompt": A concise string of 3-5 high-quality search keywords for an image.
     "layoutType": (OPTIONAL) suggest one of 'infographic-cards', 'infographic-flow', 'infographic-grid', 'infographic-bubbles' if the content suits a non-list layout, otherwise 'standard'.
     IMPORTANT: 
     1. Do NOT repeat the slide "title" as the first item or any item in the "content" array.
-    2. Each content point should be unique, informative, and distinct from the title.`);
+    2. Each content point should be unique, informative, and distinct from the title.
+    3. Refer to the Cambridge Subject Code (from the provided list) in the methodology or first slide where appropriate.`);
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -145,7 +197,13 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
       contents.push(`IMPORTANT: The worksheet should directly complement and assess the material presented in these slides.`);
     }
 
-    let mainPrompt = `Generate a worksheet for: "${lessonInput}" with ${options.numQuestions} questions. Subject: ${options.subject}, Year Group: ${options.yearGroup}. Allowed Types: ${options.questionTypes.join(", ")}. ${storyPrompt}`;
+    let mainPrompt = `As an expert Cambridge Educator, generate a worksheet for: "${lessonInput}" with ${options.numQuestions} questions. Subject: ${options.subject}, Year Group: ${options.yearGroup}. Allowed Types: ${options.questionTypes.join(", ")}. ${storyPrompt}`;
+
+    mainPrompt += `\n\nCURRICULUM ALIGNMENT:
+    - Align with Cambridge International Framework, Scheme of Work, and official textbooks/references.
+    - Reference relevant subject codes and use the OFFICIAL LO CODE FORMAT (Stage+Strand+Number, e.g., 3TC.01) from the following list: ${CAMBRIDGE_CURRICULUM_INFO}
+    - Ensure logical progression and high academic terminology consistent with Cambridge standards.
+    - CRITICAL: Use the provided subject "${options.subject}" exactly as given. Do not substitute it with a similar subject (e.g. do not change Digital Literacy to Computer Science).`;
 
     if (options.metadataHints?.description) {
       mainPrompt += `\nIntegration Goal: ${options.metadataHints.description}`;
@@ -155,7 +213,7 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
     }
 
     contents.push(mainPrompt);
-    contents.push(`Format: JSON object with "title", "readingPassage" (ONLY include this if the topic requires a story or if explicitly requested, otherwise return an empty string ""), "description" (A concise single-sentence summary of the worksheet's theme), "methodology" (A concise string describing the lesson focus and pedagogical methodology), and "sections" (array of {title, instructions, illustrationPrompt: (ONLY include if relevant), questions: array of {text, type, options: string array or null}}). Incorporation of hints provided in the prompt is mandatory.`);
+    contents.push(`Format: JSON object with "title", "readingPassage" (ONLY include this if the topic requires a story or if explicitly requested, otherwise return an empty string ""), "description" (A concise single-sentence summary of the worksheet's theme), "methodology" (A concise string describing the lesson focus and pedagogical methodology - MUST include Cambridge Subject Code, e.g. "Science (0097)"), and "sections" (array of {title, instructions, illustrationPrompt: (ONLY include if relevant), questions: array of {text, type, options: string array or null}}). Incorporation of hints provided in the prompt is mandatory.`);
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -210,22 +268,21 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
   }
 }
 
-export async function generatePoster(lessonInput: string, description: string, options: EduOptions): Promise<PosterContent> {
+export async function generateReadingProgram(lessonInput: string, options: EduOptions): Promise<ReadingProgram> {
   try {
     const contents: any[] = [];
-    contents.push(`As a world-class graphic designer for educational media (e.g., Book Week posters, Earth Day campaigns), generate content for a STUNNING, MULTI-LAYERED classroom poster about: "${lessonInput}".
-      Style: "${description}".
+    contents.push(`As an expert Literacy Specialist and Cambridge Educator, generate a comprehensive READING PROGRAM based on the theme: "${lessonInput}".
+      Subject: ${options.subject}, Grade Level: ${options.yearGroup}.
       
-      CRITICAL DESIGN REQUIREMENTS:
-      1. Title: Large, bold, and iconic.
-      2. SubTitle: A catchy secondary hook.
-      3. KeyPoints: 4 punchy, informative points (max 6 words each).
-      4. Summary: A short (1 sentence) inspiring takeaway.
-      5. CtaText: A bold call to action (e.g., "READ. DREAM. DISCOVER" or "LET'S SAVE OUR PLANET").
-      6. IllustrationPrompt: Describe a FULL SCENE. Request "no text" in the image. Use keywords: "whimsical illustration", "high-end digital art", "textured watercolor", "vibrant collage", "multiple focal points".
-      7. ColorPalette: 5 high-contrast, trendy HEX codes.
+      THE PROGRAM SHOULD INCLUDE:
+      1. A clear title and description.
+      2. A specific focus area (e.g., Phonics, Comprehension, Fluency, or Literature Appreciation).
+      3. A duration (e.g., 4 weeks).
+      4. 4-6 specific weekly goals.
+      5. 3-5 recommended books with Lexile levels, summaries, themes, vocabulary, and 3 comprehension questions each.
+      6. Weekly milestones (what the students should achieve and specific tasks for each week).
       
-      Format: JSON {title, subTitle, keyPoints, summary, ctaText, illustrationPrompt, colorPalette}.`);
+      Format: JSON object with "title", "description", "gradeLevel", "focusArea", "duration", "weeklyGoals" (string array), "recommendedBooks" (array of {title, author, lexileLevel, summary, themes, vocabulary, comprehensionQuestions}), and "milestones" (array of {week, objective, task}).`);
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -236,14 +293,41 @@ export async function generatePoster(lessonInput: string, description: string, o
           type: Type.OBJECT,
           properties: {
             title: { type: Type.STRING },
-            subTitle: { type: Type.STRING },
-            keyPoints: { type: Type.ARRAY, items: { type: Type.STRING } },
-            summary: { type: Type.STRING },
-            ctaText: { type: Type.STRING },
-            illustrationPrompt: { type: Type.STRING },
-            colorPalette: { type: Type.ARRAY, items: { type: Type.STRING } }
+            description: { type: Type.STRING },
+            gradeLevel: { type: Type.STRING },
+            focusArea: { type: Type.STRING },
+            duration: { type: Type.STRING },
+            weeklyGoals: { type: Type.ARRAY, items: { type: Type.STRING } },
+            recommendedBooks: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING },
+                  author: { type: Type.STRING },
+                  lexileLevel: { type: Type.STRING },
+                  summary: { type: Type.STRING },
+                  themes: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  vocabulary: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  comprehensionQuestions: { type: Type.ARRAY, items: { type: Type.STRING } }
+                },
+                required: ["title", "author", "summary", "lexileLevel"]
+              }
+            },
+            milestones: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  week: { type: Type.NUMBER },
+                  objective: { type: Type.STRING },
+                  task: { type: Type.STRING }
+                },
+                required: ["week", "objective", "task"]
+              }
+            }
           },
-          required: ["title", "keyPoints", "summary", "illustrationPrompt", "colorPalette"]
+          required: ["title", "description", "weeklyGoals", "recommendedBooks", "milestones"]
         }
       }
     });
@@ -253,7 +337,7 @@ export async function generatePoster(lessonInput: string, description: string, o
     return JSON.parse(text);
   } catch (err: any) {
     if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
-      return callAiProxy('poster', lessonInput, options);
+      return callAiProxy('readingProgram', lessonInput, options);
     }
     throw err;
   }
@@ -265,9 +349,12 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
     const mainPrompt = `As an expert Cambridge Educator, create a professional, detailed 6-WEEK Lesson Plan for a ${options.yearGroup} class.
       
       STANDARDS & FRAMEWORK:
+      - Use the provided subject "${options.subject}" exactly as given. Do not substitute it with a similar subject (e.g. do not change Digital Literacy to Computer Science).
       - Base the content strictly on the Cambridge International Curriculum (CAIE/Cambridge Primary/Lower Secondary).
-      - Align objectives with Cambridge Framework Learning Objectives.
+      - Align objectives with official Cambridge Framework Learning Objectives using the Stage+Strand+Number format (e.g., 3TC.01, 3Rf.04).
       - Incorporate methodology consistent with Cambridge Schemes of Work (SoW).
+      - Reference relevant subject codes and strand initials from the following list: ${CAMBRIDGE_CURRICULUM_INFO}
+      - Follow the official framework, scheme of work, and textbook/reference materials.
       
       6-WEEK TERM OVERVIEW:
       The teacher may have provided some specific units/topics. For any week left blank or marked 'Auto-assign', you MUST generate a logical, curriculum-appropriate progression based on the overall subject and description.
@@ -284,7 +371,7 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
 
       Format the response as a JSON object with:
       - "term": "${options.term || ''}"
-      - "subject": "${options.subject || ''}"
+      - "subject": string (MUST include Cambridge Code, e.g., "Science (0097)")
       - "duration": "${options.duration || ''}"
       - "date": "${options.date || ''}"
       - "academicYear": "${options.academicYear || ''}"
@@ -301,7 +388,7 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
         - "introduction": string (detailed overview of what this topic is about)
         - "activities": string (specific activities that the teacher can do for this topic. Be very detailed and write complete sentences.)
         - "assessment": string (what worksheet, quiz, exam or activity for this topic. Be very detailed and write complete sentences.)
-        - "resources": string (Unit #, Learning Standard code, and placeholders for slide/worksheet links)
+        - "resources": string (Include relevant Cambridge Learning Standard codes)
     `;
     contents.push(mainPrompt);
 
@@ -365,6 +452,11 @@ export async function suggestWeeklyInput(type: 'unit' | 'topic' | 'activity', op
     - Grade: ${options.yearGroup}
     - Overall Lesson Topic: ${options.overallTopic || 'General ' + options.subject}
     
+    CURRICULUM ALIGNMENT:
+    - Use the provided subject "${options.subject}" exactly as given. Do not substitute it with a similar subject (e.g. do not change Digital Literacy to Computer Science).
+    - Align with Cambridge International Framework (Primary, Lower Secondary, or IGCSE as appropriate for ${options.yearGroup}).
+    - Use relevant subject codes and official strand-based LO codes (e.g., 3TC.01) from this information: ${CAMBRIDGE_CURRICULUM_INFO}
+    
     TASK:
     Return ONLY a single concise ${type} suggestion. No explanation, no quotes.
     ${type === 'activity' ? 'Ensure the activity is hands-on or highly engaging for this age group.' : ''}
@@ -391,9 +483,12 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
     const mainPrompt = `As an expert Cambridge Educator, create a professional weekly lesson plan for WEEK ${weekNum} of a ${options.yearGroup} class.
       
       STANDARDS & FRAMEWORK:
+      - Use the provided subject "${options.subject}" exactly as given. Do not substitute it with a similar subject (e.g. do not change Digital Literacy to Computer Science).
       - Base the content strictly on the Cambridge International Curriculum.
-      - Align objectives with Cambridge Framework Learning Objectives.
+      - Align objectives with official Cambridge Framework Learning Objectives using the Stage+Strand+Number format (e.g., 3TC.01, 3Rf.04).
       - Incorporate methodology consistent with Cambridge Schemes of Work (SoW).
+      - Reference relevant subject codes and strand initials from the following list: ${CAMBRIDGE_CURRICULUM_INFO}
+      - Follow the official framework, scheme of work, and textbook/reference materials.
       
       ${unit ? `TARGET UNIT: "${unit}"` : ''}
       ${topic ? `TARGET TOPIC: "${topic}"` : ''}
@@ -452,25 +547,11 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
 
 export async function generateEduContent(lessonInput: string, options: EduOptions): Promise<EduContent | null> {
   try {
-    // If poster only, we just generate that
-    if (options.posterOnly) {
-      const poster = await generatePoster(lessonInput, "Visually engaging classroom poster", options);
-      return {
-        lessonTitle: lessonInput,
-        subject: options.subject,
-        gradeLevel: options.yearGroup,
-        slides: [],
-        worksheet: { title: "", sections: [] },
-        poster,
-        metadata: { yearGroup: options.yearGroup, lexileLevel: options.lexileLevel, subject: options.subject }
-      };
-    }
-
     // Parallel generation for maximum speed
-    const [slidesRes, worksheet, poster] = await Promise.all([
+    const [slidesRes, worksheet, readingProgram] = await Promise.all([
       generateSlides(lessonInput, options),
       generateWorksheet(lessonInput, options),
-      generatePoster(lessonInput, "Educational poster summarizing the key concepts", options)
+      generateReadingProgram(lessonInput, options)
     ]);
 
     return {
@@ -480,7 +561,7 @@ export async function generateEduContent(lessonInput: string, options: EduOption
       slides: slidesRes.slides,
       slidesMetadata: slidesRes.metadata,
       worksheet,
-      poster,
+      readingProgram,
       metadata: { yearGroup: options.yearGroup, lexileLevel: options.lexileLevel, subject: options.subject }
     };
   } catch (error: any) {

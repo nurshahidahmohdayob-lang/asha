@@ -28,6 +28,7 @@ import {
   Image as ImageIcon,
   CheckCircle,
   Scissors,
+  Library,
   FileUp,
   Info,
   Search,
@@ -122,7 +123,6 @@ import { PRESET_WALLPAPERS } from './constants/wallpapers';
 import { 
   EduContent, 
   AppTheme,
-  PosterContent,
   Sticker,
   SlideContent,
   SlideImage,
@@ -131,7 +131,7 @@ import {
 import { 
   generateSlides, 
   generateWorksheet, 
-  generatePoster, 
+  generateReadingProgram,
   generateLessonPlan,
   generateEduContent,
   generateWeeklyPlan,
@@ -259,17 +259,23 @@ interface SavedLesson {
   userId: string;
   timestamp: number;
   content: EduContent;
-  category: 'lesson-plan' | 'worksheet' | 'slides' | 'poster' | 'all';
+  category: 'lesson-plan' | 'worksheet' | 'slides' | 'reading-program' | 'all';
   title: string;
   status: 'draft' | 'submitted';
   teacherName: string;
   settings?: {
-    posterOnly: boolean;
+    readingProgramOnly: boolean;
     includeStory: boolean;
     isTemplateMode: boolean;
-    workspaceMode: 'slides' | 'worksheet' | 'poster' | 'lesson-plan';
+    workspaceMode: 'slides' | 'worksheet' | 'reading-program' | 'lesson-plan';
   }
 }
+
+const CAMBRIDGE_SUBJECTS = [
+  { group: "Cambridge Primary (Stages 1–6)", subjects: ["Art & Design (0067)", "Computing (0059)", "Digital Literacy (0072)", "English (0058)", "English as a Second Language (0057)", "Global Perspectives (0838)", "Humanities (0065)", "Mathematics (0096)", "Modern Foreign Language (0064)", "Music (0068)", "Physical Education (0069)", "Science (0097)", "Wellbeing (0034)"] },
+  { group: "Cambridge Lower Secondary (Stages 7–9)", subjects: ["Art & Design (0073)", "Computing (0860)", "Digital Literacy (0082)", "English (0861)", "English as a Second Language (0876)", "Global Perspectives (1129)", "Humanities (0896)", "Mathematics (0862)", "Modern Foreign Language (0897)", "Music (0078)", "Physical Education (0081)", "Science (0893)", "Wellbeing (0859)"] },
+  { group: "Cambridge IGCSE / Upper Secondary", subjects: ["English as a First Language (0500)", "English as a Second Language (0510)", "Mathematics (0580)", "Additional Mathematics (0606)", "Biology (0610)", "Chemistry (0620)", "Physics (0625)", "Combined Science (0653)", "Coordinated Sciences (0654)", "Business Studies (0450)", "Economics (0455)", "Accounting (0452)", "Computer Science (0478)", "ICT (0417)", "Art & Design (0400)", "Geography (0460)", "History (0470)", "Malay (Foreign Language) (0546)"] }
+];
 
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -341,8 +347,6 @@ export default function App() {
 
   const [activeTheme, setActiveTheme] = useState<AppTheme>(THEMES[0]);
   const [content, setContent] = useState<EduContent | null>(null);
-  const [selectedField, setSelectedField] = useState<'title' | 'subTitle' | 'summary' | 'ctaText' | null>(null);
-  const [selectedStickerId, setSelectedStickerId] = useState<string | null>(null);
   const [selectedSlideElement, setSelectedSlideElement] = useState<{ type: 'title' | 'bullet', index?: number } | null>(null);
   const [selectionFontSize, setSelectionFontSize] = useState<number>(24);
   const [bgGenPrompt, setBgGenPrompt] = useState("");
@@ -453,6 +457,193 @@ export default function App() {
   const [isMovingProject, setIsMovingProject] = useState<string | null>(null);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
+
+  useEffect(() => {
+    if (user) {
+      fetchProjects();
+      fetchFolders();
+    } else {
+      setUserProjects([]);
+      setFolders([]);
+    }
+  }, [user]);
+
+  const fetchProjects = () => {
+    if (!user) return;
+    setIsFetchingProjects(true);
+    const q = query(collection(db, 'projects'), where('userId', '==', user.uid));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const projects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setUserProjects(projects);
+      setIsFetchingProjects(false);
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'projects');
+      setIsFetchingProjects(false);
+    });
+    return unsubscribe;
+  };
+
+  const fetchFolders = () => {
+    if (!user) return;
+    setIsFetchingFolders(true);
+    const q = query(collection(db, 'folders'), where('userId', '==', user.uid));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const fetchedFolders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setFolders(fetchedFolders);
+      setIsFetchingFolders(false);
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'folders');
+      setIsFetchingFolders(false);
+    });
+    return unsubscribe;
+  };
+
+  // --- Keyboard Movement ---
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only trigger if an image or sticker is selected and we are NOT typing in an input
+      const isTyping = document.activeElement instanceof HTMLInputElement || 
+                       document.activeElement instanceof HTMLTextAreaElement || 
+                       (document.activeElement instanceof HTMLElement && document.activeElement.isContentEditable);
+      
+      if (isTyping) return;
+
+      const step = e.shiftKey ? 10 : 2; // Move more with shift
+      
+      const moveSlideImage = (dx: number, dy: number) => {
+        if (!selectedSlideImageId || !content?.slides) return;
+        const currentSlide = content.slides[currentSlideIdx];
+        const img = currentSlide?.images?.find(i => i.id === selectedSlideImageId);
+        if (img) {
+          updateSlideImage(selectedSlideImageId, { x: img.x + dx, y: img.y + dy });
+        }
+      };
+
+      if (e.key === 'ArrowLeft') { e.preventDefault(); moveSlideImage(-step, 0); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); moveSlideImage(step, 0); }
+      if (e.key === 'ArrowUp') { e.preventDefault(); moveSlideImage(0, -step); }
+      if (e.key === 'ArrowDown') { e.preventDefault(); moveSlideImage(0, step); }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedSlideImageId, content, currentSlideIdx]);
+
+  // Timetable Realtime Sync
+  useEffect(() => {
+    if (!user) return;
+    
+    const unsubscribe = onSnapshot(doc(db, 'school_config', 'timetable'), (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        if (data.teachers) setTeachers(data.teachers);
+        setStaffAssignments(data.staffAssignments || {});
+        setAssignmentQuotas(data.assignmentQuotas || []);
+        setTimetableGrid(data.timetableGrid || {});
+      }
+    }, (err) => {
+      // Don't throw for read errors if not admin, but log it
+      console.warn("Timetable read error (could be permission related):", err);
+    });
+    
+    return () => unsubscribe();
+  }, [user]);
+
+  const saveTimetableToFirebase = async (newTeachers: any, newAssignments: any, newQuotas: any, newGrid: any) => {
+    if (!user || !userRoles.includes('admin')) return;
+    try {
+      await setDoc(doc(db, 'school_config', 'timetable'), {
+        teachers: newTeachers,
+        staffAssignments: newAssignments,
+        assignmentQuotas: newQuotas,
+        timetableGrid: newGrid,
+        updatedAt: Date.now()
+      });
+      alert("Timetable configuration saved to cloud successfully!");
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'school_config/timetable');
+    }
+  };
+
+  const saveProject = async (lessonContent: EduContent, title: string, category: string) => {
+    if (!user) return;
+    const projectId = currentProjectId || Math.random().toString(36).substring(2, 15);
+    const projectData = {
+      id: projectId,
+      userId: user.uid,
+      folderId: activeFolderId,
+      timestamp: Date.now(),
+      title: title || "Untitled Project",
+      category,
+      status: 'draft',
+      teacherName: teacherName,
+      content: lessonContent,
+      settings: {
+        readingProgramOnly,
+        includeStory,
+        isTemplateMode,
+        workspaceMode
+      }
+    };
+
+    try {
+      await setDoc(doc(db, 'projects', projectId), projectData);
+      setCurrentProjectId(projectId);
+      alert("Project saved successfully!");
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `projects/${projectId}`);
+    }
+  };
+
+  const createFolder = async (name: string) => {
+    if (!user || !name.trim()) return;
+    const folderId = Math.random().toString(36).substring(2, 15);
+    try {
+      await setDoc(doc(db, 'folders', folderId), {
+        id: folderId,
+        userId: user.uid,
+        name,
+        timestamp: Date.now()
+      });
+      setNewFolderName('');
+      setIsCreatingFolder(false);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `folders/${folderId}`);
+    }
+  };
+
+  const deleteProject = async (projectId: string) => {
+    if (!user) return;
+    if (!window.confirm("Are you sure you want to delete this project?")) return;
+    try {
+      await deleteDoc(doc(db, 'projects', projectId));
+      if (currentProjectId === projectId) {
+        clearWorkspace();
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `projects/${projectId}`);
+    }
+  };
+
+  const deleteFolder = async (folderId: string) => {
+    if (!user) return;
+    if (!window.confirm("Delete folder and all its contents?")) return;
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'folders', folderId));
+      
+      const projectsInFolder = userProjects.filter(p => p.folderId === folderId);
+      projectsInFolder.forEach(p => {
+        batch.delete(doc(db, 'projects', p.id));
+      });
+      
+      await batch.commit();
+      if (activeFolderId === folderId) setActiveFolderId(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'batch-delete-folder');
+    }
+  };
+
   const [lessonInput, setLessonInput] = useState('');
   const [yearGroup, setYearGroup] = useState('Year 3');
   const [subject, setSubject] = useState('');
@@ -460,7 +651,7 @@ export default function App() {
   const [numSlides, setNumSlides] = useState(10);
   const [numQuestions, setNumQuestions] = useState(8);
   const [includeStory, setIncludeStory] = useState(false);
-  const [posterOnly, setPosterOnly] = useState(false);
+  const [readingProgramOnly, setReadingProgramOnly] = useState(false);
   const [isTemplateMode, setIsTemplateMode] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [imgFailed, setImgFailed] = useState<Record<string, boolean>>({});
@@ -712,7 +903,7 @@ export default function App() {
         slides: [],
         slidesMetadata: { description: "", methodology: "" },
         worksheet: { title: "", description: "", methodology: "", sections: [] },
-        poster: { title: "", keyPoints: [], summary: "", illustrationPrompt: "" },
+        readingProgram: { title: "", description: "", gradeLevel: "", focusArea: "", duration: "", weeklyGoals: [], recommendedBooks: [], milestones: [] },
         metadata: { yearGroup, lexileLevel, subject }
       };
       
@@ -748,7 +939,7 @@ export default function App() {
         slides: [],
         slidesMetadata: { description: "", methodology: "" },
         worksheet: { title: "", description: "", methodology: "", sections: [] },
-        poster: { title: "", keyPoints: [], summary: "", illustrationPrompt: "" },
+        readingProgram: { title: "", description: "", gradeLevel: "", focusArea: "", duration: "", weeklyGoals: [], recommendedBooks: [], milestones: [] },
         metadata: { yearGroup, lexileLevel, subject }
       };
       return {
@@ -770,7 +961,7 @@ export default function App() {
         slides: [],
         slidesMetadata: { description: "", methodology: "" },
         worksheet: { title: "", description: "", methodology: "", sections: [] },
-        poster: { title: "", keyPoints: [], summary: "", illustrationPrompt: "" },
+        readingProgram: { title: "", description: "", gradeLevel: "", focusArea: "", duration: "", weeklyGoals: [], recommendedBooks: [], milestones: [] },
         metadata: { yearGroup, lexileLevel, subject }
       };
       return {
@@ -1038,6 +1229,16 @@ export default function App() {
     </div>
   );
 
+  const [showImageEditor, setShowImageEditor] = useState(false);
+  const [editingImageField, setEditingImageField] = useState<'char1' | 'char2' | 'background' | null>(null);
+
+  const handleImageEditSave = (settings: { crop: { zoom: number, x: number, y: number }, removeBackground: boolean }) => {
+    if (!content?.readingProgram || !editingImageField) return;
+    
+    // For now, reading program doesn't have custom image settings in the same way
+    // but we can preserve the pattern if needed for books later.
+    setShowImageEditor(false);
+  };
   const generateSlidesForWeek = async (weekIdx: number) => {
     console.log("Generating slides for week:", weekIdx);
     const week = content?.lessonPlan?.weeklyBreakdown[weekIdx];
@@ -1154,7 +1355,7 @@ export default function App() {
             slides: [],
             slidesMetadata: { description: "", methodology: "" },
             worksheet: { title: "", description: "", methodology: "", sections: [] },
-            poster: { title: "", keyPoints: [], summary: "", illustrationPrompt: "" },
+            readingProgram: { title: "", description: "", gradeLevel: "", focusArea: "", duration: "", weeklyGoals: [], recommendedBooks: [], milestones: [] },
             metadata: { yearGroup, lexileLevel, subject }
           };
 
@@ -1334,9 +1535,6 @@ export default function App() {
     setLpDescription('');
     setLpWeeklyTopics(['', '', '', '', '', '']);
     
-    // Poster States
-    setPosterCriteria('');
-    setPosterDescription('');
     
     // Image Search States
     setImageSearchQuery('');
@@ -1352,8 +1550,6 @@ export default function App() {
     setCurrentSlideIdx(0);
     setSelectedSlideImageId(null);
     setSelectedSlideElement(null);
-    setSelectedField(null);
-    setSelectedStickerId(null);
   };
 
   const handleAddImageUrl = () => {
@@ -1456,7 +1652,7 @@ export default function App() {
           status: 'submitted',
           teacherName: teacherName,
           settings: {
-            posterOnly,
+            readingProgramOnly,
             includeStory,
             isTemplateMode,
             workspaceMode
@@ -1470,40 +1666,11 @@ export default function App() {
     }
   };
 
-  const saveProject = async () => {
-    if (!user || !content) return;
-    
-    try {
-      const id = currentProjectId || Date.now().toString();
-      const projectData = {
-        id,
-        userId: user.uid,
-        timestamp: Date.now(),
-        content,
-        category: workspaceMode,
-        title: content.lessonTitle || content.lessonPlan?.overallTopic || "Untitled Project",
-        status: 'draft',
-        teacherName: teacherName,
-        settings: {
-          posterOnly,
-          includeStory,
-          isTemplateMode,
-          workspaceMode
-        }
-      };
-      await setDoc(doc(db, 'projects', id), projectData);
-      setCurrentProjectId(id);
-      alert("Project saved successfully!");
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `projects/${currentProjectId || 'new'}`);
-    }
-  };
-
   const loadProject = (project: any) => {
     setCurrentProjectId(project.id);
     setContent(project.content);
     setWorkspaceMode(project.category || project.settings?.workspaceMode || 'slides');
-    setPosterOnly(project.settings?.posterOnly || false);
+    setReadingProgramOnly(project.settings?.readingProgramOnly || false);
     setIncludeStory(project.settings?.includeStory || false);
     setIsTemplateMode(project.settings?.isTemplateMode || false);
     
@@ -1511,57 +1678,8 @@ export default function App() {
     if (project.category === 'lesson-plan') setCurrentView('lesson-plan');
     else if (project.category === 'slides') setCurrentView('slides');
     else if (project.category === 'worksheet') setCurrentView('worksheet');
-    else if (project.category === 'poster') setCurrentView('poster');
+    else if (project.category === 'reading-program') setCurrentView('reading-program');
     else setCurrentView('slides');
-  };
-
-  const deleteProject = async (projectId: string) => {
-    if (typeof window !== 'undefined' && !window.confirm("Are you sure you want to delete this project?")) return;
-    try {
-      await deleteDoc(doc(db, 'projects', projectId));
-      if (currentProjectId === projectId) {
-        clearWorkspace();
-      }
-      alert("Project deleted successfully!");
-    } catch (err) {
-      console.error("Error deleting project:", err);
-      handleFirestoreError(err, OperationType.DELETE, `projects/${projectId}`);
-    }
-  };
-
-  const createFolder = async (name: string) => {
-    if (!user || !name.trim()) return;
-    try {
-      const id = Date.now().toString();
-      await setDoc(doc(db, 'folders', id), {
-        id,
-        userId: user.uid,
-        name: name.trim(),
-        timestamp: Date.now()
-      });
-      setNewFolderName('');
-      setIsCreatingFolder(false);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, 'folders/new');
-    }
-  };
-
-  const deleteFolder = async (folderId: string) => {
-    if (!confirm("Are you sure? This will NOT delete projects inside, they will move to 'All Projects'.")) return;
-    try {
-      const projectsToUpdate = userProjects.filter(p => p.folderId === folderId);
-      if (projectsToUpdate.length > 0) {
-        const batch = writeBatch(db);
-        projectsToUpdate.forEach(p => {
-          batch.update(doc(db, 'projects', p.id), { folderId: deleteField() });
-        });
-        await batch.commit();
-      }
-      await deleteDoc(doc(db, 'folders', folderId));
-      if (activeFolderId === folderId) setActiveFolderId(null);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `folders/${folderId}`);
-    }
   };
 
   const moveProjectToFolder = async (projectId: string, folderId: string | null) => {
@@ -1747,8 +1865,16 @@ export default function App() {
 
   const updateSlideImage = (id: string, updates: any) => {
     if (!content || !content.slides) return;
+    
+    // Sanitize updates to prevent NaN
+    const sanitizedUpdates = { ...updates };
+    if (updates.x !== undefined && isNaN(updates.x)) sanitizedUpdates.x = 0;
+    if (updates.y !== undefined && isNaN(updates.y)) sanitizedUpdates.y = 0;
+    if (updates.size !== undefined && isNaN(updates.size)) sanitizedUpdates.size = 200;
+    if (updates.rotation !== undefined && isNaN(updates.rotation)) sanitizedUpdates.rotation = 0;
+
     const slide = content.slides[currentSlideIdx];
-    const updatedImages = (slide.images || []).map(img => img.id === id ? { ...img, ...updates } : img);
+    const updatedImages = (slide.images || []).map(img => img.id === id ? { ...img, ...sanitizedUpdates } : img);
     const updatedSlides = [...content.slides];
     updatedSlides[currentSlideIdx] = { ...slide, images: updatedImages };
     setContent(prev => prev ? ({ ...prev, slides: updatedSlides }) : prev);
@@ -1828,23 +1954,27 @@ export default function App() {
     setCurrentView('worksheet');
   };
 
-  const resetPoster = () => {
+  const resetReadingProgram = () => {
     clearWorkspace();
     setContent({
-      lessonTitle: "Untitled Poster",
-      subject: "General",
+      lessonTitle: "Untitled Reading Program",
+      subject: "English",
       gradeLevel: "1",
       slides: [],
-      poster: {
-        title: "New Educational Poster",
-        keyPoints: ["Point 1", "Point 2"],
-        summary: "Enter a brief summary here",
-        illustrationPrompt: "An inspiring education background"
+      readingProgram: {
+        title: "Literacy Development Program",
+        description: "Focus on building foundational reading skills",
+        gradeLevel: "Year 1",
+        focusArea: "Phonics & Comprehension",
+        duration: "4 Weeks",
+        weeklyGoals: ["Recognize all letter sounds", "Read simple CVC words"],
+        recommendedBooks: [],
+        milestones: []
       },
-      metadata: { yearGroup: "1", lexileLevel: "N/A", subject: "General" }
+      metadata: { yearGroup: "1", lexileLevel: "N/A", subject: "English" }
     });
-    setWorkspaceMode('poster');
-    setCurrentView('poster');
+    setWorkspaceMode('reading-program');
+    setCurrentView('reading-program');
   };
 
   const resetLessonPlan = () => {
@@ -1933,7 +2063,7 @@ export default function App() {
           slides: [],
           slidesMetadata: { description: "", methodology: "" },
           worksheet: { title: "", description: "", methodology: "", sections: [] },
-          poster: { title: "", keyPoints: [], summary: "", illustrationPrompt: "" },
+          readingProgram: { title: "", description: "", gradeLevel: "", focusArea: "", duration: "", weeklyGoals: [], recommendedBooks: [], milestones: [] },
           metadata: { yearGroup, lexileLevel, subject }
         };
         const updated = {
@@ -1985,7 +2115,7 @@ export default function App() {
         slides: [],
         slidesMetadata: { description: "", methodology: "" },
         worksheet: worksheetData,
-        poster: { title: "", keyPoints: [], summary: "", illustrationPrompt: "" },
+        readingProgram: { title: "", description: "", gradeLevel: "", focusArea: "", duration: "", weeklyGoals: [], recommendedBooks: [], milestones: [] },
         metadata: { yearGroup, lexileLevel, subject }
       };
       setContent(eduContent);
@@ -1999,33 +2129,30 @@ export default function App() {
     setIsGenerating(false);
   };
 
-  const generateOnlyPoster = async () => {
+  const generateOnlyReadingProgram = async () => {
     if (!lessonInput.trim()) return;
-    setGeneratingMessage("Generating Poster...");
+    setGeneratingMessage("Generating Reading Program...");
     setIsGenerating(true);
-    const result = await generatePoster(lessonInput, posterDescription, {
+    const result = await generateReadingProgram(lessonInput, {
       yearGroup,
       lexileLevel,
       subject,
-      numSlides,
+      numSlides: 0,
       numQuestions: 0,
       questionTypes: [],
     });
     if (result) {
-      const eduContent: EduContent = content ? { ...content, poster: result } : {
+      const eduContent: EduContent = content ? { ...content, readingProgram: result } : {
         lessonTitle: lessonInput,
         subject,
         gradeLevel: yearGroup,
         slides: [],
-        worksheet: { title: "", sections: [] },
-        poster: result,
+        readingProgram: result,
         metadata: { yearGroup, lexileLevel, subject }
       };
       setContent(eduContent);
-      setWorkspaceMode('poster');
-
-      // Auto-save to vault commented out per user request
-      // saveToVault('poster', true, eduContent, lessonInput);
+      setWorkspaceMode('reading-program');
+      setCurrentView('reading-program');
     }
     setIsGenerating(false);
   };
@@ -2060,7 +2187,7 @@ export default function App() {
           gradeLevel: yearGroup,
           slides: [],
           worksheet: { title: "", sections: [] },
-          poster: { title: "", keyPoints: [], summary: "", illustrationPrompt: "" },
+          readingProgram: { title: "", description: "", gradeLevel: "", focusArea: "", duration: "", weeklyGoals: [], recommendedBooks: [], milestones: [] },
           lessonPlan: result,
           metadata: { yearGroup, lexileLevel, subject: lpSubject }
         };
@@ -2091,7 +2218,7 @@ export default function App() {
   const [isInputModalOpen, setIsInputModalOpen] = useState(false);
   const [editingImageUrl, setEditingImageUrl] = useState<string | null>(null);
   const [imageEditorCallback, setImageEditorCallback] = useState<{ cb: (newUrl: string) => void }>({ cb: () => {} });
-  const [currentView, setCurrentView] = useState<'home' | 'educator-suite' | 'lesson-plan' | 'slides' | 'worksheet' | 'poster' | 'admin'>('home');
+  const [currentView, setCurrentView] = useState<'home' | 'educator-suite' | 'lesson-plan' | 'slides' | 'worksheet' | 'reading-program' | 'admin'>('home');
   const [adminTab, setAdminTab] = useState<'overview' | 'timetable' | 'teachers' | 'assignments' | 'plans' | 'members'>('overview');
   const [allMembers, setAllMembers] = useState<any[]>([]);
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
@@ -2269,7 +2396,7 @@ export default function App() {
     return initial;
   });
   const [sidebarTab, setSidebarTab] = useState<'templates' | 'slides'>('slides');
-  const [workspaceMode, setWorkspaceMode] = useState<'slides' | 'poster' | 'worksheet' | 'lesson-plan'>('slides');
+  const [workspaceMode, setWorkspaceMode] = useState<'slides' | 'reading-program' | 'worksheet' | 'lesson-plan'>('slides');
 
   // --- Drag and Drop Timetable States ---
   const [assignmentQuotas, setAssignmentQuotas] = useState<{id: string, teacherId: string, subject: string, yearGroup: string, total: number}[]>(() => {
@@ -2347,12 +2474,8 @@ export default function App() {
   const [lpDescription, setLpDescription] = useState('');
   const [lpWeeklyTopics, setLpWeeklyTopics] = useState<string[]>(['', '', '', '', '', '']);
   
-  // --- Poster State ---
-  const [posterCriteria, setPosterCriteria] = useState('');
-  const [posterDescription, setPosterDescription] = useState('');
-
   const worksheetRef = useRef<HTMLDivElement>(null);
-  const posterRef = useRef<HTMLDivElement>(null);
+  const readingProgramRef = useRef<HTMLDivElement>(null);
   const slideRef = useRef<HTMLDivElement>(null);
   const lessonPlanRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -3144,6 +3267,12 @@ export default function App() {
                       )}
                    </div>
                    <button 
+                    onClick={() => saveTimetableToFirebase(teachers, staffAssignments, assignmentQuotas, timetableGrid)}
+                    className="self-end px-6 py-2 bg-emerald-600 text-white rounded-xl font-black uppercase text-xs tracking-widest shadow-md hover:bg-emerald-700 transition-colors flex items-center gap-2"
+                   >
+                     <Download size={14} /> Save to Cloud
+                   </button>
+                   <button 
                     onClick={() => {
                       const newGrid = { ...timetableGrid };
                       newGrid[schedulerYearGroup] = {};
@@ -3677,14 +3806,14 @@ export default function App() {
                 { id: 'lesson-plan', name: 'Lesson Plan', icon: BookOpen, desc: 'Pedagogical Programs' },
                 { id: 'slides', name: 'Presentation', icon: Presentation, desc: 'Interactive Visual Materials' },
                 { id: 'worksheet', name: 'Assessment Hub', icon: FileText, desc: 'Academic Practice Papers' },
-                { id: 'poster', name: 'Poster Studio', icon: ImageIcon, desc: 'Educational Graphics & Signage' },
+                { id: 'reading-program', name: 'Reading Program', icon: Library, desc: 'Literacy & Reading Development' },
               ].map(tool => (
                 <button
                   key={tool.id}
                   onClick={() => {
                     if (tool.id === 'slides') resetSlides();
                     else if (tool.id === 'worksheet') resetWorksheet();
-                    else if (tool.id === 'poster') resetPoster();
+                    else if (tool.id === 'reading-program') resetReadingProgram();
                     else if (tool.id === 'lesson-plan') resetLessonPlan();
                     else setCurrentView(tool.id as any);
                   }}
@@ -3831,7 +3960,7 @@ export default function App() {
                         {project.category === 'lesson-plan' && <BookOpen size={20} />}
                         {project.category === 'slides' && <Presentation size={20} />}
                         {project.category === 'worksheet' && <FileText size={20} />}
-                        {project.category === 'poster' && <ImageIcon size={20} />}
+                        {project.category === 'reading-program' && <BookOpen size={20} />}
                       </div>
                       
                       <div className="flex items-center gap-1">
@@ -3983,7 +4112,7 @@ export default function App() {
              {content?.slides && content.slides.length > 0 && (
                 <div className="flex items-center gap-2">
                   <button 
-                    onClick={() => saveProject()}
+                    onClick={() => content && saveProject(content, content.lessonTitle || lessonInput, workspaceMode)}
                     className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
                   >
                     <PlusCircle size={14} /> Save
@@ -4098,7 +4227,7 @@ export default function App() {
                               <input 
                                 type="range" min="50" max="600" step="10"
                                 value={selectedImg?.size || 200}
-                                onChange={(e) => updateSlideImage(selectedSlideImageId, { size: parseInt(e.target.value) })}
+                                onChange={(e) => updateSlideImage(selectedSlideImageId, { size: parseInt(e.target.value) || 200 })}
                                 className="w-full accent-[#059669]"
                               />
                             </div>
@@ -4107,7 +4236,7 @@ export default function App() {
                               <input 
                                 type="range" min="-180" max="180" step="5"
                                 value={selectedImg?.rotation || 0}
-                                onChange={(e) => updateSlideImage(selectedSlideImageId, { rotation: parseInt(e.target.value) })}
+                                onChange={(e) => updateSlideImage(selectedSlideImageId, { rotation: parseInt(e.target.value) || 0 })}
                                 className="w-full accent-[#059669]"
                               />
                             </div>
@@ -4464,12 +4593,27 @@ export default function App() {
                     type="range" 
                     min="5" 
                     max="50" 
-                    value={numSlides} 
-                    onChange={(e) => setNumSlides(parseInt(e.target.value))} 
+                    value={numSlides || 10} 
+                    onChange={(e) => setNumSlides(parseInt(e.target.value) || 10)} 
                     className="flex-1 accent-[#059669]"
                   />
-                  <span className="w-8 text-center font-black text-[#059669]">{numSlides}</span>
+                  <span className="w-8 text-center font-black text-[#059669]">{numSlides || 10}</span>
                 </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-[#7C7A65]">Subject</label>
+                <select 
+                  value={subject} 
+                  onChange={(e) => setSubject(e.target.value)} 
+                  className="w-full p-2 bg-[#F9F8F0] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold outline-none focus:border-[#059669]"
+                >
+                  <option value="">Select Cambridge Subject...</option>
+                  {CAMBRIDGE_SUBJECTS.map(g => (
+                    <optgroup key={g.group} label={g.group}>
+                      {g.subjects.map(s => <option key={s} value={s}>{s}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
               </div>
               <div className="space-y-2">
                 <label className="text-[10px] font-black uppercase text-[#7C7A65]">Generation Instructions</label>
@@ -5058,7 +5202,7 @@ export default function App() {
           {content?.worksheet && (
             <div className="flex items-center gap-2">
               <button 
-                onClick={() => saveProject()}
+                onClick={() => content && saveProject(content, content.lessonTitle || lessonInput, workspaceMode)}
                 className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
               >
                 <PlusCircle size={14} /> Save
@@ -5092,7 +5236,18 @@ export default function App() {
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Subject</label>
-              <input type="text" value={subject} onChange={(e) => setSubject(e.target.value)} className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold" />
+              <select 
+                value={subject} 
+                onChange={(e) => setSubject(e.target.value)} 
+                className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold outline-none focus:border-[#059669]"
+              >
+                <option value="">Select Cambridge Subject...</option>
+                {CAMBRIDGE_SUBJECTS.map(g => (
+                  <optgroup key={g.group} label={g.group}>
+                    {g.subjects.map(s => <option key={s} value={s}>{s}</option>)}
+                  </optgroup>
+                ))}
+              </select>
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Topic</label>
@@ -5109,7 +5264,12 @@ export default function App() {
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Number of Questions</label>
-              <input type="number" value={numQuestions} onChange={(e) => setNumQuestions(parseInt(e.target.value))} className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold" />
+              <input 
+                type="number" 
+                value={isNaN(numQuestions) ? "" : numQuestions} 
+                onChange={(e) => setNumQuestions(e.target.value === "" ? 0 : parseInt(e.target.value) || 0)} 
+                className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold" 
+              />
             </div>
             <div className="space-y-2">
               <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Question Types</label>
@@ -5346,13 +5506,13 @@ export default function App() {
     );
   };
 
-  const renderPosterView = () => {
-    if (!content || !content.poster) {
+  const renderReadingProgramView = () => {
+    if (!content || !content.readingProgram) {
       return (
         <div className="flex-1 flex items-center justify-center bg-[#FDFBF7]">
           <div className="text-center space-y-4">
-            <ImageIcon size={48} className="mx-auto text-[#064E3B]/20" />
-            <p className="text-[#064E3B]/60 font-bold">No poster content available.</p>
+            <Library size={48} className="mx-auto text-[#064E3B]/20" />
+            <p className="text-[#064E3B]/60 font-bold">No reading program available.</p>
             <button onClick={() => setCurrentView('educator-suite')} className="text-[#059669] font-black uppercase text-[10px] tracking-widest hover:underline">
               Return to Suite
             </button>
@@ -5360,567 +5520,169 @@ export default function App() {
         </div>
       );
     }
-    return (
-    <div className="flex-1 flex flex-col bg-[#F0FDF4] overflow-hidden">
-      <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20">
-        <div className="flex items-center gap-4">
-          <button onClick={() => {
-            clearWorkspace();
-            setCurrentView('educator-suite');
-          }} className="flex items-center gap-2 text-[#064E3B]/60 font-bold hover:text-[#064E3B] transition-colors">
-            <Home size={18} /> Suite
-          </button>
-          {content?.lessonPlan && (
-            <button 
-              onClick={() => setCurrentView('lesson-plan')} 
-              className="flex items-center gap-2 px-3 py-1.5 bg-[#F0FDF4] text-[#059669] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#D1FAE5] transition-all border border-[#D1FAE5]"
-            >
-              <ChevronLeft size={14} /> Lesson Design
-            </button>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <ImageIcon className="text-[#FACC15]" size={24} />
-          <h2 className="text-xl font-black text-[#064E3B]">Poster Studio</h2>
-        </div>
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={resetPoster}
-            className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-white/80 transition-all shadow-sm flex items-center gap-2"
-          >
-            <Plus size={14} /> New Poster
-          </button>
-          <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
-          {content?.poster && (
-            <div className="flex items-center gap-2 bg-[#F0FDF4] p-1 rounded-2xl border-2 border-[#D1FAE5]">
-              <button 
-                onClick={() => downloadPosterView('pdf')}
-                className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#064E3B] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#064E3B] hover:text-white transition-all shadow-sm flex items-center gap-2"
-              >
-                <FileText size={14} /> PDF
-              </button>
-              <button 
-                onClick={() => downloadPosterView('jpg')}
-                className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
-              >
-                <ImageIcon size={14} /> JPG
-              </button>
-            </div>
-          )}
-          {content?.poster && (
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => saveProject()}
-                className="px-4 py-2 bg-white text-[#059669] border-2 border-[#D1FAE5] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
-              >
-                <PlusCircle size={14} /> Save
-              </button>
-              <button 
-                onClick={() => submitToAdmin()}
-                className="px-4 py-2 bg-[#059669] text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#047857] transition-all shadow-sm flex items-center gap-2"
-              >
-                <CheckCircle size={14} /> Submit
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-       <div className="flex-1 flex overflow-hidden">
-        <aside className="w-80 bg-white border-r-2 border-[#D1FAE5] p-6 space-y-6 overflow-y-auto">
-          <div className="space-y-4">
-            <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest leading-none">Poster Criteria</h3>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Subject/Topic</label>
-              <input type="text" value={lessonInput} onChange={(e) => setLessonInput(e.target.value)} className="w-full p-2 bg-[#FDFBF7] border-2 border-[#FEFCE8] rounded-xl text-sm font-bold" />
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Criteria/Style</label>
-              <textarea value={posterDescription} onChange={(e) => setPosterDescription(e.target.value)} placeholder="e.g. Minimalist, colorful, informative" className="w-full h-32 p-2 bg-[#FDFBF7] border-2 border-[#FEFCE8] rounded-xl text-sm font-bold resize-none" />
-            </div>
-            <button 
-              onClick={generateOnlyPoster} 
-              disabled={isGenerating}
-              className="w-full py-3 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest shadow-md hover:bg-yellow-400 transition-all flex items-center justify-center gap-2"
-            >
-              {isGenerating ? <Loader2 className="animate-spin" /> : <Sparkles />} Generate Poster
-            </button>
-            <div className="space-y-4 pt-4 border-t border-[#FEFCE8]">
-              <div className="flex justify-between items-center">
-                <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest leading-none">Creative Tools</h3>
-                {(selectedField || selectedStickerId) && (
-                  <button 
-                    onClick={() => { setSelectedField(null); setSelectedStickerId(null); }}
-                    className="text-[10px] font-black uppercase text-[#FACC15] flex items-center gap-1 hover:underline"
-                  >
-                    <MousePointer2 size={10} /> Finish Editing
-                  </button>
-                )}
-              </div>
-              {/* Tools removed */}
-            </div>
- 
-              {/* Sticker Controls (if sticker selected) */}
-              {selectedStickerId && (
-                <div className="p-4 bg-white border-2 border-[#FACC15] rounded-xl shadow-lg animate-in slide-in-from-right-4 duration-300">
-                   <div className="flex justify-between items-center mb-3">
-                    <span className="text-[10px] font-black uppercase text-[#064E3B]">
-                      {content.poster.stickers?.find(s => s.id === selectedStickerId)?.text ? 'Text Controls' : 'Picture Controls'}
-                    </span>
-                    <button onClick={() => setSelectedStickerId(null)} className="p-1 hover:bg-gray-100 rounded-full"><X size={12} /></button>
-                  </div>
-                  
-                  {content.poster.stickers?.find(s => s.id === selectedStickerId)?.shape && (
-                    <div className="space-y-1 mb-3">
-                      <label className="text-[8px] font-bold text-[#064E3B]/40 uppercase">Shape Color</label>
-                      <input 
-                        type="color" 
-                        className="w-full h-8 rounded-lg cursor-pointer"
-                        value={content.poster.stickers?.find(s => s.id === selectedStickerId)?.color || '#059669'}
-                        onChange={(e) => updateSticker(selectedStickerId, { color: e.target.value })}
-                      />
-                    </div>
-                  )}
 
-                  {content.poster.stickers?.find(s => s.id === selectedStickerId)?.text && (
-                    <div className="space-y-3 mb-4">
-                       <textarea 
-                         className="w-full text-xs p-2 border rounded font-bold"
-                         value={content.poster.stickers?.find(s => s.id === selectedStickerId)?.text || ''}
-                         onChange={(e) => updateSticker(selectedStickerId, { text: e.target.value })}
-                         rows={2}
-                       />
-                       {/* Font Controls Removed */}
-                    </div>
-                  )}
- 
-                  <div className="grid grid-cols-2 gap-2">
-                    <button 
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        removeSticker(selectedStickerId);
-                      }}
-                      className="p-2 bg-red-100 text-red-600 rounded-lg text-[10px] font-black flex items-center justify-center gap-1 hover:bg-red-500 hover:text-white transition-all cursor-pointer shadow-sm"
-                    >
-                      <Trash2 size={12} /> Remove
-                    </button>
-                    <div className="flex items-center gap-2 px-2 bg-gray-50 rounded-lg">
-                       <RotateCw size={12} className="text-gray-400" />
-                       <input 
-                         type="range" min="0" max="360" 
-                         value={content.poster.stickers?.find(s => s.id === selectedStickerId)?.rotation || 0}
-                         onChange={(e) => updateSticker(selectedStickerId, { rotation: parseInt(e.target.value) })}
-                         className="w-full h-1"
-                       />
-                    </div>
+    const rp = content.readingProgram;
+
+    return (
+      <div className="flex-1 flex flex-col bg-[#F0FDF4] overflow-hidden">
+        <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20">
+          <div className="flex items-center gap-4">
+            <button onClick={() => {
+              clearWorkspace();
+              setCurrentView('educator-suite');
+            }} className="flex items-center gap-2 text-[#064E3B]/60 font-bold hover:text-[#064E3B] transition-colors">
+              <Home size={18} /> Suite
+            </button>
+            {content?.lessonPlan && (
+              <button 
+                onClick={() => setCurrentView('lesson-plan')} 
+                className="flex items-center gap-2 px-3 py-1.5 bg-[#F0FDF4] text-[#059669] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#D1FAE5] transition-all border border-[#D1FAE5]"
+              >
+                <ChevronLeft size={14} /> Lesson Design
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Library className="text-[#059669]" size={24} />
+            <h2 className="text-xl font-black text-[#064E3B]">Reading Program</h2>
+          </div>
+          <div className="flex items-center gap-3">
+             <button 
+              onClick={resetReadingProgram}
+              className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-white/80 transition-all shadow-sm flex items-center gap-2"
+            >
+              <Plus size={14} /> New Program
+            </button>
+            <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
+            <button 
+              onClick={() => content && saveProject(content, content.lessonTitle || lessonInput, 'reading-program')}
+              className="px-4 py-2 bg-white text-[#059669] border-2 border-[#D1FAE5] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
+            >
+              <PlusCircle size={14} /> Save
+            </button>
+            <button 
+              onClick={() => submitToAdmin()}
+              className="px-4 py-2 bg-[#059669] text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#047857] transition-all shadow-sm flex items-center gap-2"
+            >
+              <CheckCircle size={14} /> Submit
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 flex overflow-hidden">
+          <aside className="w-80 bg-white border-r-2 border-[#D1FAE5] p-6 space-y-6 overflow-y-auto">
+            <div className="space-y-4">
+              <div className="p-4 bg-[#F0FDF4] rounded-2xl border-2 border-[#D1FAE5]">
+                <h3 className="text-xs font-black uppercase text-[#064E3B] tracking-widest mb-2">Program Overview</h3>
+                <div className="space-y-3">
+                   <div>
+                    <p className="text-[10px] font-black uppercase text-[#064E3B]/40">Focus Area</p>
+                    <p className="text-sm font-bold text-[#064E3B]">{rp.focusArea}</p>
                   </div>
-                  
-                  <div className="mt-3 space-y-1">
-                    <label className="text-[8px] font-bold text-[#064E3B]/40 uppercase">Size</label>
-                    <input 
-                      type="range" 
-                      min={content.poster.stickers?.find(s => s.id === selectedStickerId)?.text ? "10" : "50"} 
-                      max={content.poster.stickers?.find(s => s.id === selectedStickerId)?.text ? "100" : "500"} 
-                      value={content.poster.stickers?.find(s => s.id === selectedStickerId)?.size || 150}
-                      onChange={(e) => updateSticker(selectedStickerId, { size: parseInt(e.target.value) })}
-                      className="w-full h-2 bg-[#D1FAE5] rounded-lg appearance-none cursor-pointer accent-[#059669]"
-                    />
+                  <div>
+                    <p className="text-[10px] font-black uppercase text-[#064E3B]/40">Duration</p>
+                    <p className="text-sm font-bold text-[#064E3B]">{rp.duration}</p>
                   </div>
                 </div>
-              )}
- 
-              <div className="grid grid-cols-2 gap-2">
-                <label className="cursor-pointer py-2 px-3 bg-[#FEFCE8] text-[#064E3B] border-2 border-[#FACC15] rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-[#FACC15] transition-all flex items-center justify-center gap-2">
-                  <PlusCircle size={14} /> Add Picture
-                  <input type="file" className="hidden" accept="image/*" onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      const reader = new FileReader();
-                      reader.onloadend = () => addSticker(reader.result as string);
-                      reader.readAsDataURL(file);
-                    }
-                  }} />
-                </label>
-                <button 
-                  onClick={() => handlePasteURL('sticker')}
-                  className="py-2 px-3 bg-[#FEFCE8] text-[#064E3B] border-2 border-[#FACC15] rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-[#FACC15] transition-all flex items-center justify-center gap-2"
-                >
-                  <Search size={14} /> Web Path
-                </button>
-                <button 
-                  onClick={addTextSticker}
-                  className="col-span-2 py-2 px-3 bg-[#FEFCE8] text-[#064E3B] border-2 border-dashed border-[#FACC15]/50 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-[#FACC15] transition-all flex items-center justify-center gap-2"
-                >
-                  <Type size={14} /> Add Wording
-                </button>
               </div>
 
               <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Add Shape</label>
-                <div className="grid grid-cols-4 gap-2">
-                  <button onClick={() => addShapeSticker('square')} className="p-2 border-2 border-[#D1FAE5] rounded-xl hover:bg-[#D1FAE5] transition-all flex items-center justify-center text-[#059669] shadow-sm"><Square size={16} /></button>
-                  <button onClick={() => addShapeSticker('circle')} className="p-2 border-2 border-[#D1FAE5] rounded-xl hover:bg-[#D1FAE5] transition-all flex items-center justify-center text-[#059669] shadow-sm"><Circle size={16} /></button>
-                  <button onClick={() => addShapeSticker('triangle')} className="p-2 border-2 border-[#D1FAE5] rounded-xl hover:bg-[#D1FAE5] transition-all flex items-center justify-center text-[#059669] shadow-sm"><Triangle size={16} /></button>
-                  <button onClick={() => addShapeSticker('star')} className="p-2 border-2 border-[#D1FAE5] rounded-xl hover:bg-[#D1FAE5] transition-all flex items-center justify-center text-[#059669] shadow-sm"><Star size={16} /></button>
-                </div>
-              </div>
- 
-              <div className="flex gap-2">
-                 <button 
-                   onClick={() => {
-                     if (window.confirm("Clear all added pictures?")) {
-                       updatePosterField('stickers', []);
-                     }
-                   }}
-                   className="flex-1 py-1 text-[9px] font-bold text-[#064E3B]/40 hover:text-red-500 transition-colors uppercase flex items-center justify-center gap-1"
-                 >
-                   <Trash2 size={10} /> Clear Pictures
-                 </button>
-              </div>
- 
-              <p className="text-[10px] text-[#064E3B]/40 font-bold leading-tight mt-2 italic px-1">
-                Tip: Drag stickers to move them.
-              </p>
-            </div>
- 
-            <div className="space-y-4 pt-4 border-t border-[#D1FAE5]">
-              <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest leading-none">Export Poster</h3>
-              <div className="grid grid-cols-2 gap-2">
-                <button 
-                  onClick={() => downloadPosterView('pdf')}
-                  className="py-2 px-3 bg-white border-2 border-[#059669] text-[#059669] rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-[#059669] hover:text-white transition-all flex items-center justify-center gap-2"
-                >
-                  <FileText size={12} /> PDF
-                </button>
-                <button 
-                  onClick={() => downloadPosterView('jpg')}
-                  className="py-2 px-3 bg-[#059669] text-white rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-[#047857] transition-all flex items-center justify-center gap-2"
-                >
-                  <ImageIcon size={12} /> JPG
-                </button>
-              </div>
-            </div>
-        </aside>
-        <main className="flex-1 p-8 overflow-y-auto flex justify-center bg-[#F0FDF4]/50 custom-scrollbar">
-          {content?.poster?.title ? (
-            <div 
-              className="w-[595px] h-[841px] relative overflow-hidden flex flex-col group shadow-[0_40px_100px_rgba(0,0,0,0.5)] transition-all duration-700 bg-[#FDFBF7] select-text" 
-              ref={posterRef}
-              style={{ borderColor: content.poster.colorPalette?.[0] || '#2D3436' }}
-            >
-              {/* VINTAGE PAPER TEXTURE */}
-              <div className="absolute inset-0 z-5 pointer-events-none opacity-[0.15] mix-blend-multiply" 
-                style={{ backgroundImage: 'url(https://www.transparenttextures.com/patterns/old-mathematics.png)' }} 
-              />
-              <div className="absolute inset-0 z-5 pointer-events-none opacity-[0.05] mix-blend-overlay" 
-                style={{ backgroundImage: 'url(https://www.transparenttextures.com/patterns/stardust.png)' }} 
-              />
-
-              {/* BACKGROUND SCENE */}
-              <div className="absolute inset-0 z-0 bg-[#FDFBF7]">
-                <img 
-                  key={content.poster.customImages?.background || content.poster.illustrationPrompt}
-                  referrerPolicy="no-referrer"
-                  src={content.poster.customImages?.background || `https://image.pollinations.ai/prompt/${encodeURIComponent("professional artistic wallpaper for classroom poster about " + (content.poster.illustrationPrompt || content.poster.title) + ", whimsical children's illustration style, vibrant colors, magical background, no text")}?width=800&height=1200&nologo=true&seed=42`} 
-                  className="w-full h-full object-cover"
-                  alt="Poster Background"
-                />
-                <div className="absolute inset-0 bg-gradient-to-b from-white/20 via-transparent to-black/30" />
-                
-                {/* Background Hover Controls */}
-                <div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-4 z-[60] group/bg-controls pointer-events-none">
-                  <p className="text-white font-black uppercase tracking-widest text-xs">Custom Background</p>
-                  <div className="flex gap-4">
-                    <label className="cursor-pointer bg-white text-black px-4 py-2 rounded-full font-bold text-[10px] hover:bg-[#FFD93D] transition-colors flex items-center gap-2">
-                       <FileUp size={14} /> Upload
-                       <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, 'background')} />
-                    </label>
-                    <button onClick={() => handlePasteURL('background')} className="bg-black text-white px-4 py-2 rounded-full font-bold text-[10px] hover:bg-[#6C5CE7] transition-colors border border-white/20 flex items-center gap-2">
-                       <Search size={14} /> Paste URL
-                    </button>
-                    {content.poster.customImages?.background && (
-                      <button onClick={() => setCustomImage('background', '')} className="bg-red-500 text-white px-4 py-2 rounded-full font-bold text-[10px] hover:bg-red-600 transition-colors">
-                         Reset
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* VINTAGE PAPER TEXTURE */}
-              <div className="absolute inset-0 z-10 pointer-events-none opacity-20 mix-blend-multiply" 
-                style={{ backgroundImage: 'url(https://www.transparenttextures.com/patterns/old-mathematics.png)' }} 
-              />
-              <div className="absolute inset-0 z-10 pointer-events-none opacity-5 mix-blend-overlay" 
-                style={{ backgroundImage: 'url(https://www.transparenttextures.com/patterns/stardust.png)' }} 
-              />
-
-              {/* MAIN CONTENT LAYER */}
-              <div className="relative z-20 flex-1 flex flex-col p-10 pt-16 items-center overflow-hidden">
-                
-                {/* HEADER RIBBON */}
-                <div 
-                  className={cn(
-                    "relative mb-6 cursor-pointer transition-transform hover:scale-105 active:scale-95 group/header pointer-events-auto",
-                    selectedField === 'subTitle' && "ring-4 ring-[#059669] ring-offset-4 rounded-lg"
-                  )}
-                  onClick={() => { setSelectedField('subTitle'); setSelectedStickerId(null); }}
-                >
-                  <div className="absolute inset-0 bg-[#2D3436] transform -rotate-1 skew-x-[-10deg] shadow-xl group-hover/header:rotate-0 transition-transform" />
-                  <div className="relative px-10 py-3 text-center min-w-[200px] z-20">
-                     <div 
-                       contentEditable={true}
-                       suppressContentEditableWarning={true}
-                       onMouseDown={(e) => {
-                         e.stopPropagation();
-                       }}
-                       onBlur={(e) => updatePosterField('subTitle', e.currentTarget.innerHTML || "")}
-                       dangerouslySetInnerHTML={{ __html: content.poster.subTitle || 'CLASSROOM GUIDE' }}
-                       className="bg-transparent border-none text-center focus:ring-0 text-white text-lg font-black tracking-[0.3em] uppercase drop-shadow-md w-full cursor-text outline-none select-text min-h-[1.2em] relative"
-                       style={{ 
-                         fontFamily: content.poster.subTitleSettings?.family ? `'${content.poster.subTitleSettings.family}', cursive, sans-serif` : 'Montserrat, sans-serif',
-                         fontSize: content.poster.subTitleSettings?.size ? `${content.poster.subTitleSettings.size / 4}px` : '20px',
-                         color: content.poster.subTitleSettings?.color || 'white',
-                         zIndex: 100
-                       }}
-                     ></div>
-                  </div>
-                </div>
-
-                {/* MAIN TITLE */}
-                <div 
-                  className={cn(
-                    "relative mb-10 text-center group/title w-full transition-all p-6 rounded-[2rem] pointer-events-auto z-20",
-                    selectedField === 'title' && "bg-white/30 backdrop-blur-sm ring-4 ring-[#059669] ring-offset-8"
-                  )}
-                  onClick={() => { setSelectedField('title'); setSelectedStickerId(null); }}
-                >
-                  <div 
-                    contentEditable={true}
-                    suppressContentEditableWarning={true}
-                    onBlur={(e) => updatePosterField('title', e.currentTarget.innerHTML || "")}
-                    onMouseDown={(e) => {
-                      e.stopPropagation();
-                    }}
-                    dangerouslySetInnerHTML={{ __html: content.poster.title || 'POSTER TITLE' }}
-                    className="w-full bg-transparent border-none text-center focus:ring-0 resize-none overflow-hidden h-auto cursor-text uppercase font-black tracking-tighter leading-[0.8] drop-shadow-2xl outline-none select-text min-h-[1em]"
-                    style={{ 
-                      fontFamily: content.poster.titleSettings?.family ? `'${content.poster.titleSettings.family}', cursive, sans-serif` : 'Fredoka One, sans-serif',
-                      color: content.poster.titleSettings?.color || content.poster.colorPalette?.[1] || '#FFD93D',
-                      fontSize: content.poster.titleSettings?.size ? `${content.poster.titleSettings.size}px` : '84px',
-                      textShadow: '3px 3px 0px #2D3436, -1px -1px 0px #2D3436',
-                      zIndex: 100
-                    }}
-                  ></div>
-                  
-                  {/* Decorative Sparkles */}
-                  <div className="absolute -top-6 -left-6 text-yellow-400 animate-bounce pointer-events-none"><Sparkles size={40} /></div>
-                  <div className="absolute -bottom-6 -right-6 text-yellow-400 animate-bounce delay-300 pointer-events-none"><Sparkles size={32} /></div>
-                </div>
-
-                {/* CALL TO ACTION BUBBLE */}
-                <div 
-                  className={cn(
-                    "bg-[#059669] text-white px-10 py-5 rounded-full shadow-2xl skew-x-[-10deg] rotate-[-2deg] mb-14 border-4 border-white inline-block cursor-pointer transition-all hover:rotate-0 hover:scale-110 active:scale-95 group/cta pointer-events-auto",
-                    selectedField === 'ctaText' && "ring-4 ring-white ring-offset-8"
-                  )}
-                  onClick={() => { setSelectedField('ctaText'); setSelectedStickerId(null); }}
-                >
-                  <div 
-                    contentEditable={true}
-                    suppressContentEditableWarning={true}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onBlur={(e) => updatePosterField('ctaText', e.currentTarget.innerHTML || "")}
-                    dangerouslySetInnerHTML={{ __html: content.poster.ctaText || 'LEARN MORE!' }}
-                    className="bg-transparent border-none text-center focus:ring-0 text-xl font-black tracking-widest uppercase italic w-full cursor-text select-text min-h-[1.2em] outline-none"
-                    style={{ 
-                      fontFamily: content.poster.ctaSettings?.family ? `'${content.poster.ctaSettings.family}', cursive, sans-serif` : 'Montserrat, sans-serif',
-                      fontSize: content.poster.ctaSettings?.size ? `${content.poster.ctaSettings.size / 3}px` : '28px',
-                      color: content.poster.ctaSettings?.color || 'white'
-                    }}
-                  />
-                </div>
-
-                {/* INFORMATION GRID */}
-                <div className="grid grid-cols-1 gap-6 w-full max-w-[440px] mb-12 pointer-events-auto relative z-[100]">
-                  {content.poster.keyPoints.slice(0, 3).map((point, i) => (
-                    <div 
-                      key={i}
-                      className="flex items-start gap-5 group/point"
-                    >
-                      <div className="flex-shrink-0 w-14 h-14 rounded-2xl bg-white shadow-2xl flex items-center justify-center border-2 border-[#2D3436] rotate-[-8deg] group-hover/point:rotate-0 transition-transform">
-                        <span className="text-[#2D3436] font-black text-2xl">
-                          {i === 0 ? '📅' : i === 1 ? '🌟' : '❤️'}
-                        </span>
+                <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest">Weekly Goals</h3>
+                <div className="space-y-2">
+                  {rp.weeklyGoals.map((goal, i) => (
+                    <div key={i} className="flex items-start gap-2 p-2 bg-[#FDFBF7] rounded-lg border border-[#FEFCE8]">
+                      <div className="w-4 h-4 rounded-full bg-[#D1FAE5] flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-[#059669]">
+                        {i + 1}
                       </div>
-                      <div className="bg-white/90 backdrop-blur-md p-5 rounded-[1.5rem] shadow-xl border-2 border-white flex-1 hover:bg-white transition-colors">
-                        <div 
-                          contentEditable={true}
-                          suppressContentEditableWarning={true}
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onBlur={(e) => {
-                            const newPoints = [...content.poster.keyPoints];
-                            newPoints[i] = e.currentTarget.innerHTML || "";
-                            updatePosterField('keyPoints', newPoints);
-                          }}
-                          dangerouslySetInnerHTML={{ __html: point || "" }}
-                          className="w-full bg-transparent border-none text-base font-black text-[#2D3436] leading-tight focus:ring-0 outline-none uppercase tracking-tight select-text cursor-text min-h-[1.2em]"
-                          style={{ position: 'relative', zIndex: 100 }}
-                        />
+                      <p className="text-xs text-[#064E3B]/80 font-medium">{goal}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            
+            <button 
+              onClick={generateOnlyReadingProgram}
+              disabled={isGenerating}
+              className="w-full py-3 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest shadow-md hover:bg-yellow-400 transition-all flex items-center justify-center gap-2"
+            >
+              {isGenerating ? <Loader2 className="animate-spin" /> : <Sparkles />} Regenerate Program
+            </button>
+          </aside>
+
+          <main className="flex-1 p-8 overflow-y-auto bg-[#F0FDF4]/50 custom-scrollbar">
+            <div className="max-w-4xl mx-auto space-y-8">
+              <header className="text-center space-y-4">
+                <h1 className="text-4xl font-black text-[#064E3B] uppercase tracking-tight">{rp.title}</h1>
+                <p className="text-lg text-[#064E3B]/70 font-medium max-w-2xl mx-auto">{rp.description}</p>
+              </header>
+
+              <section className="bg-white rounded-3xl p-8 border-2 border-[#D1FAE5] shadow-sm space-y-6">
+                <h2 className="text-xl font-black text-[#064E3B] flex items-center gap-3">
+                   <BookOpen className="text-[#059669]" /> Recommended Reading
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {rp.recommendedBooks.map((book, i) => (
+                    <div key={i} className="flex flex-col p-6 bg-[#FDFBF7] rounded-[2.5rem] border-2 border-[#FEFCE8] hover:border-[#059669] transition-all group overflow-hidden relative">
+                      <div className="flex-1 space-y-4">
+                        <div className="flex justify-between items-start">
+                          <h3 className="text-lg font-black text-[#064E3B] group-hover:text-[#059669]">{book.title}</h3>
+                          <span className="px-3 py-1 bg-white border border-[#D1FAE5] rounded-full text-[10px] font-black text-[#059669] uppercase">
+                            {book.lexileLevel}
+                          </span>
+                        </div>
+                        <p className="text-xs font-bold text-[#064E3B]/40 italic">by {book.author}</p>
+                        <p className="text-sm text-[#064E3B]/80 leading-relaxed line-clamp-3">{book.summary}</p>
+                        
+                        <div className="flex flex-wrap gap-2">
+                          {book.themes.map((theme, ti) => (
+                            <span key={ti} className="px-2 py-0.5 bg-[#F0FDF4] text-[#059669] text-[10px] font-bold rounded-md">
+                              {theme}
+                            </span>
+                          ))}
+                        </div>
+
+                        <div className="pt-4 border-t border-[#D1FAE5]/50 space-y-2">
+                          <p className="text-[10px] font-black uppercase text-[#064E3B]/40">Comprehension Check</p>
+                          <ul className="space-y-1">
+                            {book.comprehensionQuestions.slice(0, 2).map((q, qi) => (
+                              <li key={qi} className="text-xs text-[#064E3B]/70 font-medium flex gap-2">
+                                <span className="text-[#059669]">•</span> {q}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
                       </div>
                     </div>
                   ))}
                 </div>
+              </section>
 
-                {/* CHARACTERS SPOTS */}
-                <div className="absolute bottom-20 left-4 w-44 h-44 group/char1 pointer-events-auto">
-                   <img 
-                      src={content.poster.customImages?.char1 || `https://image.pollinations.ai/prompt/${encodeURIComponent((content.poster.icons?.[0] || 'cute child character') + " waving, whimsical illustration style, white background")}?width=200&height=200&nologo=true&seed=1`}
-                      className="w-full h-full object-contain translate-y-8 -translate-x-4 pointer-events-none opacity-90 transition-transform group-hover/char1:scale-110"
-                      alt="character"
-                   />
-                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/char1:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2 rounded-full overflow-hidden scale-90 z-20 pointer-events-none group-hover/char1:pointer-events-auto">
-                      <label className="cursor-pointer bg-white p-2 rounded-full shadow-lg hover:bg-[#FFD93D] transition-colors">
-                        <FileUp size={16} />
-                        <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, 'char1')} />
-                      </label>
-                      <button onClick={() => handlePasteURL('char1')} className="bg-black text-white p-2 rounded-full shadow-lg hover:bg-[#6C5CE7] transition-colors">
-                        <Search size={16} />
-                      </button>
-                      {content.poster.customImages?.char1 && (
-                         <button onClick={() => setCustomImage('char1', '')} className="bg-red-500 p-2 rounded-full shadow-lg text-white">
-                           <X size={12} />
-                         </button>
-                      )}
-                   </div>
-                </div>
-                <div className="absolute bottom-20 right-4 w-44 h-44 group/char2 pointer-events-auto">
-                   <img 
-                      src={content.poster.customImages?.char2 || `https://image.pollinations.ai/prompt/${encodeURIComponent((content.poster.icons?.[1] || 'cute animal friend') + " sitting, whimsical illustration style, white background")}?width=200&height=200&nologo=true&seed=2`}
-                      className="w-full h-full object-contain translate-y-8 translate-x-4 pointer-events-none opacity-90 transition-transform group-hover/char2:scale-110"
-                      alt="character"
-                   />
-                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/char2:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2 rounded-full overflow-hidden scale-90 z-20 pointer-events-none group-hover/char2:pointer-events-auto">
-                      <label className="cursor-pointer bg-white p-2 rounded-full shadow-lg hover:bg-[#FFD93D] transition-colors">
-                        <FileUp size={16} />
-                        <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, 'char2')} />
-                      </label>
-                      <button onClick={() => handlePasteURL('char2')} className="bg-black text-white p-2 rounded-full shadow-lg hover:bg-[#6C5CE7] transition-colors">
-                        <Search size={16} />
-                      </button>
-                      {content.poster.customImages?.char2 && (
-                         <button onClick={() => setCustomImage('char2', '')} className="bg-red-500 p-2 rounded-full shadow-lg text-white">
-                           <X size={12} />
-                         </button>
-                      )}
-                   </div>
-                </div>
-
-                {/* FOOTER MESSAGE */}
-                <div className="mt-auto w-full relative z-20 px-8 pb-4 pointer-events-auto">
-                  <div 
-                    className={cn(
-                      "bg-[#FFD93D] p-6 rounded-[2.5rem] border-4 border-[#2D3436] shadow-[10px_10px_0px_#2D3436] relative overflow-hidden group/footer cursor-pointer transition-all hover:scale-105 active:scale-95",
-                      selectedField === 'summary' && "ring-4 ring-[#6C5CE7] ring-offset-4"
-                    )}
-                    onClick={() => { setSelectedField('summary'); setSelectedStickerId(null); }}
-                  >
-                    <div className="absolute inset-0 bg-white/30 translate-x-full group-hover/footer:translate-x-[-100%] transition-transform duration-1000" />
-                    <div 
-                      contentEditable={true}
-                      suppressContentEditableWarning={true}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onBlur={(e) => updatePosterField('summary', e.currentTarget.innerHTML || "")}
-                      dangerouslySetInnerHTML={{ __html: content.poster.summary || "" }}
-                      className="w-full bg-transparent border-none text-xl font-black italic text-[#2D3436] uppercase tracking-tight leading-none text-center focus:ring-0 outline-none select-text cursor-text min-h-[1.2em]"
-                      style={{ 
-                        fontFamily: content.poster.summarySettings?.family ? `'${content.poster.summarySettings.family}', cursive, sans-serif` : 'Fredoka One, sans-serif',
-                        fontSize: content.poster.summarySettings?.size ? `${content.poster.summarySettings.size / 3}px` : '24px',
-                        color: content.poster.summarySettings?.color || '#2D3436',
-                        zIndex: 100
-                      }}
-                    />
+              <section className="bg-white rounded-3xl p-8 border-2 border-[#D1FAE5] shadow-sm space-y-6">
+                 <h2 className="text-xl font-black text-[#064E3B] flex items-center gap-3">
+                   <Target className="text-[#059669]" /> Weekly Milestones
+                </h2>
+                <div className="relative">
+                  <div className="absolute left-8 top-0 bottom-0 w-1 bg-[#D1FAE5] hidden md:block" />
+                  <div className="space-y-8">
+                    {rp.milestones.map((milestone, i) => (
+                      <div key={i} className="relative md:pl-16 flex flex-col md:flex-row gap-4 items-start">
+                        <div className="hidden md:flex absolute left-0 w-16 h-16 rounded-full bg-white border-4 border-[#D1FAE5] items-center justify-center z-10 shadow-sm">
+                           <span className="text-[#059669] font-black text-xl">{milestone.week}</span>
+                        </div>
+                        <div className="flex-1 w-full bg-[#FDFBF7] p-6 rounded-2xl border-2 border-[#FEFCE8] hover:border-[#059669] transition-all">
+                          <div className="md:hidden mb-2 inline-flex px-3 py-1 bg-[#059669] text-white rounded-full text-xs font-black uppercase">
+                            Week {milestone.week}
+                          </div>
+                          <h4 className="text-md font-black text-[#064E3B] mb-2 uppercase tracking-tight">{milestone.objective}</h4>
+                          <p className="text-sm text-[#064E3B]/70 font-medium leading-relaxed">{milestone.task}</p>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              </div>
-
-              {/* STICKERS LAYER */}
-              <div className="absolute inset-0 z-50 pointer-events-none">
-                {content.poster.stickers?.map(sticker => (
-                  <motion.div
-                    key={sticker.id}
-                    drag
-                    dragMomentum={false}
-                    className={cn(
-                      "absolute pointer-events-auto cursor-move group/sticker",
-                      selectedStickerId === sticker.id && "scale-105"
-                    )}
-                    style={{ 
-                      left: sticker.x, 
-                      top: sticker.y,
-                      width: sticker.url ? sticker.size : 'auto',
-                      rotate: sticker.rotation,
-                      position: 'absolute'
-                    }}
-                    onDragEnd={(e, info) => {
-                      updateSticker(sticker.id, { x: sticker.x + info.offset.x, y: sticker.y + info.offset.y });
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedStickerId(sticker.id);
-                      setSelectedField(null);
-                    }}
-                  >
-                    {sticker.url ? (
-                      <img src={sticker.url} className="w-full h-auto select-none" draggable={false} alt="sticker" />
-                    ) : sticker.text ? (
-                      <div 
-                        className="px-6 py-3 bg-white/40 backdrop-blur-md rounded-2xl whitespace-nowrap font-black uppercase drop-shadow-2xl select-none border-2 border-white/50"
-                        style={{
-                           fontFamily: sticker.fontSettings?.family ? `'${sticker.fontSettings.family}', cursive, sans-serif` : 'Fredoka One, sans-serif',
-                           fontSize: `${sticker.size}px`,
-                           color: sticker.fontSettings?.color || '#2D3436'
-                        }}
-                      >
-                        {sticker.text}
-                      </div>
-                    ) : sticker.shape ? (
-                      <RenderShape shape={sticker.shape} color={sticker.color} size={sticker.size} />
-                    ) : null}
-                    {selectedStickerId === sticker.id && (
-                      <button 
-                        type="button"
-                        onClick={(e) => { 
-                          if (e) {
-                            e.preventDefault();
-                            e.stopPropagation(); 
-                          }
-                          removeSticker(sticker.id); 
-                        }} 
-                        className="absolute -top-4 -right-4 bg-red-500 text-white p-1.5 rounded-full shadow-lg pointer-events-auto hover:bg-red-600 transition-colors cursor-pointer z-50"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    )}
-                  </motion.div>
-                ))}
-              </div>
-
-
-              {/* FLOATING DECORATIONS */}
-              <div className="absolute top-20 right-10 w-24 h-24 rotate-12 bg-white p-2 rounded-3xl shadow-2xl border-4 border-[#059669] hidden md:flex items-center justify-center">
-                <p className="text-[10px] font-black text-[#059669] text-center leading-none">BOOKS BRING US TOGETHER!</p>
-              </div>
+              </section>
             </div>
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-center mt-20 opacity-30 group animate-pulse">
-              <div className="w-32 h-32 bg-[#FFF9E5] rounded-[40px] flex items-center justify-center mb-6">
-                <ImageIcon size={64} className="text-[#FFD93D]" />
-              </div>
-              <p className="text-xl font-black text-[#FFD93D] uppercase tracking-widest">Generate a poster to see preview</p>
-            </div>
-          )}
         </main>
       </div>
     </div>
@@ -5979,7 +5741,7 @@ export default function App() {
                    <FileSpreadsheet size={14} /> Excel
                  </button>
                  <button 
-                  onClick={() => saveProject()}
+                  onClick={() => content && saveProject(content, content.lessonTitle || lessonInput, workspaceMode)}
                   className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
                 >
                   <PlusCircle size={14} /> Save
@@ -6013,15 +5775,21 @@ export default function App() {
               </div>
               <div className="space-y-1">
                 <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Subject</label>
-                <input 
-                  type="text" 
+                <select 
                   value={content?.lessonPlan?.subject || lpSubject} 
                   onChange={(e) => {
                     setLpSubject(e.target.value);
                     if (content?.lessonPlan) updateLessonPlanMetadata('subject', e.target.value);
                   }} 
-                  className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold" 
-                />
+                  className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
+                >
+                  <option value="">Select Cambridge Subject...</option>
+                  {CAMBRIDGE_SUBJECTS.map(g => (
+                    <optgroup key={g.group} label={g.group}>
+                      {g.subjects.map(s => <option key={s} value={s}>{s}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
               </div>
               <div className="space-y-1">
                 <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Duration</label>
@@ -6266,7 +6034,18 @@ export default function App() {
 
                <div className="grid grid-cols-6 border-2 border-black divide-x-2 divide-black text-[10px] font-black uppercase">
                  <div className="col-span-2 p-3">Term: <input type="text" value={content.lessonPlan.term || ""} onChange={(e) => updateLessonPlanMetadata('term', e.target.value)} className="bg-transparent font-normal normal-case ml-1 outline-none border-b border-transparent hover:border-black/10 focus:border-black/30 w-full" /></div>
-                 <div className="col-span-2 p-3">Subject: <input type="text" value={content.lessonPlan.subject || ""} onChange={(e) => updateLessonPlanMetadata('subject', e.target.value)} className="bg-transparent font-normal normal-case ml-1 outline-none border-b border-transparent hover:border-black/10 focus:border-black/30 w-full" /></div>
+                 <div className="col-span-2 p-3">Subject: <select 
+                      value={content.lessonPlan.subject || ""} 
+                      onChange={(e) => updateLessonPlanMetadata('subject', e.target.value)} 
+                      className="bg-transparent font-normal normal-case ml-1 outline-none border-b border-transparent hover:border-black/10 focus:border-black/30 w-full cursor-pointer"
+                    >
+                      <option value="">Select Subject...</option>
+                      {CAMBRIDGE_SUBJECTS.map(g => (
+                        <optgroup key={g.group} label={g.group}>
+                          {g.subjects.map(s => <option key={s} value={s}>{s}</option>)}
+                        </optgroup>
+                      ))}
+                    </select></div>
                  <div className="col-span-2 p-3">Duration: <input type="text" value={content.lessonPlan.duration || ""} onChange={(e) => updateLessonPlanMetadata('duration', e.target.value)} className="bg-transparent font-normal normal-case ml-1 outline-none border-b border-transparent hover:border-black/10 focus:border-black/30 w-full" /></div>
                </div>
 
@@ -6476,7 +6255,7 @@ export default function App() {
     if (!lessonInput.trim() && !fileContext) return;
     
     setGeneratingMessage(
-      posterOnly ? "Generating Poster..." : 
+      readingProgramOnly ? "Generating Reading Program..." : 
       (includeStory || !!fileContext) ? "Generating Worksheet..." : 
       "Generating Slides..."
     );
@@ -6507,11 +6286,11 @@ export default function App() {
         yearGroup,
         lexileLevel,
         subject,
-        numSlides: (includeStory || posterOnly) ? 0 : numSlides,
-        numQuestions: posterOnly ? 0 : numQuestions,
+        numSlides: (includeStory || readingProgramOnly) ? 0 : numSlides,
+        numQuestions: readingProgramOnly ? 0 : numQuestions,
         questionTypes: selectedQuestionTypes,
         includeStory,
-        posterOnly,
+        readingProgramOnly: readingProgramOnly,
         templateMode: fileContext ? templateUploadMode : undefined,
         fileContext: fileData
       });
@@ -6530,14 +6309,15 @@ export default function App() {
         }
         
         // Auto-save to vault
-        const category = posterOnly ? 'poster' : (includeStory || !!fileContext ? 'worksheet' : 'slides');
+        const category = readingProgramOnly ? 'reading-program' : (includeStory || !!fileContext ? 'worksheet' : 'slides');
         // saveToVault(category as any, true, convertedResult, result.lessonTitle || result.lessonPlan?.overallTopic);
 
         setCurrentSlideIdx(0);
         setIsInputModalOpen(false);
-        if (posterOnly) {
-          setWorkspaceMode('poster');
-          setSidebarTab('poster');
+        if (readingProgramOnly) {
+          setWorkspaceMode('reading-program');
+          setSidebarTab('history');
+          setCurrentView('reading-program');
         } else if (includeStory) {
           setWorkspaceMode('worksheet');
           setSidebarTab('worksheet');
@@ -6770,11 +6550,15 @@ export default function App() {
         // Main Image
         if (finalHasImage && displayImageUrl) {
           try {
-            s.addImage({
-              path: displayImageUrl,
-              x: 6.2, y: 1.1, w: 3.3, h: 4.1,
-              sizing: { type: 'cover', w: 3.3, h: 4.1 }
-            });
+            // Only add if explicitly provided or if we really want the fallback
+            // To fix user's issue with "empty boxes", we only add if slide.imageUrl is present
+            if (slide.imageUrl) {
+              s.addImage({
+                path: displayImageUrl,
+                x: 6.2, y: 1.1, w: 3.3, h: 4.1,
+                sizing: { type: 'cover', w: 3.3, h: 4.1 }
+              });
+            }
           } catch (e) {
             console.error("Failed to add image to PPTX", e);
           }
@@ -6900,158 +6684,6 @@ export default function App() {
 
   const [selectedImageSlot, setSelectedImageSlot] = useState<string | null>(null);
 
-  const updatePosterField = (field: keyof PosterContent, value: any) => {
-    setContent(prev => {
-      if (!prev || !prev.poster) return prev;
-      return {
-        ...prev,
-        poster: {
-          ...prev.poster,
-          [field]: value
-        }
-      };
-    });
-  };
-
-  const updateFontSettings = (field: 'titleSettings' | 'subTitleSettings' | 'summarySettings' | 'ctaSettings', settings: any) => {
-    if (!content || !content.poster) return;
-    setContent({
-      ...content,
-      poster: {
-        ...content.poster,
-        [field]: { ...(content.poster[field] || {}), ...settings }
-      }
-    });
-  };
-
-  const addSticker = (url: string) => {
-    if (!content || !content.poster) return;
-    const proxiedUrl = getProxiedUrl(url);
-    const newSticker = {
-      id: Math.random().toString(36).substr(2, 9),
-      url: proxiedUrl,
-      x: 100,
-      y: 100,
-      size: 150,
-      rotation: 0
-    };
-    setContent({
-      ...content,
-      poster: {
-        ...content.poster,
-        stickers: [...(content.poster.stickers || []), newSticker]
-      }
-    });
-    setSelectedStickerId(newSticker.id);
-  };
-
-  const addTextSticker = () => {
-    if (!content || !content.poster) return;
-    const newSticker: Sticker = {
-      id: Math.random().toString(36).substr(2, 9),
-      text: "NEW TEXT",
-      x: 150,
-      y: 150,
-      size: 32,
-      rotation: 0,
-      fontSettings: {
-        family: 'Fredoka One',
-        size: 32,
-        color: '#2D3436'
-      }
-    };
-    setContent({
-      ...content,
-      poster: {
-        ...content.poster,
-        stickers: [...(content.poster.stickers || []), newSticker]
-      }
-    });
-    setSelectedStickerId(newSticker.id);
-  };
-
-  const addShapeSticker = (shape: 'square' | 'circle' | 'triangle' | 'star') => {
-    if (!content || !content.poster) return;
-    const newSticker: Sticker = {
-      id: Math.random().toString(36).substr(2, 9),
-      shape,
-      color: content.poster.colorPalette?.[1] || '#059669',
-      x: 200,
-      y: 300,
-      size: 150,
-      rotation: 0
-    };
-    setContent({
-      ...content,
-      poster: {
-        ...content.poster,
-        stickers: [...(content.poster.stickers || []), newSticker]
-      }
-    });
-    setSelectedStickerId(newSticker.id);
-  };
-
-  const updateSticker = (id: string, updates: any) => {
-    if (!content || !content.poster || !content.poster.stickers) return;
-    setContent({
-      ...content,
-      poster: {
-        ...content.poster,
-        stickers: content.poster.stickers.map(s => s.id === id ? { ...s, ...updates } : s)
-      }
-    });
-  };
-
-  const removeSticker = (id: string | null) => {
-    if (!id || !content || !content.poster || !content.poster.stickers) return;
-    setContent({
-      ...content,
-      poster: {
-        ...content.poster,
-        stickers: content.poster.stickers.filter(s => String(s.id) !== String(id))
-      }
-    });
-    if (selectedStickerId === id) setSelectedStickerId(null);
-  };
-
-  const setCustomImage = (slot: string, url: string) => {
-    if (!content || !content.poster) return;
-    const customImages = { ...(content.poster.customImages || {}), [slot]: url };
-    setContent({
-      ...content,
-      poster: {
-        ...content.poster,
-        customImages
-      }
-    });
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, slot: string) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (slot === 'sticker') {
-          addSticker(reader.result as string);
-        } else {
-          setCustomImage(slot, reader.result as string);
-        }
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handlePasteURL = (slot: string) => {
-    const url = prompt("Paste image URL (from web search) here:");
-    if (url) {
-      if (slot === 'sticker') {
-        addSticker(url);
-      } else {
-        setCustomImage(slot, url);
-      }
-    }
-  };
-
   const downloadPNG = async (elementRef: React.RefObject<HTMLDivElement | null>, filename: string, isJpg: boolean = false) => {
     if (!elementRef.current) return;
     
@@ -7088,17 +6720,15 @@ export default function App() {
     }, 100);
   };
 
-  const downloadPosterView = (format: 'pdf' | 'png' | 'jpg') => {
+  const downloadReadingProgramView = (format: 'pdf' | 'png' | 'jpg') => {
     if (!content) return;
-    setSelectedField(null);
-    setSelectedStickerId(null);
-    const baseName = `${content.lessonTitle.replace(/\s+/g, '_')}_Poster`;
+    const baseName = `${content.lessonTitle.replace(/\s+/g, '_')}_Reading_Program`;
     if (format === 'pdf') {
-      downloadPDFFull(posterRef, `${baseName}.pdf`);
+      downloadPDFFull(readingProgramRef, `${baseName}.pdf`);
     } else if (format === 'png') {
-      downloadPNG(posterRef, `${baseName}.png`, false);
+      downloadPNG(readingProgramRef, `${baseName}.png`, false);
     } else {
-      downloadPNG(posterRef, `${baseName}.jpg`, true);
+      downloadPNG(readingProgramRef, `${baseName}.jpg`, true);
     }
   };
 
@@ -7198,7 +6828,7 @@ export default function App() {
 
   const downloadSlidePDF = () => downloadPDFFull(slideRef, `${content?.lessonTitle.replace(/\s+/g, '_')}_Slide_${currentSlideIdx + 1}.pdf`);
   const downloadSlidePNG = () => downloadPNG(slideRef, `${content?.lessonTitle.replace(/\s+/g, '_')}_Slide_${currentSlideIdx + 1}.png`);
-  const downloadPosterPDF = () => downloadPDFFull(posterRef, `${content?.lessonTitle.replace(/\s+/g, '_')}_Poster.pdf`);
+  const downloadReadingProgramPDF = () => downloadPDFFull(readingProgramRef, `${content?.lessonTitle.replace(/\s+/g, '_')}_Reading_Program.pdf`);
   const downloadWorksheetPDF = () => downloadPDFFull(worksheetRef, `${content?.lessonTitle.replace(/\s+/g, '_')}_Worksheet.pdf`);
   const downloadLessonPlanPDF = () => downloadPDFFull(lessonPlanRef, `${content?.lessonPlan?.overallTopic.replace(/\s+/g, '_')}_Lesson_Plan.pdf`);
 
@@ -7219,6 +6849,7 @@ export default function App() {
 
   return (
     <div className="w-full h-screen bg-[#059669] flex flex-col font-sans overflow-hidden text-[#2D3436]">
+
       <AnimatePresence mode="wait">
         {currentView === 'home' && (
           <motion.div key="home" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 flex overflow-hidden">
@@ -7250,9 +6881,9 @@ export default function App() {
             {renderWorksheetView()}
           </motion.div>
         )}
-        {currentView === 'poster' && (
-          <motion.div key="poster" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="flex-1 flex overflow-hidden">
-            {renderPosterView()}
+        {currentView === 'reading-program' && (
+          <motion.div key="reading-program" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="flex-1 flex overflow-hidden">
+            {renderReadingProgramView()}
           </motion.div>
         )}
       </AnimatePresence>
