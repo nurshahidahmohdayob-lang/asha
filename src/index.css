@@ -1,5 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Bangers&family=Fredoka+One&family=Lobster&family=Montserrat:wght@400;900&family=Playfair+Display:wght@900&family=Space+Grotesk:wght@700&family=Bungee&family=Chewy&family=Pacifico&display=swap');
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 @theme {
   --font-bangers: "Bangers", cursive;

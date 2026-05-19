@@ -27,6 +27,7 @@ import {
   Edit2,
   Image as ImageIcon,
   CheckCircle,
+  Check,
   Scissors,
   Library,
   FileUp,
@@ -38,6 +39,8 @@ import {
   Type as FontIcon,
   Bold,
   Italic,
+  Book,
+  GraduationCap,
   Underline,
   Palette,
   Move,
@@ -48,6 +51,7 @@ import {
   PlusCircle,
   Undo,
   Redo,
+  Eye,
   MousePointer2,
   Users,
   UserCheck,
@@ -74,12 +78,16 @@ import {
   Folder,
   FolderPlus,
   ArrowRightCircle,
-  MoreVertical
+  MoreVertical,
+  Volume2,
+  Gamepad2,
+  Play
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import ReactMarkdown from 'react-markdown';
 import pptxgen from 'pptxgenjs';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, SectionType } from 'docx';
 import { jsPDF } from 'jspdf';
@@ -105,6 +113,7 @@ import {
   onSnapshot, 
   doc, 
   setDoc, 
+  addDoc,
   deleteDoc, 
   updateDoc,
   writeBatch,
@@ -126,7 +135,8 @@ import {
   Sticker,
   SlideContent,
   SlideImage,
-  FontSettings
+  FontSettings,
+  HandoutMetadata
 } from './types';
 import { 
   generateSlides, 
@@ -145,6 +155,13 @@ const auth = getAuth(firebaseApp);
 const db = initializeFirestore(firebaseApp, {
   experimentalForceLongPolling: true,
 }, firebaseConfig.firestoreDatabaseId);
+
+// Connection state for UI
+let isFirestoreConnected = false;
+const setFirestoreConnected = (val: boolean) => {
+  isFirestoreConnected = val;
+  window.dispatchEvent(new CustomEvent('firestore-connection-changed', { detail: val }));
+};
 
 const ADMIN_EMAILS = [
   'nurshahidahmohdayob@gmail.com', 
@@ -259,7 +276,7 @@ interface SavedLesson {
   userId: string;
   timestamp: number;
   content: EduContent;
-  category: 'lesson-plan' | 'worksheet' | 'slides' | 'reading-program' | 'all';
+  category: 'lesson-plan' | 'worksheet' | 'slides' | 'notes' | 'all';
   title: string;
   status: 'draft' | 'submitted';
   teacherName: string;
@@ -267,7 +284,7 @@ interface SavedLesson {
     readingProgramOnly: boolean;
     includeStory: boolean;
     isTemplateMode: boolean;
-    workspaceMode: 'slides' | 'worksheet' | 'reading-program' | 'lesson-plan';
+    workspaceMode: 'slides' | 'worksheet' | 'notes' | 'lesson-plan';
   }
 }
 
@@ -289,24 +306,47 @@ export default function App() {
   const [registerRoles, setRegisterRoles] = useState<string[]>(['educator']);
   const [userRoles, setUserRoles] = useState<string[]>(['educator']);
   const [authError, setAuthError] = useState('');
+  const [isOnline, setIsOnline] = useState(true);
+  const [firestoreError, setFirestoreError] = useState<string | null>(null);
 
   // --- Firebase Debugging ---
   useEffect(() => {
     const testConnection = async () => {
       try {
-        // Test connection to Firestore
         const { getDocFromServer } = await import('firebase/firestore');
-        await getDocFromServer(doc(db, 'system', 'connection_test')).catch(() => {
-           // We expect failure if doc doesn't exist, but it confirms network connectivity
+        // Use a 15s timeout for the initial check to be more patient than the default 10s
+        const connectPromise = getDocFromServer(doc(db, 'system', 'connection_test'));
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Connection timeout')), 15000)
+        );
+
+        await Promise.race([connectPromise, timeoutPromise]).catch((err: any) => {
+          // If we get "not-found" or "permission-denied", it means we successfully reached the Firestore backend
+          // but either the doc doesn't exist or we don't have access. Both are proof of connectivity.
+          if (err.code === 'not-found' || err.message?.includes('not-found')) return;
+          if (err.code === 'permission-denied' || err.message?.includes('permission-denied')) {
+            console.warn("Firestore reached, but permission was denied for connection test. Considering connected.");
+            return;
+          }
+          throw err;
         });
+
         console.log("Firebase connection established.");
+        setIsOnline(true);
+        setFirestoreError(null);
+        setFirestoreConnected(true);
       } catch (error: any) {
-        if (error.message?.includes('offline')) {
-          console.error("Firebase is offline. Check your config.");
-        }
+        console.error("Firestore connectivity issue:", error);
+        setIsOnline(false);
+        setFirestoreError(error.message || "Could not reach Firestore backend");
+        setFirestoreConnected(false);
       }
     };
     testConnection();
+
+    const handleConnChange = (e: any) => setIsOnline(e.detail);
+    window.addEventListener('firestore-connection-changed', handleConnChange);
+    return () => window.removeEventListener('firestore-connection-changed', handleConnChange);
   }, []);
 
   const handleEduError = (err: any, context: string) => {
@@ -453,6 +493,8 @@ export default function App() {
   const [folders, setFolders] = useState<any[]>([]);
   const [isFetchingProjects, setIsFetchingProjects] = useState(false);
   const [isFetchingFolders, setIsFetchingFolders] = useState(false);
+  const [submittedProjects, setSubmittedProjects] = useState<any[]>([]);
+  const [isFetchingSubmitted, setIsFetchingSubmitted] = useState(false);
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [isMovingProject, setIsMovingProject] = useState<string | null>(null);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
@@ -579,7 +621,6 @@ export default function App() {
       teacherName: teacherName,
       content: lessonContent,
       settings: {
-        readingProgramOnly,
         includeStory,
         isTemplateMode,
         workspaceMode
@@ -650,12 +691,52 @@ export default function App() {
   const [lexileLevel, setLexileLevel] = useState('400-500');
   const [numSlides, setNumSlides] = useState(10);
   const [numQuestions, setNumQuestions] = useState(8);
+  const [isReviewMode, setIsReviewMode] = useState(false);
   const [includeStory, setIncludeStory] = useState(false);
-  const [readingProgramOnly, setReadingProgramOnly] = useState(false);
+  const [readingPassageOnly, setReadingPassageOnly] = useState(false);
+  const [sessionTopic, setSessionTopic] = useState('');
+  const [sessionSubtopics, setSessionSubtopics] = useState('');
+  const [sessionWeeks, setSessionWeeks] = useState<number>(1);
+  const [termWeeks, setTermWeeks] = useState<number>(10);
+  const [lpUnit, setLpUnit] = useState<string[]>(Array(1).fill(''));
+  const [lpWeeklyTopics, setLpWeeklyTopics] = useState<string[]>(Array(1).fill(''));
+  const [lpActivities, setLpActivities] = useState<string[]>(Array(1).fill(''));
+  const [lpWeekLabels, setLpWeekLabels] = useState<string[]>(Array.from({ length: 1 }, (_, i) => `Week ${i + 1}`));
+  const [lpDescription, setLpDescription] = useState('');
+  const [isSessionPlannerOpen, setIsSessionPlannerOpen] = useState(false);
   const [isTemplateMode, setIsTemplateMode] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isPreviewHandout, setIsPreviewHandout] = useState(false);
   const [imgFailed, setImgFailed] = useState<Record<string, boolean>>({});
   const [manualLink, setManualLink] = useState('');
+
+  // Sync weekly arrays with sessionWeeks
+  useEffect(() => {
+    setLpUnit(prev => {
+      if (prev.length === sessionWeeks) return prev;
+      if (prev.length < sessionWeeks) return [...prev, ...Array(sessionWeeks - prev.length).fill('')];
+      return prev.slice(0, sessionWeeks);
+    });
+    setLpWeeklyTopics(prev => {
+      if (prev.length === sessionWeeks) return prev;
+      if (prev.length < sessionWeeks) return [...prev, ...Array(sessionWeeks - prev.length).fill('')];
+      return prev.slice(0, sessionWeeks);
+    });
+    setLpActivities(prev => {
+      if (prev.length === sessionWeeks) return prev;
+      if (prev.length < sessionWeeks) return [...prev, ...Array(sessionWeeks - prev.length).fill('')];
+      return prev.slice(0, sessionWeeks);
+    });
+    setLpWeekLabels(prev => {
+      if (prev.length === sessionWeeks) return prev;
+      if (prev.length < sessionWeeks) {
+        const next = [...prev];
+        for (let i = prev.length; i < sessionWeeks; i++) next.push(`Week ${i + 1}`);
+        return next;
+      }
+      return prev.slice(0, sessionWeeks);
+    });
+  }, [sessionWeeks]);
 
   // Undo/Redo State
   const [historyStack, setHistoryStack] = useState<EduContent[]>([]);
@@ -885,7 +966,43 @@ export default function App() {
   const [fileContext, setFileContext] = useState<{ mimeType: string, data: string, name: string } | null>(null);
   const [selectedQuestionTypes, setSelectedQuestionTypes] = useState<string[]>(['Multiple Choice', 'Fill in the Blanks', 'Short Answer']);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
   const [generatingMessage, setGeneratingMessage] = useState("Generating...");
+
+  const generateNotesAI = async () => {
+    if (!content) return;
+    setGeneratingMessage("Drafting Academic Notes...");
+    setIsGenerating(true);
+    setIsGeneratingNotes(true);
+    try {
+      const { generateEduNotes } = await import('./services/geminiService');
+      const lessonInput = content.handoutMetadata?.subtopic || content.handoutMetadata?.topic || content.lessonTitle || content.subject || "";
+      const result = await generateEduNotes(lessonInput, {
+        yearGroup: content.handoutMetadata?.yearGroup || content.gradeLevel || content.metadata.yearGroup || "",
+        subject: content.handoutMetadata?.subject || content.subject || content.metadata.subject || "",
+        numSlides: 0,
+        numQuestions: 0,
+        questionTypes: [],
+        lexileLevel: 'None',
+        metadataHints: {
+          description: content.handoutMetadata?.description || content.slidesMetadata?.description || "",
+          methodology: content.handoutMetadata?.methodology || content.slidesMetadata?.methodology || ""
+        }
+      });
+      
+      if (result && result.notes) {
+        setContent(prev => ({
+          ...prev!,
+          studentNotes: result.notes
+        }));
+      }
+    } catch (err: any) {
+      handleEduError(err, "Generating notes with AI");
+    } finally {
+      setIsGenerating(false);
+      setIsGeneratingNotes(false);
+    }
+  };
 
   const [isGeneratingWeek, setIsGeneratingWeek] = useState<{ index: number, type: 'slides' | 'worksheet' | 'plan' } | null>(null);
   const [isSuggesting, setIsSuggesting] = useState<'unit' | 'topic' | 'activity' | null>(null);
@@ -1304,6 +1421,8 @@ export default function App() {
         numSlides: 0,
         numQuestions: 8,
         questionTypes: selectedQuestionTypes,
+        includeStory,
+        readingPassageOnly,
       });
 
       if (result) {
@@ -1326,30 +1445,35 @@ export default function App() {
     }
   };
 
-  const generateSpecificWeek = async () => {
-    if (!customGenActivity.trim()) {
-      alert("Please enter an activity description.");
+  const generateSpecificWeek = async (index: number) => {
+    const activity = lpActivities[index];
+    const unit = lpUnit[index];
+    const topic = lpWeeklyTopics[index];
+    const weekNum = index + 1;
+
+    if (!activity.trim()) {
+      alert("Please enter an activity description for " + (lpWeekLabels[index] || `Week ${weekNum}`));
       return;
     }
     
-    setGeneratingMessage(`Generating Weekly Plan for Week ${selectedGenWeek}...`);
-    setIsGeneratingWeek({ index: selectedGenWeek - 1, type: 'plan' });
+    setGeneratingMessage(`Generating Weekly Plan for ${lpWeekLabels[index] || `Week ${weekNum}`}...`);
+    setIsGeneratingWeek({ index, type: 'plan' });
     setIsGenerating(true);
     try {
-      const weekData = await generateWeeklyPlan(customGenActivity, selectedGenWeek, {
+      const weekData = await generateWeeklyPlan(activity, weekNum, {
         yearGroup: content?.lessonPlan?.class || yearGroup,
         lexileLevel,
         subject: content?.lessonPlan?.subject || subject,
         numSlides: 0,
         numQuestions: 0,
         questionTypes: [],
-      }, customGenUnit, customGenTopic);
+      }, unit, topic);
       
       if (weekData) {
         setContent(prev => {
           // Initialize base content if it's null
           const base = prev || {
-            lessonTitle: lessonInput || customGenTopic || "Untitled Lesson",
+            lessonTitle: lessonInput || topic || "Untitled Lesson",
             subject: subject,
             gradeLevel: yearGroup,
             slides: [],
@@ -1373,7 +1497,7 @@ export default function App() {
           };
           
           const newBreakdown = [...lessonPlan.weeklyBreakdown];
-          const existingIdx = newBreakdown.findIndex(w => w.week === selectedGenWeek);
+          const existingIdx = newBreakdown.findIndex(w => w.week === weekNum);
           
           if (existingIdx >= 0) {
             newBreakdown[existingIdx] = weekData;
@@ -1390,9 +1514,6 @@ export default function App() {
             }
           };
         });
-        setCustomGenActivity('');
-        setCustomGenUnit('');
-        setCustomGenTopic('');
         setWorkspaceMode('lesson-plan');
         setCurrentView('lesson-plan');
         
@@ -1409,8 +1530,8 @@ export default function App() {
     }
   };
 
-  const handleSuggestInput = async (type: 'unit' | 'topic' | 'activity') => {
-    setIsSuggesting(type);
+  const handleSuggestInput = async (type: 'unit' | 'topic' | 'activity', index: number) => {
+    setIsSuggesting(`${type}-${index}` as any);
     try {
       const suggestion = await suggestWeeklyInput(type, {
         yearGroup: content?.lessonPlan?.class || yearGroup,
@@ -1420,11 +1541,23 @@ export default function App() {
         numSlides: 0,
         numQuestions: 0,
         questionTypes: [],
-      }, selectedGenWeek);
+      }, index + 1);
       
-      if (type === 'unit') setCustomGenUnit(suggestion);
-      if (type === 'topic') setCustomGenTopic(suggestion);
-      if (type === 'activity') setCustomGenActivity(suggestion);
+      if (type === 'unit') {
+        const newUnits = [...lpUnit];
+        newUnits[index] = suggestion;
+        setLpUnit(newUnits);
+      }
+      if (type === 'topic') {
+        const newTopics = [...lpWeeklyTopics];
+        newTopics[index] = suggestion;
+        setLpWeeklyTopics(newTopics);
+      }
+      if (type === 'activity') {
+        const newActivities = [...lpActivities];
+        newActivities[index] = suggestion;
+        setLpActivities(newActivities);
+      }
     } catch (err: any) {
       handleEduError(err, `Suggest ${type}`);
     } finally {
@@ -1504,6 +1637,7 @@ export default function App() {
 
   const clearWorkspace = () => {
     setContent(null);
+    setIsReviewMode(false);
     setCurrentProjectId(prev => {
       // If we are clearing a specific project, we should also clear the history
       setHistoryStack([]);
@@ -1531,9 +1665,9 @@ export default function App() {
     setLpClass('');
     setLpPreparedBy(teacherName);
     setLpCheckedBy('');
-    setLpUnit(['', '', '', '', '', '']);
+    setLpUnit(['']);
     setLpDescription('');
-    setLpWeeklyTopics(['', '', '', '', '', '']);
+    setLpWeeklyTopics(['']);
     
     
     // Image Search States
@@ -1637,13 +1771,16 @@ export default function App() {
 
 
   const submitToAdmin = async () => {
-    if (!user) return;
+    if (!user) {
+      console.warn("SubmitToAdmin: No user logged in");
+      return;
+    }
     
+    console.log("SubmitToAdmin: Initiating submission for", user.email);
     try {
       if (content) {
-        const id = currentProjectId || Date.now().toString();
-        await setDoc(doc(db, 'projects', id), {
-          id,
+        // We create a new entry in submitted_plans to avoid being overwritten by teacher saves
+        const submissionData = {
           userId: user.uid,
           timestamp: Date.now(),
           content,
@@ -1652,25 +1789,29 @@ export default function App() {
           status: 'submitted',
           teacherName: teacherName,
           settings: {
-            readingProgramOnly,
             includeStory,
             isTemplateMode,
             workspaceMode
           }
-        });
-        setCurrentProjectId(id);
+        };
+        console.log("SubmitToAdmin: Writing to Firestore submitted_plans/", submissionData);
+        await addDoc(collection(db, 'submitted_plans'), submissionData);
+      } else {
+        console.warn("SubmitToAdmin: No content to submit");
+        return;
       }
       alert("Successfully submitted to Admin Dashboard!");
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, 'projects/current');
+      console.error("SubmitToAdmin: ERROR", err);
+      handleFirestoreError(err, OperationType.WRITE, 'submitted_plans');
     }
   };
 
-  const loadProject = (project: any) => {
+  const loadProject = (project: any, reviewMode: boolean = false) => {
     setCurrentProjectId(project.id);
     setContent(project.content);
+    setIsReviewMode(reviewMode);
     setWorkspaceMode(project.category || project.settings?.workspaceMode || 'slides');
-    setReadingProgramOnly(project.settings?.readingProgramOnly || false);
     setIncludeStory(project.settings?.includeStory || false);
     setIsTemplateMode(project.settings?.isTemplateMode || false);
     
@@ -1678,7 +1819,7 @@ export default function App() {
     if (project.category === 'lesson-plan') setCurrentView('lesson-plan');
     else if (project.category === 'slides') setCurrentView('slides');
     else if (project.category === 'worksheet') setCurrentView('worksheet');
-    else if (project.category === 'reading-program') setCurrentView('reading-program');
+    else if (project.category === 'notes') setCurrentView('notes');
     else setCurrentView('slides');
   };
 
@@ -1738,6 +1879,33 @@ export default function App() {
       unsubscribeFolders();
     };
   }, [user]);
+
+  // Admin Lesson Plans Listener
+  useEffect(() => {
+    if (!user || !userRoles.includes('admin')) {
+      setSubmittedProjects([]);
+      return;
+    }
+
+    setIsFetchingSubmitted(true);
+    console.log("Admin: Setting up submitted projects listener from submitted_plans...");
+    const q = query(
+      collection(db, 'submitted_plans'),
+      orderBy('timestamp', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      console.log("Admin: Received submitted plans snapshot, size:", snapshot.size);
+      const projects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setSubmittedProjects(projects);
+      setIsFetchingSubmitted(false);
+    }, (err) => {
+      console.error("Admin: Error fetching submitted plans:", err);
+      setIsFetchingSubmitted(false);
+    });
+
+    return () => unsubscribe();
+  }, [user, userRoles]);
 
   const updateSlideData = (index: number, field: string, value: any) => {
     setContent(prev => {
@@ -1933,6 +2101,7 @@ export default function App() {
 
   const resetWorksheet = () => {
     clearWorkspace();
+    setReadingPassageOnly(false);
     setContent({
       lessonTitle: "Untitled Worksheet",
       subject: "General",
@@ -1973,8 +2142,8 @@ export default function App() {
       },
       metadata: { yearGroup: "1", lexileLevel: "N/A", subject: "English" }
     });
-    setWorkspaceMode('reading-program');
-    setCurrentView('reading-program');
+    setWorkspaceMode('notes');
+    setCurrentView('notes');
   };
 
   const resetLessonPlan = () => {
@@ -2010,6 +2179,7 @@ export default function App() {
       },
       metadata: { yearGroup: "1", lexileLevel: "N/A", subject: "General" }
     });
+    setSessionWeeks(1);
     setWorkspaceMode('lesson-plan');
     setCurrentView('lesson-plan');
   };
@@ -2098,6 +2268,8 @@ export default function App() {
         numSlides,
         numQuestions,
         questionTypes: selectedQuestionTypes,
+        includeStory,
+        readingPassageOnly,
         metadataHints: content?.worksheet
       },
       basedOnSlides ? content?.slides : undefined
@@ -2151,10 +2323,58 @@ export default function App() {
         metadata: { yearGroup, lexileLevel, subject }
       };
       setContent(eduContent);
-      setWorkspaceMode('reading-program');
-      setCurrentView('reading-program');
+      setWorkspaceMode('notes');
+      setCurrentView('notes');
     }
     setIsGenerating(false);
+  };
+
+  const generateSP = async () => {
+    if (!sessionTopic.trim()) {
+      alert("Please enter a topic first.");
+      return;
+    }
+    
+    setGeneratingMessage(`Generating ${termWeeks}-Week Session Plan...`);
+    setIsGenerating(true);
+    try {
+      const { generateSessionPlan } = await import("./services/geminiService");
+      const result = await generateSessionPlan(sessionTopic, sessionSubtopics, termWeeks as 10 | 12, {
+        yearGroup,
+        lexileLevel,
+        subject: lpSubject || subject,
+        numSlides: 0,
+        numQuestions: 0,
+        questionTypes: [],
+        term: lpTerm,
+        duration: lpDuration,
+        date: lpDate,
+        academicYear: lpAcademicYear,
+        class: lpClass,
+        preparedBy: lpPreparedBy,
+        checkedBy: lpCheckedBy,
+      });
+      if (result) {
+        const eduContent: EduContent = {
+          lessonTitle: result.overallTopic || sessionTopic,
+          subject: subject,
+          gradeLevel: yearGroup,
+          slides: [],
+          worksheet: { title: "", sections: [] },
+          readingProgram: { title: "", description: "", gradeLevel: "", focusArea: "", duration: "", weeklyGoals: [], recommendedBooks: [], milestones: [] },
+          lessonPlan: result,
+          metadata: { yearGroup, lexileLevel, subject: subject }
+        };
+        setContent(eduContent);
+        setWorkspaceMode('lesson-plan');
+        setCurrentView('lesson-plan');
+        setIsSessionPlannerOpen(false);
+      }
+    } catch (err: any) {
+      handleEduError(err, "Generate session plan");
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const generateLP = async () => {
@@ -2217,8 +2437,8 @@ export default function App() {
   ];
   const [isInputModalOpen, setIsInputModalOpen] = useState(false);
   const [editingImageUrl, setEditingImageUrl] = useState<string | null>(null);
-  const [imageEditorCallback, setImageEditorCallback] = useState<{ cb: (newUrl: string) => void }>({ cb: () => {} });
-  const [currentView, setCurrentView] = useState<'home' | 'educator-suite' | 'lesson-plan' | 'slides' | 'worksheet' | 'reading-program' | 'admin'>('home');
+  const [imageEditorCallback, setImageEditorCallback] = useState<{ cb: (settings: any) => void }>({ cb: () => {} });
+  const [currentView, setCurrentView] = useState<'home' | 'educator-suite' | 'lesson-plan' | 'slides' | 'worksheet' | 'notes' | 'admin'>('home');
   const [adminTab, setAdminTab] = useState<'overview' | 'timetable' | 'teachers' | 'assignments' | 'plans' | 'members'>('overview');
   const [allMembers, setAllMembers] = useState<any[]>([]);
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
@@ -2395,8 +2615,8 @@ export default function App() {
     });
     return initial;
   });
-  const [sidebarTab, setSidebarTab] = useState<'templates' | 'slides'>('slides');
-  const [workspaceMode, setWorkspaceMode] = useState<'slides' | 'reading-program' | 'worksheet' | 'lesson-plan'>('slides');
+  const [sidebarTab, setSidebarTab] = useState<'templates' | 'slides' | 'history' | 'worksheet'>('slides');
+  const [workspaceMode, setWorkspaceMode] = useState<'slides' | 'notes' | 'worksheet' | 'lesson-plan'>('slides');
 
   // --- Drag and Drop Timetable States ---
   const [assignmentQuotas, setAssignmentQuotas] = useState<{id: string, teacherId: string, subject: string, yearGroup: string, total: number}[]>(() => {
@@ -2470,9 +2690,6 @@ export default function App() {
   const [lpClass, setLpClass] = useState('');
   const [lpPreparedBy, setLpPreparedBy] = useState('');
   const [lpCheckedBy, setLpCheckedBy] = useState('');
-  const [lpUnit, setLpUnit] = useState<string[]>(['', '', '', '', '', '']);
-  const [lpDescription, setLpDescription] = useState('');
-  const [lpWeeklyTopics, setLpWeeklyTopics] = useState<string[]>(['', '', '', '', '', '']);
   
   const worksheetRef = useRef<HTMLDivElement>(null);
   const readingProgramRef = useRef<HTMLDivElement>(null);
@@ -2750,6 +2967,13 @@ export default function App() {
                       <p className="text-xs font-bold text-[#064E3B]/60">Generate and view full school schedule</p>
                     </div>
                   </button>
+                  <button onClick={() => setAdminTab('plans')} className="p-6 rounded-2xl bg-[#FEFCE8] border-2 border-[#FACC15]/20 flex items-center gap-4 hover:scale-[1.02] transition-all text-left md:col-span-2">
+                    <div className="p-3 bg-white rounded-xl shadow-sm"><FileText className="text-[#FACC15]" /></div>
+                    <div>
+                      <p className="font-black text-[#064E3B]">Submitted Lesson Plans</p>
+                      <p className="text-xs font-bold text-[#064E3B]/60">Review and track teacher submissions</p>
+                    </div>
+                  </button>
                 </div>
               </div>
             </div>
@@ -3013,23 +3237,73 @@ export default function App() {
           )}
           
           {adminTab === 'plans' && (
-            <div className="max-w-6xl mx-auto bg-white rounded-[3rem] p-10 shadow-2xl pb-20 border-8 border-white ring-1 ring-black/5">
-              <div className="flex justify-between items-center mb-10">
+            <div className="max-w-6xl mx-auto space-y-8 pb-20">
+              <div className="flex justify-between items-center bg-white p-8 rounded-[2.5rem] shadow-xl border-b-8 border-black/5">
                 <div>
                   <h3 className="text-3xl font-black text-[#064E3B]">Submitted Lesson Plans</h3>
-                  <p className="text-[#064E3B]/60 font-bold mt-1">Review and monitor teacher prep progress</p>
+                  <p className="text-[#064E3B]/60 font-bold mt-1">Review and monitor teacher prep progress ({submittedProjects.length} submitted)</p>
+                </div>
+                <div className="p-4 bg-[#F0FDF4] rounded-2xl border-2 border-[#D1FAE5] text-[#064E3B] font-black text-xs uppercase tracking-widest">
+                  Active Monitoring
                 </div>
               </div>
 
-              <div className="p-20 text-center space-y-6 bg-[#F0FDF4]/30 rounded-[3rem] border-4 border-dashed border-[#D1FAE5]">
-                <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center mx-auto shadow-xl ring-8 ring-[#FEFCE8]/20">
-                  <BookOpen size={40} className="text-[#FACC15]" />
+              {isFetchingSubmitted ? (
+                <div className="flex flex-col items-center justify-center p-20 bg-white rounded-[3rem] shadow-xl space-y-4">
+                  <Loader2 className="animate-spin text-[#059669]" size={48} />
+                  <p className="font-bold text-[#064E3B]/60 italic">Fetching latest submissions...</p>
                 </div>
-                <div>
-                  <h4 className="text-2xl font-black text-[#064E3B]">Feature Suspended</h4>
-                  <p className="text-[#064E3B]/60 font-bold">The Creative Vault and submission tracking have been removed.</p>
+              ) : submittedProjects.length === 0 ? (
+                <div className="p-20 text-center space-y-6 bg-white rounded-[3rem] shadow-xl border-4 border-dashed border-[#D1FAE5]">
+                  <div className="w-24 h-24 bg-[#F0FDF4] rounded-full flex items-center justify-center mx-auto shadow-sm">
+                    <BookOpen size={40} className="text-[#D1FAE5]" />
+                  </div>
+                  <div>
+                    <h4 className="text-2xl font-black text-[#064E3B]">No Submissions Yet</h4>
+                    <p className="text-[#064E3B]/60 font-bold">When teachers submit their work, they will appear here instantly.</p>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {submittedProjects.map((project) => (
+                    <motion.div 
+                      key={project.id}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="bg-white p-6 rounded-[2rem] shadow-lg border-2 border-[#FEFCE8] hover:border-[#FACC15]/30 transition-all flex flex-col gap-4 group"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="p-3 bg-[#F0FDF4] rounded-2xl text-[#059669]">
+                          <FileText size={24} />
+                        </div>
+                        <div className="flex items-center gap-1.5 px-3 py-1 bg-green-50 text-green-600 rounded-full text-[10px] font-black uppercase tracking-widest border border-green-100">
+                          <CheckCircle size={10} /> {project.status}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <h4 className="font-black text-[#064E3B] text-lg leading-tight line-clamp-2">{project.title}</h4>
+                        <div className="flex items-center gap-2 text-[#064E3B]/40">
+                          <User size={12} />
+                          <span className="text-[10px] font-black uppercase tracking-tight">{project.teacherName || 'Unknown Teacher'}</span>
+                        </div>
+                      </div>
+
+                      <div className="mt-auto pt-4 border-t border-gray-50 flex items-center justify-between">
+                        <div className="text-[9px] font-black text-gray-400 uppercase">
+                          {new Date(project.timestamp).toLocaleDateString()}
+                        </div>
+                        <button 
+                          onClick={() => loadProject(project, true)}
+                          className="flex items-center gap-2 px-4 py-2 bg-[#064E3B] text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[#059669] transition-all shadow-md active:scale-95"
+                        >
+                          <Eye size={12} /> View Plan
+                        </button>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -3806,14 +4080,23 @@ export default function App() {
                 { id: 'lesson-plan', name: 'Lesson Plan', icon: BookOpen, desc: 'Pedagogical Programs' },
                 { id: 'slides', name: 'Presentation', icon: Presentation, desc: 'Interactive Visual Materials' },
                 { id: 'worksheet', name: 'Assessment Hub', icon: FileText, desc: 'Academic Practice Papers' },
-                { id: 'reading-program', name: 'Reading Program', icon: Library, desc: 'Literacy & Reading Development' },
+                { id: 'notes', name: 'Handouts & Journal', icon: Edit2, desc: 'Lesson Observations & Handouts' },
               ].map(tool => (
                 <button
                   key={tool.id}
                   onClick={() => {
                     if (tool.id === 'slides') resetSlides();
                     else if (tool.id === 'worksheet') resetWorksheet();
-                    else if (tool.id === 'reading-program') resetReadingProgram();
+                    else if (tool.id === 'notes') {
+                      if (!content?.teachingJournal && !content?.studentNotes) {
+                        setContent(prev => ({
+                          ...prev!,
+                          teachingJournal: prev?.teachingJournal || "",
+                          studentNotes: prev?.studentNotes || ""
+                        }));
+                      }
+                      setCurrentView('notes');
+                    }
                     else if (tool.id === 'lesson-plan') resetLessonPlan();
                     else setCurrentView(tool.id as any);
                   }}
@@ -3960,7 +4243,7 @@ export default function App() {
                         {project.category === 'lesson-plan' && <BookOpen size={20} />}
                         {project.category === 'slides' && <Presentation size={20} />}
                         {project.category === 'worksheet' && <FileText size={20} />}
-                        {project.category === 'reading-program' && <BookOpen size={20} />}
+                        {project.category === 'notes' && <BookOpen size={20} />}
                       </div>
                       
                       <div className="flex items-center gap-1">
@@ -4092,43 +4375,59 @@ export default function App() {
             <h2 className="text-xl font-black text-[#064E3B]">Slide Studio</h2>
           </div>
           <div className="flex items-center gap-2">
-            <button 
-              onClick={() => generateOnlyWorksheet(true)}
-              disabled={isGenerating}
-              className={cn(
-                "px-4 py-2 bg-[#059669] text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#047857] transition-all shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait"
-              )}
-            >
-              <BookOpen size={14} /> {isGenerating ? 'Wait...' : 'Create Assessment'}
-            </button>
-            <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
-            <button 
-              onClick={resetSlides}
-              className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-white/80 transition-all shadow-sm flex items-center gap-2"
-            >
-              <Plus size={14} /> New Presentation
-            </button>
-            <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
+            {!isReviewMode && (
+              <>
+                <button 
+                  onClick={() => generateOnlyWorksheet(true)}
+                  disabled={isGenerating}
+                  className={cn(
+                    "px-4 py-2 bg-[#059669] text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#047857] transition-all shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-wait"
+                  )}
+                >
+                  <BookOpen size={14} /> {isGenerating ? 'Wait...' : 'Create Assessment'}
+                </button>
+                <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
+                <button 
+                  onClick={() => setCurrentView('notes')}
+                  className="px-4 py-2 bg-[#F0FDF4] text-[#059669] border-2 border-[#D1FAE5] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#D1FAE5] transition-all flex items-center gap-2"
+                >
+                  <Edit2 size={14} /> Journal & Handouts
+                </button>
+                <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
+                <button 
+                  onClick={resetSlides}
+                  className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-white/80 transition-all shadow-sm flex items-center gap-2"
+                >
+                  <Plus size={14} /> New Presentation
+                </button>
+                <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
+              </>
+            )}
              {content?.slides && content.slides.length > 0 && (
                 <div className="flex items-center gap-2">
-                  <button 
-                    onClick={() => content && saveProject(content, content.lessonTitle || lessonInput, workspaceMode)}
-                    className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
-                  >
-                    <PlusCircle size={14} /> Save
-                  </button>
-                  <button 
-                    onClick={() => submitToAdmin()}
-                    className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
-                  >
-                    <CheckCircle size={14} /> Submit
-                  </button>
+                  {!isReviewMode && (
+                    <>
+                      <button 
+                        onClick={() => content && saveProject(content, content.lessonTitle || lessonInput, workspaceMode)}
+                        className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
+                      >
+                        <PlusCircle size={14} /> Save
+                      </button>
+                      <button 
+                        onClick={() => submitToAdmin()}
+                        className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
+                      >
+                        <CheckCircle size={14} /> Submit
+                      </button>
+                    </>
+                  )}
                 </div>
              )}
           </div>
         </div>
         <div className="flex-1 flex overflow-hidden">
-          <aside className="w-80 bg-white border-r-2 border-[#D1FAE5] p-6 space-y-8 overflow-y-auto custom-scrollbar">
+          {!isReviewMode && (
+            <aside className="w-80 bg-white border-r-2 border-[#D1FAE5] p-6 space-y-8 overflow-y-auto custom-scrollbar">
             <div className="space-y-4">
               <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest leading-none">Lesson Overview</h3>
               <div className="p-4 bg-[#F0FDF4] rounded-2xl border-2 border-[#D1FAE5] space-y-4">
@@ -4637,6 +4936,7 @@ export default function App() {
               </button>
             </div>
           </aside>
+          )}
           <main className="flex-1 p-8 overflow-y-auto flex flex-col items-center gap-8 bg-[#F9F9F4] custom-scrollbar">
             {content?.slides && content.slides.length > 0 && currentSlide ? (
               <>
@@ -5192,34 +5492,50 @@ export default function App() {
           <h2 className="text-xl font-black text-[#064E3B]">Assessment Hub</h2>
         </div>
         <div className="flex items-center gap-3">
-          <button 
-            onClick={resetWorksheet}
-            className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-white/80 transition-all shadow-sm flex items-center gap-2"
-          >
-            <Plus size={14} /> New Assessment
-          </button>
-          <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
+          {!isReviewMode && (
+            <>
+              <button 
+                onClick={() => setCurrentView('notes')}
+                className="px-4 py-2 bg-[#F0FDF4] text-[#059669] border-2 border-[#D1FAE5] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#D1FAE5] transition-all flex items-center gap-2"
+              >
+                <Edit2 size={14} /> Journal & Handouts
+              </button>
+              <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
+              <button 
+                onClick={resetWorksheet}
+                className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-white/80 transition-all shadow-sm flex items-center gap-2"
+              >
+                <Plus size={14} /> New Assessment
+              </button>
+              <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
+            </>
+          )}
           {content?.worksheet && (
             <div className="flex items-center gap-2">
-              <button 
-                onClick={() => content && saveProject(content, content.lessonTitle || lessonInput, workspaceMode)}
-                className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
-              >
-                <PlusCircle size={14} /> Save
-              </button>
-              <button 
-                onClick={() => submitToAdmin()}
-                className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
-              >
-                <CheckCircle size={14} /> Submit
-              </button>
+              {!isReviewMode && (
+                <>
+                  <button 
+                    onClick={() => content && saveProject(content, content.lessonTitle || lessonInput, workspaceMode)}
+                    className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
+                  >
+                    <PlusCircle size={14} /> Save
+                  </button>
+                  <button 
+                    onClick={() => submitToAdmin()}
+                    className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
+                  >
+                    <CheckCircle size={14} /> Submit
+                  </button>
+                </>
+              )}
             </div>
           )}
           <div className="w-12" />
         </div>
       </div>
       <div className="flex-1 flex overflow-hidden">
-        <aside className="w-80 bg-white border-r-2 border-[#D1FAE5] p-6 space-y-6 overflow-y-auto">
+        {!isReviewMode && (
+          <aside className="w-80 bg-white border-r-2 border-[#D1FAE5] p-6 space-y-6 overflow-y-auto">
           <div className="space-y-4">
             <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest leading-none">Assessment Settings</h3>
             <div className="space-y-2">
@@ -5290,6 +5606,47 @@ export default function App() {
             {/* Selection Styles Removed */}
 
             <div className="space-y-4 pt-4 border-t-2 border-[#D1FAE5]">
+              <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest leading-none">Content Options</h3>
+              <label className="flex items-center gap-3 p-3 bg-[#F0FDF4] rounded-2xl border-2 border-[#D1FAE5] cursor-pointer group hover:border-[#059669] transition-all">
+                <div className={cn(
+                  "w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all",
+                  includeStory ? "bg-[#059669] border-[#059669]" : "bg-white border-[#D1FAE5]"
+                )}>
+                  {includeStory && <Check size={14} className="text-white" />}
+                </div>
+                <input 
+                  type="checkbox" 
+                  className="hidden" 
+                  checked={includeStory}
+                  onChange={() => setIncludeStory(!includeStory)}
+                />
+                <div className="text-left">
+                  <p className="text-xs font-black text-[#064E3B] uppercase">Include Reading Passage</p>
+                  <p className="text-[10px] font-medium text-[#064E3B]/60 italic">Adds a context story/text</p>
+                </div>
+              </label>
+
+              <label className="flex items-center gap-3 p-3 bg-[#F0FFFE] rounded-2xl border-2 border-[#4ECDC4]/30 cursor-pointer group hover:border-[#4ECDC4] transition-all">
+                <div className={cn(
+                  "w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all",
+                  readingPassageOnly ? "bg-[#4ECDC4] border-[#4ECDC4]" : "bg-white border-[#4ECDC4]/30"
+                )}>
+                  {readingPassageOnly && <Check size={14} className="text-white" />}
+                </div>
+                <input 
+                  type="checkbox" 
+                  className="hidden" 
+                  checked={readingPassageOnly}
+                  onChange={() => setReadingPassageOnly(!readingPassageOnly)}
+                />
+                <div className="text-left">
+                  <p className="text-xs font-black text-[#064E3B] uppercase">Pure Reading Passage</p>
+                  <p className="text-[10px] font-medium text-[#064E3B]/60 italic">Passage only, no questions</p>
+                </div>
+              </label>
+            </div>
+
+            <div className="space-y-4 pt-4 border-t-2 border-[#D1FAE5]">
               <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest leading-none">Generation Prompt</h3>
               <div className="space-y-2">
                 <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Topic / Instructions</label>
@@ -5343,6 +5700,7 @@ export default function App() {
             )}
           </div>
         </aside>
+        )}
         <main className="flex-1 p-8 overflow-y-auto bg-[#F0FDF4]/50 custom-scrollbar">
           {content?.worksheet?.sections && content.worksheet.sections.length > 0 ? (
             <div className="max-w-4xl mx-auto bg-white p-16 pt-16 shadow-2xl border-t-[32px] border-[#1B4332] min-h-[1200px] relative" ref={worksheetRef}>
@@ -5406,7 +5764,8 @@ export default function App() {
 
                <div className="space-y-12">
                  {content.worksheet.sections.map((section, si) => (
-                   <div key={si} className="space-y-6">
+                   (section.questions && section.questions.length > 0) || (section.title && section.title !== "Reading Context" && section.title !== "") ? (
+                     <div key={si} className="space-y-6">
                      <div className="flex items-center gap-4">
                         <span className="w-10 h-10 bg-[#4ECDC4] text-white rounded-xl flex items-center justify-center font-black">{si + 1}</span>
                         <div className="flex-1">
@@ -5489,8 +5848,9 @@ export default function App() {
                         ))}
                      </div>
                    </div>
-                 ))}
-               </div>
+                    ) : null
+                  ))}
+                </div>
             </div>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-center mt-20 opacity-30 group animate-pulse">
@@ -5506,187 +5866,587 @@ export default function App() {
     );
   };
 
-  const renderReadingProgramView = () => {
-    if (!content || !content.readingProgram) {
-      return (
-        <div className="flex-1 flex items-center justify-center bg-[#FDFBF7]">
-          <div className="text-center space-y-4">
-            <Library size={48} className="mx-auto text-[#064E3B]/20" />
-            <p className="text-[#064E3B]/60 font-bold">No reading program available.</p>
-            <button onClick={() => setCurrentView('educator-suite')} className="text-[#059669] font-black uppercase text-[10px] tracking-widest hover:underline">
-              Return to Suite
-            </button>
-          </div>
-        </div>
-      );
+  const generateNotesFromSlides = () => {
+    if (!content || !content.slides || content.slides.length === 0) return;
+
+    // Auto-fill handout metadata if empty
+    const currentHM = content.handoutMetadata || {};
+    const updatedHM: HandoutMetadata = {
+      subject: currentHM.subject || content.subject || content.metadata.subject || "",
+      yearGroup: currentHM.yearGroup || content.gradeLevel || content.metadata.yearGroup || "",
+      topic: currentHM.topic || content.lessonTitle || "",
+      subtopic: currentHM.subtopic || "",
+      methodology: currentHM.methodology || content.slidesMetadata?.methodology || "",
+      description: currentHM.description || content.slidesMetadata?.description || ""
+    };
+
+    let notes = "";
+    
+    // Add Metadata Header
+    notes += `# ${updatedHM.topic || 'Lesson Notes'}\n\n`;
+    
+    if (updatedHM.subject || updatedHM.yearGroup) {
+      notes += `**Subject:** ${updatedHM.subject || 'N/A'} | **Year Group:** ${updatedHM.yearGroup || 'N/A'}\n\n`;
     }
 
-    const rp = content.readingProgram;
+    if (updatedHM.description) {
+      notes += `### Lesson Overview\n${updatedHM.description}\n\n`;
+    }
+
+    notes += `---\n\n`;
+    
+    content.slides.forEach((slide, index) => {
+      notes += `## ${index + 1}. ${slide.title}\n`;
+      if (slide.description) notes += `*${slide.description}*\n\n`;
+      if (slide.content && slide.content.length > 0) {
+        slide.content.forEach(bullet => {
+          notes += `- ${bullet}\n`;
+        });
+      }
+      notes += `\n`;
+    });
+
+    setContent(prev => ({
+      ...prev!,
+      handoutMetadata: updatedHM,
+      studentNotes: notes
+    }));
+  };
+
+  const downloadNotes = async (markdown: string, filename: string) => {
+    try {
+      const lines = markdown.split('\n');
+      const docChildren: any[] = [];
+
+      // Helper to parse bold text within any line
+      const parseInlines = (text: string) => {
+        const parts = text.split('**');
+        return parts
+          .map((part, index) => {
+            if (!part) return null;
+            return new TextRun({
+              text: part,
+              bold: index % 2 !== 0,
+              size: 24, // 12pt
+              font: "Calibri"
+            });
+          })
+          .filter((run): run is TextRun => run !== null);
+      };
+
+      lines.forEach(line => {
+        const trimmed = line.trim();
+        
+        // Handle empty lines
+        if (!trimmed) {
+          docChildren.push(new Paragraph({ text: "", spacing: { after: 120 } }));
+          return;
+        }
+
+        // Handle Headers
+        if (trimmed.startsWith('# ')) {
+          docChildren.push(new Paragraph({
+            children: parseInlines(trimmed.replace('# ', '')),
+            heading: HeadingLevel.HEADING_1,
+            spacing: { after: 200, before: 400 }
+          }));
+        } else if (trimmed.startsWith('## ')) {
+          docChildren.push(new Paragraph({
+            children: parseInlines(trimmed.replace('## ', '')),
+            heading: HeadingLevel.HEADING_2,
+            spacing: { after: 150, before: 300 }
+          }));
+        } else if (trimmed.startsWith('### ')) {
+          docChildren.push(new Paragraph({
+            children: parseInlines(trimmed.replace('### ', '')),
+            heading: HeadingLevel.HEADING_3,
+            spacing: { after: 120, before: 200 }
+          }));
+        } else if (trimmed.startsWith('* ') || trimmed.startsWith('- ')) {
+          // Basic Bullet Point with bold parsing
+          docChildren.push(new Paragraph({
+            children: parseInlines(trimmed.slice(2)),
+            bullet: { level: 0 },
+            spacing: { after: 120 }
+          }));
+        } else {
+          // Regular Paragraph
+          docChildren.push(new Paragraph({
+            children: parseInlines(trimmed),
+            spacing: { after: 120 }
+          }));
+        }
+      });
+
+      const doc = new Document({
+        sections: [{
+          properties: {
+            page: {
+              margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } // 1 inch
+            }
+          },
+          children: docChildren,
+        }],
+      });
+
+      const blob = await Packer.toBlob(doc);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${filename.replace(/[^a-z0-9]/gi, '_')}.docx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Error generating Word document:", err);
+      // Fallback to text download if docx fails
+      const blob = new Blob([markdown], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${filename}.md`;
+      link.click();
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  const updateHandoutMetadata = (field: keyof HandoutMetadata, value: string) => {
+    setContent(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        handoutMetadata: {
+          ...(prev.handoutMetadata || {}),
+          [field]: value
+        }
+      };
+    });
+  };
+
+  const renderNotesView = () => {
+    if (!content) return null;
 
     return (
-      <div className="flex-1 flex flex-col bg-[#F0FDF4] overflow-hidden">
+      <div className="flex-1 flex flex-col bg-[#FDFBF7] overflow-hidden">
         <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20">
           <div className="flex items-center gap-4">
-            <button onClick={() => {
-              clearWorkspace();
-              setCurrentView('educator-suite');
-            }} className="flex items-center gap-2 text-[#064E3B]/60 font-bold hover:text-[#064E3B] transition-colors">
+            <button onClick={() => setCurrentView('educator-suite')} className="flex items-center gap-2 text-[#064E3B]/60 font-bold hover:text-[#064E3B] transition-colors">
               <Home size={18} /> Suite
             </button>
+            <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
+            {content?.slides && (
+              <button 
+                onClick={() => setCurrentView('slides')}
+                className="px-3 py-1.5 bg-[#F0FDF4] text-[#059669] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#D1FAE5] transition-all border border-[#D1FAE5] flex items-center gap-2"
+              >
+                <Presentation size={14} /> Slides
+              </button>
+            )}
+            {content?.worksheet && (
+              <button 
+                onClick={() => setCurrentView('worksheet')}
+                className="px-3 py-1.5 bg-[#F0FDF4] text-[#4ECDC4] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#F0FFFE] transition-all border border-[#4ECDC4]/30 flex items-center gap-2"
+              >
+                <FileText size={14} /> Assessment
+              </button>
+            )}
             {content?.lessonPlan && (
               <button 
-                onClick={() => setCurrentView('lesson-plan')} 
-                className="flex items-center gap-2 px-3 py-1.5 bg-[#F0FDF4] text-[#059669] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#D1FAE5] transition-all border border-[#D1FAE5]"
+                onClick={() => setCurrentView('lesson-plan')}
+                className="px-3 py-1.5 bg-[#F0FDF4] text-[#059669] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#D1FAE5] transition-all border border-[#D1FAE5] flex items-center gap-2"
               >
                 <ChevronLeft size={14} /> Lesson Design
               </button>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <Library className="text-[#059669]" size={24} />
-            <h2 className="text-xl font-black text-[#064E3B]">Reading Program</h2>
-          </div>
           <div className="flex items-center gap-3">
-             <button 
-              onClick={resetReadingProgram}
-              className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-white/80 transition-all shadow-sm flex items-center gap-2"
-            >
-              <Plus size={14} /> New Program
-            </button>
-            <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
-            <button 
-              onClick={() => content && saveProject(content, content.lessonTitle || lessonInput, 'reading-program')}
-              className="px-4 py-2 bg-white text-[#059669] border-2 border-[#D1FAE5] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
-            >
-              <PlusCircle size={14} /> Save
-            </button>
-            <button 
-              onClick={() => submitToAdmin()}
-              className="px-4 py-2 bg-[#059669] text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#047857] transition-all shadow-sm flex items-center gap-2"
-            >
-              <CheckCircle size={14} /> Submit
-            </button>
+            {!isReviewMode && (
+              <button 
+                onClick={() => content && saveProject(content, content.lessonTitle || lessonInput, 'notes')}
+                className="px-4 py-2 bg-[#059669] text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#047857] transition-all shadow-sm flex items-center gap-2"
+              >
+                <PlusCircle size={14} /> Save Library
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="flex-1 flex overflow-hidden">
-          <aside className="w-80 bg-white border-r-2 border-[#D1FAE5] p-6 space-y-6 overflow-y-auto">
-            <div className="space-y-4">
-              <div className="p-4 bg-[#F0FDF4] rounded-2xl border-2 border-[#D1FAE5]">
-                <h3 className="text-xs font-black uppercase text-[#064E3B] tracking-widest mb-2">Program Overview</h3>
-                <div className="space-y-3">
-                   <div>
-                    <p className="text-[10px] font-black uppercase text-[#064E3B]/40">Focus Area</p>
-                    <p className="text-sm font-bold text-[#064E3B]">{rp.focusArea}</p>
+        <div className="flex-1 p-8 max-w-6xl mx-auto w-full overflow-y-auto custom-scrollbar">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+            {/* Left Column: Teaching Journal */}
+            <motion.div 
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="bg-white rounded-[2.5rem] p-8 shadow-xl border-4 border-[#D1FAE5] h-full flex flex-col"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-[#F0FDF4] rounded-2xl">
+                    <Edit2 className="text-[#059669]" size={24} />
                   </div>
                   <div>
-                    <p className="text-[10px] font-black uppercase text-[#064E3B]/40">Duration</p>
-                    <p className="text-sm font-bold text-[#064E3B]">{rp.duration}</p>
+                    <h2 className="text-xl font-black text-[#064E3B] uppercase tracking-tight">Teaching Journal</h2>
+                    <p className="text-[#059669] font-medium text-xs">Internal pedagogical reflections.</p>
                   </div>
                 </div>
+                
+                <button 
+                  onClick={() => downloadNotes(content.teachingJournal || "", `Teaching_Journal_${content.lessonTitle || 'Lesson'}`)}
+                  className="p-2.5 bg-[#F0FDF4] text-[#059669] rounded-xl hover:bg-[#D1FAE5] transition-all border border-[#D1FAE5] group"
+                  title="Download Journal"
+                >
+                  <Download size={18} className="group-hover:scale-110 transition-transform" />
+                </button>
               </div>
 
-              <div className="space-y-2">
-                <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest">Weekly Goals</h3>
-                <div className="space-y-2">
-                  {rp.weeklyGoals.map((goal, i) => (
-                    <div key={i} className="flex items-start gap-2 p-2 bg-[#FDFBF7] rounded-lg border border-[#FEFCE8]">
-                      <div className="w-4 h-4 rounded-full bg-[#D1FAE5] flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-[#059669]">
-                        {i + 1}
-                      </div>
-                      <p className="text-xs text-[#064E3B]/80 font-medium">{goal}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-            
-            <button 
-              onClick={generateOnlyReadingProgram}
-              disabled={isGenerating}
-              className="w-full py-3 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest shadow-md hover:bg-yellow-400 transition-all flex items-center justify-center gap-2"
+              <textarea
+                value={content.teachingJournal || ""}
+                onChange={(e) => setContent(prev => ({ ...prev!, teachingJournal: e.target.value }))}
+                placeholder="Pedagogical notes, what worked, what didn't, student breakthroughs..."
+                className="w-full flex-1 min-h-[450px] p-6 bg-[#FDFBF7] border-2 border-[#D1FAE5] rounded-3xl outline-none focus:border-[#059669] font-medium text-[#064E3B] leading-relaxed resize-none shadow-inner"
+              />
+            </motion.div>
+
+            {/* Right Column: Student Lesson Notes */}
+            <motion.div 
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 0.1 }}
+              className="bg-white rounded-[2.5rem] p-8 shadow-xl border-4 border-[#FACC15]/30 h-full flex flex-col"
             >
-              {isGenerating ? <Loader2 className="animate-spin" /> : <Sparkles />} Regenerate Program
-            </button>
-          </aside>
-
-          <main className="flex-1 p-8 overflow-y-auto bg-[#F0FDF4]/50 custom-scrollbar">
-            <div className="max-w-4xl mx-auto space-y-8">
-              <header className="text-center space-y-4">
-                <h1 className="text-4xl font-black text-[#064E3B] uppercase tracking-tight">{rp.title}</h1>
-                <p className="text-lg text-[#064E3B]/70 font-medium max-w-2xl mx-auto">{rp.description}</p>
-              </header>
-
-              <section className="bg-white rounded-3xl p-8 border-2 border-[#D1FAE5] shadow-sm space-y-6">
-                <h2 className="text-xl font-black text-[#064E3B] flex items-center gap-3">
-                   <BookOpen className="text-[#059669]" /> Recommended Reading
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {rp.recommendedBooks.map((book, i) => (
-                    <div key={i} className="flex flex-col p-6 bg-[#FDFBF7] rounded-[2.5rem] border-2 border-[#FEFCE8] hover:border-[#059669] transition-all group overflow-hidden relative">
-                      <div className="flex-1 space-y-4">
-                        <div className="flex justify-between items-start">
-                          <h3 className="text-lg font-black text-[#064E3B] group-hover:text-[#059669]">{book.title}</h3>
-                          <span className="px-3 py-1 bg-white border border-[#D1FAE5] rounded-full text-[10px] font-black text-[#059669] uppercase">
-                            {book.lexileLevel}
-                          </span>
-                        </div>
-                        <p className="text-xs font-bold text-[#064E3B]/40 italic">by {book.author}</p>
-                        <p className="text-sm text-[#064E3B]/80 leading-relaxed line-clamp-3">{book.summary}</p>
-                        
-                        <div className="flex flex-wrap gap-2">
-                          {book.themes.map((theme, ti) => (
-                            <span key={ti} className="px-2 py-0.5 bg-[#F0FDF4] text-[#059669] text-[10px] font-bold rounded-md">
-                              {theme}
-                            </span>
-                          ))}
-                        </div>
-
-                        <div className="pt-4 border-t border-[#D1FAE5]/50 space-y-2">
-                          <p className="text-[10px] font-black uppercase text-[#064E3B]/40">Comprehension Check</p>
-                          <ul className="space-y-1">
-                            {book.comprehensionQuestions.slice(0, 2).map((q, qi) => (
-                              <li key={qi} className="text-xs text-[#064E3B]/70 font-medium flex gap-2">
-                                <span className="text-[#059669]">•</span> {q}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      </div>
+                <div className="flex items-center justify-between mb-6">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-[#FEFCE8] rounded-2xl">
+                      <BookOpen className="text-[#854D0E]" size={24} />
                     </div>
-                  ))}
-                </div>
-              </section>
+                    <div>
+                      <h2 className="text-xl font-black text-[#064E3B] uppercase tracking-tight">Student Lesson Notes</h2>
+                      <p className="text-[#854D0E] font-medium text-xs">Structured summary for learners.</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setIsPreviewHandout(!isPreviewHandout)}
+                      className={cn(
+                        "flex items-center gap-2 px-4 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all border",
+                        isPreviewHandout 
+                          ? "bg-[#059669] text-white border-[#059669]" 
+                          : "bg-white text-[#854D0E] border-[#FACC15]/50 hover:bg-[#FEFCE8]"
+                      )}
+                    >
+                      {isPreviewHandout ? <Edit2 size={12} /> : <Eye size={12} />} 
+                      {isPreviewHandout ? "Edit Mode" : "Preview Handout"}
+                    </button>
 
-              <section className="bg-white rounded-3xl p-8 border-2 border-[#D1FAE5] shadow-sm space-y-6">
-                 <h2 className="text-xl font-black text-[#064E3B] flex items-center gap-3">
-                   <Target className="text-[#059669]" /> Weekly Milestones
-                </h2>
-                <div className="relative">
-                  <div className="absolute left-8 top-0 bottom-0 w-1 bg-[#D1FAE5] hidden md:block" />
-                  <div className="space-y-8">
-                    {rp.milestones.map((milestone, i) => (
-                      <div key={i} className="relative md:pl-16 flex flex-col md:flex-row gap-4 items-start">
-                        <div className="hidden md:flex absolute left-0 w-16 h-16 rounded-full bg-white border-4 border-[#D1FAE5] items-center justify-center z-10 shadow-sm">
-                           <span className="text-[#059669] font-black text-xl">{milestone.week}</span>
-                        </div>
-                        <div className="flex-1 w-full bg-[#FDFBF7] p-6 rounded-2xl border-2 border-[#FEFCE8] hover:border-[#059669] transition-all">
-                          <div className="md:hidden mb-2 inline-flex px-3 py-1 bg-[#059669] text-white rounded-full text-xs font-black uppercase">
-                            Week {milestone.week}
-                          </div>
-                          <h4 className="text-md font-black text-[#064E3B] mb-2 uppercase tracking-tight">{milestone.objective}</h4>
-                          <p className="text-sm text-[#064E3B]/70 font-medium leading-relaxed">{milestone.task}</p>
-                        </div>
+                    <button 
+                      onClick={() => downloadNotes(content.studentNotes || "", `Lesson_Handout_${content.lessonTitle || 'Notes'}`)}
+                      className="flex items-center gap-2 px-4 py-1.5 bg-[#FEFCE8] text-[#854D0E] rounded-xl hover:bg-[#FACC15]/40 transition-all border border-[#FACC15]/50 group"
+                      title="Export as Word Document"
+                    >
+                      <Download size={14} className="group-hover:scale-110 transition-transform" />
+                      <span className="text-[10px] font-black uppercase tracking-widest">Download .docx</span>
+                    </button>
+
+                    <button 
+                      onClick={() => setIsPreviewHandout(!isPreviewHandout)}
+                      className={cn(
+                        "flex items-center gap-2 px-3 py-1.5 rounded-xl font-black text-[9px] uppercase tracking-widest transition-all border",
+                        isPreviewHandout 
+                          ? "bg-[#064E3B] text-white border-[#064E3B]" 
+                          : "bg-white text-[#854D0E] border-[#FACC15]/50 hover:bg-[#FEFCE8]"
+                      )}
+                    >
+                      {isPreviewHandout ? <Edit2 size={12} /> : <Eye size={12} />} {isPreviewHandout ? 'Edit' : 'Preview'}
+                    </button>
+
+                  {content.slides && content.slides.length > 0 && !isPreviewHandout && !isReviewMode && (
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => setContent(prev => prev ? ({ ...prev, studentNotes: "" }) : null)}
+                          className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-red-100 transition-all border border-red-200"
+                        >
+                          <Trash2 size={12} /> Clear
+                        </button>
+                        <button 
+                          onClick={generateNotesAI}
+                          disabled={isGeneratingNotes}
+                          className={cn(
+                            "flex items-center gap-2 px-3 py-1.5 bg-[#059669] text-white rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-[#047857] transition-all border border-[#059669]/50",
+                            isGeneratingNotes && "opacity-50 cursor-not-allowed"
+                          )}
+                        >
+                          <Sparkles size={12} /> AI Draft Doc
+                        </button>
+                        <button 
+                          onClick={generateNotesFromSlides}
+                          className="flex items-center gap-2 px-3 py-1.5 bg-[#FEFCE8] text-[#854D0E] rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-[#FACC15]/40 transition-all border border-[#FACC15]/50"
+                        >
+                          <RefreshCw size={12} /> Sync Slides
+                        </button>
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
-              </section>
-            </div>
-        </main>
+
+                {!isPreviewHandout && (
+                  <div className="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4 p-6 bg-[#FEFCE8]/20 border-2 border-[#FACC15]/20 rounded-3xl">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-[#854D0E] uppercase tracking-wider ml-1">Subject</label>
+                      <input 
+                        type="text" 
+                        value={content.handoutMetadata?.subject || ""} 
+                        onChange={(e) => updateHandoutMetadata('subject', e.target.value)}
+                        placeholder="e.g. Science"
+                        className="w-full px-4 py-2 bg-white border border-[#FACC15]/30 rounded-xl text-xs font-bold text-[#064E3B] outline-none focus:border-[#FACC15]"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-[#854D0E] uppercase tracking-wider ml-1">Year Group</label>
+                      <input 
+                        type="text" 
+                        value={content.handoutMetadata?.yearGroup || ""} 
+                        onChange={(e) => updateHandoutMetadata('yearGroup', e.target.value)}
+                        placeholder="e.g. Year 4"
+                        className="w-full px-4 py-2 bg-white border border-[#FACC15]/30 rounded-xl text-xs font-bold text-[#064E3B] outline-none focus:border-[#FACC15]"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-[#854D0E] uppercase tracking-wider ml-1">Topic</label>
+                      <input 
+                        type="text" 
+                        value={content.handoutMetadata?.topic || ""} 
+                        onChange={(e) => updateHandoutMetadata('topic', e.target.value)}
+                        placeholder="e.g. Photosynthesis"
+                        className="w-full px-4 py-2 bg-white border border-[#FACC15]/30 rounded-xl text-xs font-bold text-[#064E3B] outline-none focus:border-[#FACC15]"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-[#854D0E] uppercase tracking-wider ml-1">Subtopic</label>
+                      <input 
+                        type="text" 
+                        value={content.handoutMetadata?.subtopic || ""} 
+                        onChange={(e) => updateHandoutMetadata('subtopic', e.target.value)}
+                        placeholder="e.g. Leaf Structure"
+                        className="w-full px-4 py-2 bg-white border border-[#FACC15]/30 rounded-xl text-xs font-bold text-[#064E3B] outline-none focus:border-[#FACC15]"
+                      />
+                    </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <label className="text-[10px] font-black text-[#854D0E] uppercase tracking-wider ml-1">Lesson Focus & Methodology</label>
+                      <input 
+                        type="text" 
+                        value={content.handoutMetadata?.methodology || ""} 
+                        onChange={(e) => updateHandoutMetadata('methodology', e.target.value)}
+                        placeholder="e.g. Inquiry-based learning through experimentation"
+                        className="w-full px-4 py-2 bg-white border border-[#FACC15]/30 rounded-xl text-xs font-bold text-[#064E3B] outline-none focus:border-[#FACC15]"
+                      />
+                    </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <label className="text-[10px] font-black text-[#854D0E] uppercase tracking-wider ml-1">Lesson Description</label>
+                      <textarea 
+                        value={content.handoutMetadata?.description || ""} 
+                        onChange={(e) => updateHandoutMetadata('description', e.target.value)}
+                        placeholder="Brief overview of what students should achieve..."
+                        className="w-full px-4 py-2 bg-white border border-[#FACC15]/30 rounded-xl text-xs font-bold text-[#064E3B] outline-none focus:border-[#FACC15] h-16 resize-none"
+                      />
+                    </div>
+                    <div className="md:col-span-2 pt-2 flex flex-col md:flex-row gap-3">
+                      <button 
+                        onClick={generateNotesAI}
+                        disabled={isGeneratingNotes}
+                        className={cn(
+                          "flex-1 flex items-center justify-center gap-3 px-6 py-3 bg-[#059669] text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-[#047857] transition-all shadow-md group border-2 border-white",
+                          isGeneratingNotes && "opacity-50 cursor-not-allowed"
+                        )}
+                      >
+                        <Sparkles size={16} className="group-hover:rotate-12 transition-transform" />
+                        AI Create Document
+                      </button>
+
+                      {content.slides && content.slides.length > 0 && (
+                        <button 
+                          onClick={generateNotesFromSlides}
+                          className="flex-1 flex items-center justify-center gap-3 px-6 py-3 bg-[#FACC15] text-[#854D0E] rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-[#EAB308] transition-all shadow-md group border-2 border-white"
+                        >
+                          <RefreshCw size={16} className="group-hover:rotate-180 transition-transform duration-500" /> 
+                          Sync from Slides
+                        </button>
+                      )}
+                      
+                      <button 
+                        onClick={() => setContent(prev => prev ? ({ ...prev, studentNotes: "" }) : null)}
+                        className="flex-1 flex items-center justify-center gap-3 px-6 py-3 bg-red-50 text-red-600 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-red-100 transition-all shadow-md group border-2 border-red-100"
+                      >
+                        <Trash2 size={16} className="group-hover:scale-110 transition-transform" /> 
+                        Clear Notes
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {isPreviewHandout ? (
+                  <div className="w-full flex-1 min-h-[450px] p-8 bg-white border-2 border-[#FACC15]/30 rounded-3xl overflow-y-auto custom-scrollbar shadow-inner">
+                    <div className="prose prose-emerald max-w-none prose-sm md:prose-base prose-headings:text-[#064E3B] prose-p:text-[#064E3B] prose-strong:text-[#064E3B]">
+                      {content.studentNotes ? (
+                        <ReactMarkdown>{content.studentNotes}</ReactMarkdown>
+                      ) : (
+                        <p className="text-gray-400 italic">No notes generated yet. Use 'AI Generate' or 'Sync Slides' to begin.</p>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <textarea
+                    value={content.studentNotes || ""}
+                    onChange={(e) => setContent(prev => ({ ...prev!, studentNotes: e.target.value }))}
+                    placeholder="Transform your slides into an easy-to-read document for students..."
+                    className="w-full flex-1 min-h-[450px] p-6 bg-[#FEFCE8]/10 border-2 border-[#FACC15]/30 rounded-3xl outline-none focus:border-[#FACC15] font-medium text-[#064E3B] leading-relaxed resize-none shadow-inner"
+                  />
+                )}
+              
+              <div className="mt-4 p-4 bg-[#FEFCE8]/40 border border-[#FACC15]/30 rounded-2xl">
+                <p className="text-[10px] text-[#854D0E] font-bold leading-tight">
+                  <span className="uppercase block mb-1">Teacher Tip:</span>
+                  This section creates a professional <b>Word Document (.docx)</b> revision handout. Use <span className="text-[#059669]">"AI Generate"</span> to draft comprehensive academic notes from scratch based on your description, or <span className="text-[#854D0E]">"Sync Slides"</span> to export your visual presentation into a structured text format.
+                </p>
+              </div>
+            </motion.div>
+          </div>
+        </div>
       </div>
-    </div>
     );
+  };
+
+  const playPhonicSound = (char: string, mode: 'letter' | 'phonetic' = 'phonetic') => {
+    window.speechSynthesis.cancel();
+    
+    const charLower = char.toLowerCase();
+
+    // Category definitions for Jolly Phonics
+    const plosives = ['p', 't', 'k', 'c', 'b', 'd', 'g', 'j', 'ch', 'ck', 'qu'];
+    const sustained = ['s', 'f', 'v', 'z', 'sh', 'th', 'th-voiced', 'm', 'n', 'ng', 'r', 'l', 'w'];
+
+    // Web Audio for pure fricatives (s, sh, f) - optimized for standard British Jolly Phonics
+    if (mode === 'phonetic' && (charLower === 's' || charLower === 'sh' || charLower === 'f')) {
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        const audioCtx = new AudioContextClass();
+        const duration = charLower === 's' ? 1.5 : (charLower === 'sh' ? 0.9 : 0.7);
+        const bufferSize = audioCtx.sampleRate * duration;
+        const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+
+        const noise = audioCtx.createBufferSource();
+        noise.buffer = buffer;
+
+        const filter = audioCtx.createBiquadFilter();
+        if (charLower === 's') {
+          filter.type = 'highpass';
+          filter.frequency.value = 6000; // Even higher for cleaner hiss
+        } else if (charLower === 'sh') {
+          filter.type = 'bandpass';
+          filter.frequency.value = 2800;
+          filter.Q.value = 0.8;
+        } else { // f
+          filter.type = 'highpass';
+          filter.frequency.value = 3500;
+        }
+
+        const gain = audioCtx.createGain();
+        gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.005, audioCtx.currentTime + duration - 0.05);
+
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        noise.start();
+        return;
+      } catch (e) {
+        console.error("Web Audio fallback", e);
+      }
+    }
+
+    const utterance = new SpeechSynthesisUtterance();
+    utterance.lang = 'en-GB';
+
+    const voices = window.speechSynthesis.getVoices();
+    const britishVoice = voices.find(v => v.lang.startsWith('en-GB') && v.name.toLowerCase().includes('google')) || 
+                         voices.find(v => v.lang.startsWith('en-GB'));
+    if (britishVoice) utterance.voice = britishVoice;
+    
+    if (mode === 'phonetic') {
+      const phoneticHints: Record<string, string> = {
+        'a': 'a..',
+        'b': 'b.',
+        'c': 'k.',
+        'd': 'd.',
+        'e': 'e..',
+        'f': 'ff..',
+        'g': 'g.',
+        'h': 'h..',
+        'i': 'i..',
+        'j': 'j.',
+        'k': 'k.',
+        'l': 'll..',
+        'm': 'mmm..',
+        'n': 'nnn..',
+        'o': 'o..',
+        'p': 'p.',
+        'q': 'kw.',
+        'r': 'rrr..',
+        's': 'sss..',
+        't': 't.',
+        'u': 'u..',
+        'v': 'vvv..',
+        'w': 'w.',
+        'x': 'ks.',
+        'y': 'y.',
+        'z': 'zzz..',
+        'ck': 'k.',
+        'th': 'th..',
+        'th-voiced': 'theh..',
+        'sh': 'shh..',
+        'ch': 'ch.',
+        'ng': 'ng..',
+        'ai': 'ay',
+        'oa': 'oh',
+        'ee': 'ee',
+        'ie': 'eye',
+        'or': 'aw',
+        'qu': 'kw',
+        'oi': 'oy',
+        'ue': 'you',
+        'er': 'uh',
+        'ar': 'ah',
+        'ou': 'ow',
+        'oo': 'oo',
+        'oo-long': 'oooo'
+      };
+      
+      utterance.text = phoneticHints[charLower] || charLower;
+
+      if (plosives.includes(charLower)) {
+        utterance.rate = 1.3;
+        utterance.pitch = 0.9;
+        // Strip out the "uh" by using a very short duration hint if supported
+        // In basic TTS we just keep it short
+      } else if (sustained.includes(charLower)) {
+        utterance.rate = 0.4;
+        utterance.pitch = 1.0;
+      } else {
+        utterance.rate = 0.6;
+        utterance.pitch = 1.1;
+      }
+    } else {
+      utterance.text = charLower;
+      utterance.rate = 0.8;
+    }
+    
+    window.speechSynthesis.speak(utterance);
   };
 
   const renderLessonPlanView = () => {
@@ -5719,48 +6479,81 @@ export default function App() {
           <h2 className="text-xl font-black text-[#064E3B]">Lesson Design</h2>
         </div>
         <div className="flex items-center gap-3">
-          <button 
-            onClick={resetLessonPlan}
-            className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-white/80 transition-all shadow-sm flex items-center gap-2"
-          >
-            <Plus size={14} /> New Lesson
-          </button>
-          <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
+           {!isReviewMode && (
+             <>
+                <button 
+                  onClick={() => setCurrentView('notes')}
+                  className="px-4 py-2 bg-[#F0FDF4] text-[#059669] border-2 border-[#D1FAE5] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#D1FAE5] transition-all flex items-center gap-2"
+                >
+                  <Edit2 size={14} /> Journal & Handouts
+                </button>
+                <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
+              <button 
+                onClick={resetLessonPlan}
+                className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-white/80 transition-all shadow-sm flex items-center gap-2"
+              >
+                <Plus size={14} /> New Lesson
+              </button>
+              <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
+             </>
+           )}
           {content?.lessonPlan && (
                <div className="flex items-center gap-2">
-                <button 
-                  onClick={sendLessonPlanEmail}
-                  className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
-                >
-                  <Plus size={14} /> Email
-                </button>
+                {!isReviewMode && (
+                  <button 
+                    onClick={sendLessonPlanEmail}
+                    className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
+                  >
+                    <Plus size={14} /> Email
+                  </button>
+                )}
                  <button 
                    onClick={downloadLessonPlanExcel}
                    className="px-4 py-2 bg-[#1D6F42] text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#155332] transition-all shadow-sm flex items-center gap-2"
                  >
                    <FileSpreadsheet size={14} /> Excel
                  </button>
-                 <button 
-                  onClick={() => content && saveProject(content, content.lessonTitle || lessonInput, workspaceMode)}
-                  className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
-                >
-                  <PlusCircle size={14} /> Save
-                </button>
-                 <button 
-                  onClick={() => submitToAdmin()}
-                  className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
-                >
-                  <CheckCircle size={14} /> Submit
-                </button>
+                 {!isReviewMode && (
+                   <>
+                    <button 
+                      onClick={() => content && saveProject(content, content.lessonTitle || lessonInput, workspaceMode)}
+                      className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
+                    >
+                      <PlusCircle size={14} /> Save
+                    </button>
+                     <button 
+                      onClick={() => submitToAdmin()}
+                      className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
+                    >
+                      <CheckCircle size={14} /> Submit
+                    </button>
+                   </>
+                 )}
                </div>
              )}
           </div>
       </div>
       <div className="flex-1 flex overflow-hidden">
-        <aside className="w-[450px] bg-white border-r-2 border-[#D1FAE5] p-8 space-y-8 overflow-y-auto custom-scrollbar">
+        {!isReviewMode && (
+          <aside className="w-[450px] bg-white border-r-2 border-[#D1FAE5] p-8 space-y-8 overflow-y-auto custom-scrollbar">
           <div className="space-y-6">
             <h3 className="text-sm font-black uppercase text-[#064E3B]/60 tracking-wider border-b-2 border-[#D1FAE5] pb-2">Lesson Settings</h3>
             <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Year Group</label>
+                <select 
+                  value={yearGroup} 
+                  onChange={(e) => {
+                    setYearGroup(e.target.value);
+                    if (content?.lessonPlan) updateLessonPlanMetadata('gradeLevel' as any, e.target.value);
+                  }} 
+                  className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
+                >
+                  {['Year 1', 'Year 2', 'Year 3', 'Year 4', 'Year 5', 'Year 6', 'Year 7', 'Year 8', 'Year 9', 'Year 10', 'Year 11'].map(y => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
               <div className="space-y-1">
                 <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Term</label>
                 <input 
@@ -5871,140 +6664,136 @@ export default function App() {
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-black uppercase text-[#064E3B]/40 tracking-widest">Targeted Week Generator</label>
-                <div className="h-px flex-1 bg-[#D1FAE5] ml-4" />
-              </div>
-              <div className="p-5 bg-white border-2 border-[#D1FAE5] rounded-[2rem] shadow-sm space-y-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Select Week</label>
-                  <div className="flex gap-2">
-                    {[1, 2, 3, 4, 5, 6].map(w => (
-                      <button
-                        key={w}
-                        onClick={() => setSelectedGenWeek(w)}
-                        className={cn(
-                          "w-8 h-8 rounded-lg font-black text-xs transition-all",
-                          selectedGenWeek === w 
-                            ? "bg-[#059669] text-white shadow-lg scale-110" 
-                            : "bg-[#F0FDF4] text-[#064E3B]/40 hover:bg-[#D1FAE5]"
-                        )}
-                      >
-                        {w}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Unit (Optional)</label>
-                        <button 
-                          onClick={() => handleSuggestInput('unit')}
-                          className="text-[9px] font-bold text-[#059669] hover:underline flex items-center gap-1"
-                          disabled={isSuggesting !== null}
-                        >
-                          {isSuggesting === 'unit' ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />} Generate
-                        </button>
-                      </div>
-                      <input 
-                        type="text"
-                        value={customGenUnit}
-                        onChange={(e) => setCustomGenUnit(e.target.value)}
-                        placeholder="e.g. Unit 4"
-                        className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Topic (Optional)</label>
-                        <button 
-                          onClick={() => handleSuggestInput('topic')}
-                          className="text-[9px] font-bold text-[#059669] hover:underline flex items-center gap-1"
-                          disabled={isSuggesting !== null}
-                        >
-                          {isSuggesting === 'topic' ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />} Generate
-                        </button>
-                      </div>
-                      <input 
-                        type="text"
-                        value={customGenTopic}
-                        onChange={(e) => setCustomGenTopic(e.target.value)}
-                        placeholder="e.g. Electricity"
-                        className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Specify Activity</label>
-                      <button 
-                        onClick={() => handleSuggestInput('activity')}
-                        className="text-[9px] font-bold text-[#059669] hover:underline flex items-center gap-1"
-                        disabled={isSuggesting !== null}
-                      >
-                        {isSuggesting === 'activity' ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />} Generate
-                      </button>
-                    </div>
-                    <textarea
-                      value={customGenActivity}
-                      onChange={(e) => setCustomGenActivity(e.target.value)}
-                      placeholder="Describe what you want to do this week (e.g., 'Hands-on experiment with circuits')..."
-                      className="w-full h-20 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold resize-none outline-none focus:border-[#059669]"
-                    />
-                  </div>
-                </div>
-                <button
-                  onClick={generateSpecificWeek}
-                  disabled={isGeneratingWeek?.type === 'plan'}
-                  className="w-full py-3 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-400 transition-all shadow-md flex items-center justify-center gap-2"
+                <button 
+                  onClick={() => {
+                    if (sessionWeeks < 12) {
+                      setSessionWeeks(prev => prev + 1);
+                    }
+                  }}
+                  className="p-1 px-3 bg-[#D1FAE5] text-[#059669] rounded-lg hover:bg-[#A7F3D0] transition-all flex items-center gap-2"
                 >
-                  {isGeneratingWeek?.type === 'plan' ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />} 
-                  Auto-Fill Week {selectedGenWeek}
+                  <Plus size={14} />
+                  <span className="text-xs font-black uppercase">Add Week</span>
                 </button>
               </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-black uppercase text-[#064E3B]/40 tracking-widest">Weekly Units & Topics (6-Week Term)</label>
-                <span className="text-[9px] font-bold text-[#059669] uppercase bg-[#D1FAE5] px-2 py-0.5 rounded-md">AI will fill blanks</span>
-              </div>
-              <div className="grid grid-cols-1 gap-3">
-                {lpWeeklyTopics.map((topic, i) => (
-                  <div key={i} className="flex flex-col gap-2 p-3 bg-[#F0FDF4]/50 rounded-2xl border-2 border-[#D1FAE5]/50">
+              
+              <div className="grid grid-cols-1 gap-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+                {Array.from({ length: sessionWeeks }).map((_, i) => (
+                  <div key={i} className="p-5 bg-white border-2 border-[#D1FAE5] rounded-[2rem] shadow-sm space-y-4 relative group">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-black text-[#064E3B]/40 uppercase">Week {i + 1}</span>
+                      <div className="flex-1">
+                        <input 
+                          type="text"
+                          value={lpWeekLabels[i] || ''}
+                          onChange={(e) => {
+                            const newLabels = [...lpWeekLabels];
+                            newLabels[i] = e.target.value;
+                            setLpWeekLabels(newLabels);
+                          }}
+                          className="bg-transparent border-none font-black text-sm text-[#064E3B] uppercase outline-none w-full focus:ring-0 placeholder-[#064E3B]/20"
+                          placeholder={`Week ${i + 1}`}
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {sessionWeeks > 1 && (
+                          <button 
+                            onClick={() => {
+                              setSessionWeeks(prev => prev - 1);
+                            }}
+                            className="p-1 text-red-300 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex gap-2">
-                      <input 
-                        type="text" 
-                        value={lpUnit[i]} 
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[9px] font-black uppercase text-[#064E3B]/40">Unit</label>
+                          <button 
+                            onClick={() => handleSuggestInput('unit', i)}
+                            className="text-[8px] font-bold text-[#059669] hover:underline flex items-center gap-1"
+                            disabled={isSuggesting !== null}
+                          >
+                            {isSuggesting === `unit-${i}` ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />} Suggest
+                          </button>
+                        </div>
+                        <input 
+                          type="text"
+                          value={lpUnit[i] || ''}
+                          onChange={(e) => {
+                            const next = [...lpUnit];
+                            next[i] = e.target.value;
+                            setLpUnit(next);
+                          }}
+                          placeholder="e.g. Unit 4"
+                          className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[9px] font-black uppercase text-[#064E3B]/40">Topic</label>
+                          <button 
+                            onClick={() => handleSuggestInput('topic', i)}
+                            className="text-[8px] font-bold text-[#059669] hover:underline flex items-center gap-1"
+                            disabled={isSuggesting !== null}
+                          >
+                            {isSuggesting === `topic-${i}` ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />} Suggest
+                          </button>
+                        </div>
+                        <input 
+                          type="text"
+                          value={lpWeeklyTopics[i] || ''}
+                          onChange={(e) => {
+                            const next = [...lpWeeklyTopics];
+                            next[i] = e.target.value;
+                            setLpWeeklyTopics(next);
+                          }}
+                          placeholder="e.g. Electricity"
+                          className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[9px] font-black uppercase text-[#064E3B]/40">Activities & Focus</label>
+                        <button 
+                          onClick={() => handleSuggestInput('activity', i)}
+                          className="text-[8px] font-bold text-[#059669] hover:underline flex items-center gap-1"
+                          disabled={isSuggesting !== null}
+                        >
+                          {isSuggesting === `activity-${i}` ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />} Suggest
+                        </button>
+                      </div>
+                      <textarea
+                        value={lpActivities[i] || ''}
                         onChange={(e) => {
-                          const newUnits = [...lpUnit];
-                          newUnits[i] = e.target.value;
-                          setLpUnit(newUnits);
-                        }} 
-                        placeholder="Unit #"
-                        className="w-24 p-2 bg-white border-2 border-[#D1FAE5] rounded-xl text-xs font-bold focus:border-[#059669] outline-none"
-                      />
-                      <input 
-                        type="text" 
-                        value={topic} 
-                        onChange={(e) => {
-                          const newTopics = [...lpWeeklyTopics];
-                          newTopics[i] = e.target.value;
-                          setLpWeeklyTopics(newTopics);
-                        }} 
-                        placeholder={`Topic for Week ${i + 1}`}
-                        className="flex-1 p-2 bg-white border-2 border-[#D1FAE5] rounded-xl text-xs font-bold focus:border-[#059669] outline-none"
+                          const next = [...lpActivities];
+                          next[i] = e.target.value;
+                          setLpActivities(next);
+                        }}
+                        placeholder="Describe activities (e.g., 'Hands-on experiment with circuits')..."
+                        className="w-full h-20 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold resize-none outline-none focus:border-[#059669]"
                       />
                     </div>
+
+                    <button
+                      onClick={() => generateSpecificWeek(i)}
+                      disabled={isGeneratingWeek?.index === i && isGeneratingWeek?.type === 'plan'}
+                      className="w-full py-2.5 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-yellow-400 transition-all shadow-md flex items-center justify-center gap-2"
+                    >
+                      {isGeneratingWeek?.index === i && isGeneratingWeek?.type === 'plan' ? <Loader2 className="animate-spin" size={14} /> : <Wand2 size={14} />} 
+                      Auto-Fill {lpWeekLabels[i] || `Week ${i + 1}`}
+                    </button>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-4">
               <label className="text-xs font-black uppercase text-[#064E3B]/40 tracking-widest">Lesson Focus / Methodology</label>
               <textarea 
                 value={lpDescription} 
@@ -6012,6 +6801,53 @@ export default function App() {
                 placeholder="e.g. Focus on active learning, Cambridge standards, and textbook integration."
                 className="w-full h-24 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-medium resize-none focus:outline-none focus:border-[#059669]"
               />
+            </div>
+
+            <div className="space-y-4 pt-4 border-t-2 border-[#D1FAE5]">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-black uppercase text-[#064E3B]/40 tracking-widest">Full Term Program Generator</label>
+                <div className="h-px flex-1 bg-[#D1FAE5] ml-4" />
+              </div>
+              <div className="p-4 bg-white border-2 border-[#D1FAE5] rounded-[2rem] shadow-sm space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Topic, Subtopic & Unit</label>
+                  <textarea 
+                    value={sessionTopic} 
+                    onChange={(e) => setSessionTopic(e.target.value)} 
+                    placeholder="Enter your topic, subtopics and units for the whole term..."
+                    className="w-full h-24 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold resize-none outline-none focus:border-[#059669]"
+                  />
+                </div>
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Program Duration</label>
+                      <button 
+                        onClick={() => setTermWeeks(prev => Math.min(12, prev + 1))}
+                        className="text-[9px] font-bold text-[#059669] bg-[#D1FAE5] px-2 py-0.5 rounded-md hover:bg-[#A7F3D0] transition-all flex items-center gap-1"
+                      >
+                        <Plus size={10} /> Add Week
+                      </button>
+                    </div>
+                    <select 
+                      value={termWeeks}
+                      onChange={(e) => setTermWeeks(Number(e.target.value))}
+                      className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none cursor-pointer hover:border-[#059669] transition-all"
+                    >
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(w => (
+                        <option key={w} value={w}>{w} Weeks Program</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button 
+                    onClick={generateSP} 
+                    disabled={isGenerating}
+                    className="py-3 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-400 transition-all shadow-md flex items-center justify-center gap-2"
+                  >
+                    {isGenerating ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />} Generate {termWeeks}-Week Program
+                  </button>
+                </div>
+              </div>
             </div>
 
             <button 
@@ -6023,12 +6859,12 @@ export default function App() {
             </button>
           </div>
         </aside>
-
+        )}
         <main className="flex-1 p-12 overflow-y-auto bg-[#F0FDF4]/50 custom-scrollbar">
           {content?.lessonPlan ? (
             <div className="max-w-[1000px] mx-auto bg-white p-12 pt-12 shadow-2xl border-[16px] border-white ring-[12px] ring-[#059669] flex flex-col gap-10 font-serif relative" ref={lessonPlanRef} data-ref-id="lesson-plan-container">
                <div className="text-center border-b-4 border-[#064E3B] pb-8">
-                 <h1 className="text-4xl font-black uppercase tracking-tight mb-2 text-[#064E3B]">Cambridge Termly Lesson Plan (6-Week Program)</h1>
+                 <h1 className="text-4xl font-black uppercase tracking-tight mb-2 text-[#064E3B]">Cambridge Termly Lesson Plan ({content.lessonPlan.weeklyBreakdown.length}-Week Program)</h1>
                  <p className="text-sm font-bold opacity-40 uppercase tracking-[0.3em] text-[#059669]">Zera International School Academic Standards</p>
                </div>
 
@@ -6080,7 +6916,7 @@ export default function App() {
                  <div className="pt-6">
                    <h3 className="text-sm font-black uppercase tracking-widest mb-4 flex items-center gap-3">
                      <span className="h-[2px] flex-1 bg-black opacity-10"></span>
-                     Term Schedule (6 Weeks)
+                     Term Schedule ({content.lessonPlan.weeklyBreakdown.length} Weeks)
                      <span className="h-[2px] flex-1 bg-black opacity-10"></span>
                    </h3>
                    
@@ -6255,7 +7091,6 @@ export default function App() {
     if (!lessonInput.trim() && !fileContext) return;
     
     setGeneratingMessage(
-      readingProgramOnly ? "Generating Reading Program..." : 
       (includeStory || !!fileContext) ? "Generating Worksheet..." : 
       "Generating Slides..."
     );
@@ -6273,9 +7108,9 @@ export default function App() {
             resolve(result.split(',')[1]);
           };
           reader.onerror = reject;
-          reader.readAsDataURL(fileContext.data);
+          reader.readAsDataURL(fileContext.data as any);
         });
-        fileData = { mimeType: fileContext.type, data: base64 };
+        fileData = { mimeType: (fileContext as any).mimeType || (fileContext as any).type, data: base64 };
       } catch (err) {
         console.error("File processing error:", err);
       }
@@ -6286,11 +7121,10 @@ export default function App() {
         yearGroup,
         lexileLevel,
         subject,
-        numSlides: (includeStory || readingProgramOnly) ? 0 : numSlides,
-        numQuestions: readingProgramOnly ? 0 : numQuestions,
+        numSlides: includeStory ? 0 : numSlides,
+        numQuestions: numQuestions,
         questionTypes: selectedQuestionTypes,
         includeStory,
-        readingProgramOnly: readingProgramOnly,
         templateMode: fileContext ? templateUploadMode : undefined,
         fileContext: fileData
       });
@@ -6309,16 +7143,12 @@ export default function App() {
         }
         
         // Auto-save to vault
-        const category = readingProgramOnly ? 'reading-program' : (includeStory || !!fileContext ? 'worksheet' : 'slides');
+        const category = (includeStory || !!fileContext ? 'worksheet' : 'slides');
         // saveToVault(category as any, true, convertedResult, result.lessonTitle || result.lessonPlan?.overallTopic);
 
         setCurrentSlideIdx(0);
         setIsInputModalOpen(false);
-        if (readingProgramOnly) {
-          setWorkspaceMode('reading-program');
-          setSidebarTab('history');
-          setCurrentView('reading-program');
-        } else if (includeStory) {
+        if (includeStory) {
           setWorkspaceMode('worksheet');
           setSidebarTab('worksheet');
         } else {
@@ -6849,6 +7679,14 @@ export default function App() {
 
   return (
     <div className="w-full h-screen bg-[#059669] flex flex-col font-sans overflow-hidden text-[#2D3436]">
+      {!isOnline && (
+        <div className="bg-[#EF4444] text-white py-2 px-4 text-center text-xs font-black uppercase tracking-widest flex items-center justify-center gap-3 z-[2000] shadow-lg">
+           <div className="p-1 bg-white/20 rounded-lg animate-pulse"><Loader2 size={14} className="animate-spin" /></div>
+           <span>Firestore Connectivity Issue: Reconnecting...</span>
+           {firestoreError && <span className="opacity-70 font-medium lowercase hidden md:inline ml-2">[{firestoreError}]</span>}
+           <button onClick={() => window.location.reload()} className="ml-4 px-3 py-1 bg-white text-[#EF4444] rounded-lg hover:bg-white/90 transition-all font-black">Refresh App</button>
+        </div>
+      )}
 
       <AnimatePresence mode="wait">
         {currentView === 'home' && (
@@ -6881,9 +7719,9 @@ export default function App() {
             {renderWorksheetView()}
           </motion.div>
         )}
-        {currentView === 'reading-program' && (
-          <motion.div key="reading-program" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="flex-1 flex overflow-hidden">
-            {renderReadingProgramView()}
+        {currentView === 'notes' && (
+          <motion.div key="notes" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="flex-1 flex overflow-hidden">
+            {renderNotesView()}
           </motion.div>
         )}
       </AnimatePresence>
@@ -6922,6 +7760,121 @@ export default function App() {
         }
       `}</style>
       <AnimatePresence>
+        {isSessionPlannerOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-md z-[1100] flex items-center justify-center p-6"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="bg-white w-full max-w-2xl rounded-[3rem] shadow-2xl overflow-hidden border-4 border-[#059669] flex flex-col"
+            >
+              <div className="p-8 bg-[#059669] text-white flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-white/20 rounded-2xl backdrop-blur-sm">
+                    <Calendar size={24} className="text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-black uppercase tracking-tight">10-12 Week Session Planner</h2>
+                    <p className="text-emerald-100 text-sm font-medium">Cambridge Curriculum Aligned Program</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsSessionPlannerOpen(false)}
+                  className="p-2 hover:bg-white/10 rounded-full transition-all"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="p-10 space-y-8 overflow-y-auto max-h-[70vh] custom-scrollbar">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-black uppercase text-[#064E3B] opacity-40 flex items-center gap-2">
+                      <Book size={14} /> Overall Topic, Subtopics & Units
+                    </label>
+                    <textarea 
+                      value={sessionTopic}
+                      onChange={(e) => setSessionTopic(e.target.value)}
+                      placeholder="e.g. Unit 3: Ecology - Food Chains, Habitats, and Biodiversity (Weeks 1-10)"
+                      className="w-full h-32 p-5 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-[2rem] text-sm font-medium focus:outline-none focus:border-[#059669] transition-all resize-none"
+                    />
+                    <p className="text-[10px] font-bold text-[#059669]/60 italic pl-2">Provide the units and topics for the entire term here.</p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-black uppercase text-[#064E3B] opacity-40 flex items-center gap-2">
+                          <Calendar size={14} /> Program Duration
+                        </label>
+                        <button 
+                          onClick={() => setSessionWeeks(prev => Math.min(12, prev + 1))}
+                          className="text-[10px] font-black text-[#059669] bg-[#D1FAE5] px-2 py-1 rounded-lg hover:bg-[#A7F3D0] transition-all flex items-center gap-1"
+                        >
+                          <Plus size={12} /> Add Week
+                        </button>
+                      </div>
+                      <select
+                        value={sessionWeeks}
+                        onChange={(e) => setSessionWeeks(Number(e.target.value))}
+                        className="w-full py-3 px-4 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-2xl font-black text-sm uppercase outline-none focus:border-[#059669] transition-all cursor-pointer"
+                      >
+                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(w => (
+                          <option key={w} value={w}>{w} Weeks Duration</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-black uppercase text-[#064E3B] opacity-40 flex items-center gap-2">
+                        <GraduationCap size={14} /> Subject Code
+                      </label>
+                      <input 
+                        type="text"
+                        value={lpSubject || subject}
+                        onChange={(e) => setLpSubject(e.target.value)}
+                        placeholder="e.g. Science (0097)"
+                        className="w-full p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold focus:outline-none focus:border-[#059669]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-[#F0FDF4] p-6 rounded-3xl border-2 border-[#D1FAE5] border-dashed">
+                  <h4 className="text-xs font-black uppercase text-[#064E3B] mb-3 flex items-center gap-2">
+                    <Wand2 size={14} className="text-[#059669]" /> AI Preview
+                  </h4>
+                  <p className="text-[11px] leading-relaxed font-bold text-[#064E3B]/70">
+                    AI will generate a complete {sessionWeeks}-week term overview breakdown including Units, weekly Learning Objectives, Introductions, Activities, and Resources aligned with the Cambridge Official Curriculum for {yearGroup}.
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-8 bg-[#F0FDF4] border-t-2 border-[#D1FAE5] flex gap-4">
+                <button 
+                  onClick={() => setIsSessionPlannerOpen(false)}
+                  className="flex-1 py-4 bg-white text-[#064E3B] rounded-2xl font-black uppercase tracking-widest border-2 border-[#D1FAE5] hover:bg-[#D1FAE5] transition-all"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={generateSP}
+                  disabled={isGenerating}
+                  className="flex-[2] py-4 bg-[#FACC15] text-[#064E3B] rounded-2xl font-black uppercase tracking-widest hover:bg-yellow-400 transition-all shadow-lg flex items-center justify-center gap-3"
+                >
+                  {isGenerating ? <Loader2 className="animate-spin" /> : <Wand2 />} 
+                  Generate {sessionWeeks}-Week Plan
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {isGenerating && (
           <motion.div 
             initial={{ opacity: 0 }}
@@ -6952,11 +7905,11 @@ export default function App() {
         {editingImageUrl && (
           <ImageEditor 
             imageUrl={editingImageUrl}
-            onSave={(newUrl) => {
-              imageEditorCallback.cb(newUrl);
+            onSave={(settings) => {
+              imageEditorCallback.cb(settings);
               setEditingImageUrl(null);
             }}
-            onCancel={() => setEditingImageUrl(null)}
+            onClose={() => setEditingImageUrl(null)}
           />
         )}
       </AnimatePresence>

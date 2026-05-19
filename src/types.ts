@@ -113,6 +113,15 @@ export interface LessonPlan {
   weeklyBreakdown: WeeklyPlan[];
 }
 
+export interface HandoutMetadata {
+  subject?: string;
+  yearGroup?: string;
+  topic?: string;
+  subtopic?: string;
+  methodology?: string;
+  description?: string;
+}
+
 export interface EduContent {
   lessonTitle: string;
   subject: string;
@@ -131,6 +140,9 @@ export interface EduContent {
   };
   readingProgram?: ReadingProgram;
   lessonPlan?: LessonPlan;
+  teachingJournal?: string;
+  studentNotes?: string;
+  handoutMetadata?: HandoutMetadata;
   metadata: {
     yearGroup: string;
     lexileLevel: string;

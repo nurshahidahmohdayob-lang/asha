@@ -2,5 +2,5 @@
   "name": "Zera Educator Suite",
   "description": "Professional toolkit for Zera International School educators to generate slides, worksheets, and lesson plans.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
