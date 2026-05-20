@@ -15,6 +15,7 @@ import {
   Minus,
   ChevronLeft, 
   ChevronRight, 
+  ChevronDown, 
   Sparkles,
   Printer,
   Wand2,
@@ -58,6 +59,14 @@ import {
   LayoutGrid,
   Square,
   Circle,
+  Folder,
+  FolderPlus,
+  FolderInput,
+  Grid,
+  Monitor,
+  Video,
+  ListFilter,
+  User,
   Triangle,
   Type,
   Wallpaper as WallpaperIcon,
@@ -72,11 +81,8 @@ import {
   LogOut,
   Mail,
   Lock,
-  User,
   RefreshCw,
   Home,
-  Folder,
-  FolderPlus,
   ArrowRightCircle,
   MoreVertical,
   Volume2,
@@ -217,9 +223,116 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
+const WeekSelector = ({ value, onChange, label = "Submit for Week" }: { value: number, onChange: (v: number) => void, label?: string }) => (
+  <div className="flex items-center gap-2 bg-white/50 px-3 py-1.5 rounded-xl border-2 border-[#D1FAE5]">
+    <span className="text-[10px] font-black uppercase text-[#064E3B]/60 tracking-wider whitespace-nowrap">{label}:</span>
+    <select 
+      value={value} 
+      onChange={(e) => onChange(parseInt(e.target.value))}
+      className="bg-transparent text-xs font-black text-[#064E3B] outline-none cursor-pointer"
+    >
+      {[1,2,3,4,5,6,7,8,9,10,11,12].map(num => (
+        <option key={num} value={num}>Week {num}</option>
+      ))}
+    </select>
+  </div>
+);
+
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+const getWeekFromDate = (dateStr: string): number | null => {
+  if (!dateStr) return null;
+  const cleaned = dateStr.trim();
+  if (!cleaned) return null;
+  
+  // Try clean standard ISO format parsing first
+  let d = new Date(cleaned);
+  
+  // If Date is invalid or has unusual formats, let's try mapping common school date notation (e.g. "13/4", "13/4/2026", "13-4")
+  if (isNaN(d.getTime())) {
+    const parts = cleaned.split(/[-/.]/);
+    if (parts.length >= 2) {
+      const day = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1; // 0-indexed month
+      const year = parts.length >= 3 ? parseInt(parts[2], 10) : 2026;
+      const fullYear = year < 100 ? 2000 + year : year;
+      if (!isNaN(day) && !isNaN(month) && !isNaN(fullYear)) {
+        d = new Date(fullYear, month, day);
+      }
+    }
+  }
+
+  if (isNaN(d.getTime())) return null;
+  
+  const month = d.getMonth() + 1; // 1-12
+  const day = d.getDate();
+  const year = d.getFullYear() || 2026;
+  
+  const mmdd = month * 100 + day;
+  
+  // Hardcoded academic 2026 weekly boundaries corresponding to trackerWeeks labels
+  if (mmdd >= 413 && mmdd <= 419) return 1;    // 13/4-17/4
+  if (mmdd >= 420 && mmdd <= 426) return 2;    // 20/4-24/4
+  if (mmdd >= 427 && mmdd <= 503) return 3;    // 27/4-1/5
+  if (mmdd >= 504 && mmdd <= 510) return 4;    // 4/5-8/5
+  if (mmdd >= 511 && mmdd <= 517) return 5;    // 11/5-15/5
+  if (mmdd >= 518 && mmdd <= 531) return 6;    // 18/5-22/5 (including midterm break)
+  if (mmdd >= 601 && mmdd <= 607) return 7;    // 1/6-5/6
+  if (mmdd >= 608 && mmdd <= 614) return 8;    // 8/6-12/6
+  if (mmdd >= 615 && mmdd <= 621) return 9;    // 15/6-19/6
+  if (mmdd >= 622 && mmdd <= 628) return 10;   // 22/6-26/6
+  if (mmdd >= 629 && mmdd <= 705) return 11;   // 29/6-3/7
+  if (mmdd >= 706 && mmdd <= 712) return 12;   // 6/7-10/7
+  
+  // Dynamic fallback: find closest starting Monday for any other date in dynamic year
+  const targetYear = year;
+  const weekStarts = [
+    { week: 1, date: new Date(targetYear, 3, 13) }, // April 13
+    { week: 2, date: new Date(targetYear, 3, 20) }, // April 20
+    { week: 3, date: new Date(targetYear, 3, 27) }, // April 27
+    { week: 4, date: new Date(targetYear, 4, 4) },  // May 4
+    { week: 5, date: new Date(targetYear, 4, 11) }, // May 11
+    { week: 6, date: new Date(targetYear, 4, 18) }, // May 18
+    { week: 7, date: new Date(targetYear, 5, 1) },  // June 1
+    { week: 8, date: new Date(targetYear, 5, 8) },  // June 8
+    { week: 9, date: new Date(targetYear, 5, 15) }, // June 15
+    { week: 10, date: new Date(targetYear, 5, 22) },// June 22
+    { week: 11, date: new Date(targetYear, 5, 29) },// June 29
+    { week: 12, date: new Date(targetYear, 6, 6) }  // July 6
+  ];
+  
+  let closestWeek = 1;
+  let minDiff = Infinity;
+  for (const ws of weekStarts) {
+    const diff = Math.abs(d.getTime() - ws.date.getTime());
+    if (diff < minDiff) {
+      minDiff = diff;
+      closestWeek = ws.week;
+    }
+  }
+  
+  return closestWeek;
+};
+
+const getDateForWeek = (weekId: number): string => {
+  const dates: Record<number, string> = {
+    1: "2026-04-13",
+    2: "2026-04-20",
+    3: "2026-04-27",
+    4: "2026-05-04",
+    5: "2026-05-11",
+    6: "2026-05-18",
+    7: "2026-06-01",
+    8: "2026-06-08",
+    9: "2026-06-15",
+    10: "2026-06-22",
+    11: "2026-06-29",
+    12: "2026-07-06",
+  };
+  return dates[weekId] || "2026-04-13";
+};
 
 // --- Components ---
 
@@ -494,51 +607,27 @@ export default function App() {
   const [isFetchingProjects, setIsFetchingProjects] = useState(false);
   const [isFetchingFolders, setIsFetchingFolders] = useState(false);
   const [submittedProjects, setSubmittedProjects] = useState<any[]>([]);
+  const [submittedFolders, setSubmittedFolders] = useState<any[]>([]);
+  const [currentSubmittedFolderId, setCurrentSubmittedFolderId] = useState<string | null>(null);
   const [isFetchingSubmitted, setIsFetchingSubmitted] = useState(false);
-  const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
-  const [isMovingProject, setIsMovingProject] = useState<string | null>(null);
+  const [isFetchingSubmittedFolders, setIsFetchingSubmittedFolders] = useState(false);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [isMovingPlanToFolder, setIsMovingPlanToFolder] = useState<string | null>(null);
+  const [isMovingProject, setIsMovingProject] = useState<string | null>(null);
+  const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+  const [fullscreenNote, setFullscreenNote] = useState<'journal' | 'notes' | null>(null);
+  const [timetableOptions, setTimetableOptions] = useState<{
+    grid: Record<string, Record<string, (null | {teacherId: string, subject: string})[]>>,
+    quality: number,
+    filledSlots: number
+  }[]>([]);
+  const [selectedTimetableOption, setSelectedTimetableOption] = useState<number | null>(null);
+  const [lessonPlanView, setLessonPlanView] = useState<'cards' | 'tracker'>('cards');
+  const [expandedTrackerTeachers, setExpandedTrackerTeachers] = useState<Record<string, boolean>>({});
+  const [timetableOrientation, setTimetableOrientation] = useState<'vertical' | 'horizontal'>('vertical');
   const [newFolderName, setNewFolderName] = useState('');
 
-  useEffect(() => {
-    if (user) {
-      fetchProjects();
-      fetchFolders();
-    } else {
-      setUserProjects([]);
-      setFolders([]);
-    }
-  }, [user]);
 
-  const fetchProjects = () => {
-    if (!user) return;
-    setIsFetchingProjects(true);
-    const q = query(collection(db, 'projects'), where('userId', '==', user.uid));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const projects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setUserProjects(projects);
-      setIsFetchingProjects(false);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'projects');
-      setIsFetchingProjects(false);
-    });
-    return unsubscribe;
-  };
-
-  const fetchFolders = () => {
-    if (!user) return;
-    setIsFetchingFolders(true);
-    const q = query(collection(db, 'folders'), where('userId', '==', user.uid));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const fetchedFolders = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setFolders(fetchedFolders);
-      setIsFetchingFolders(false);
-    }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'folders');
-      setIsFetchingFolders(false);
-    });
-    return unsubscribe;
-  };
 
   // --- Keyboard Movement ---
   useEffect(() => {
@@ -1784,6 +1873,7 @@ export default function App() {
           userId: user.uid,
           timestamp: Date.now(),
           content,
+          weekId: selectedWeekForSubmission,
           category: workspaceMode,
           title: content.lessonTitle || content.lessonPlan?.overallTopic || "Untitled Project",
           status: 'submitted',
@@ -1821,6 +1911,66 @@ export default function App() {
     else if (project.category === 'worksheet') setCurrentView('worksheet');
     else if (project.category === 'notes') setCurrentView('notes');
     else setCurrentView('slides');
+  };
+
+  const deleteSubmittedPlan = async (planId: string) => {
+    if (!window.confirm("Are you sure you want to delete this submitted plan? This action cannot be undone.")) return;
+    
+    try {
+      await deleteDoc(doc(db, 'submitted_plans', planId));
+      alert("Successfully deleted the submitted plan.");
+    } catch (err) {
+      console.error("Error deleting plan:", err);
+      alert("Failed to delete the plan. Check permissions.");
+    }
+  };
+
+  const createSubmittedFolder = async () => {
+    const name = prompt("Folder name? (e.g. Teacher Name or Status)");
+    if (!name) return;
+
+    try {
+      await addDoc(collection(db, 'submitted_folders'), {
+        name,
+        createdAt: Date.now(),
+        createdBy: user?.email
+      });
+    } catch (err) {
+      console.error("Error creating folder:", err);
+      alert("Failed to create folder.");
+    }
+  };
+
+  const deleteSubmittedFolder = async (folderId: string) => {
+    const folder = submittedFolders.find(f => f.id === folderId);
+    if (!folder) return;
+    
+    if (!window.confirm(`Are you sure you want to delete the folder "${folder.name}"? Plans inside will remain but become unorganized.`)) return;
+
+    try {
+      // Unset folderId for plans in this folder
+      const batch: any[] = [];
+      submittedProjects.forEach(p => {
+        if (p.folderId === folderId) {
+          batch.push(updateDoc(doc(db, 'submitted_plans', p.id), { folderId: null }));
+        }
+      });
+      await Promise.all(batch);
+      await deleteDoc(doc(db, 'submitted_folders', folderId));
+      if (currentSubmittedFolderId === folderId) setCurrentSubmittedFolderId(null);
+    } catch (err) {
+      console.error("Error deleting folder:", err);
+      alert("Failed to delete folder.");
+    }
+  };
+
+  const moveSubmittedPlanToFolder = async (planId: string, folderId: string | null) => {
+    try {
+      await updateDoc(doc(db, 'submitted_plans', planId), { folderId });
+    } catch (err) {
+      console.error("Error moving plan:", err);
+      alert("Failed to move plan.");
+    }
   };
 
   const moveProjectToFolder = async (projectId: string, folderId: string | null) => {
@@ -1880,31 +2030,73 @@ export default function App() {
     };
   }, [user]);
 
-  // Admin Lesson Plans Listener
+  // Admin / Teacher Lesson Plans Listener
   useEffect(() => {
-    if (!user || !userRoles.includes('admin')) {
+    if (!user) {
       setSubmittedProjects([]);
+      setSubmittedFolders([]);
       return;
     }
 
     setIsFetchingSubmitted(true);
-    console.log("Admin: Setting up submitted projects listener from submitted_plans...");
-    const q = query(
-      collection(db, 'submitted_plans'),
-      orderBy('timestamp', 'desc')
-    );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      console.log("Admin: Received submitted plans snapshot, size:", snapshot.size);
-      const projects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setSubmittedProjects(projects);
-      setIsFetchingSubmitted(false);
-    }, (err) => {
-      console.error("Admin: Error fetching submitted plans:", err);
-      setIsFetchingSubmitted(false);
-    });
+    if (userRoles.includes('admin')) {
+      setIsFetchingSubmittedFolders(true);
+      const plansQ = query(
+        collection(db, 'submitted_plans'),
+        orderBy('timestamp', 'desc')
+      );
 
-    return () => unsubscribe();
+      const foldersQ = query(
+        collection(db, 'submitted_folders'),
+        orderBy('name', 'asc')
+      );
+
+      const unsubscribePlans = onSnapshot(plansQ, (snapshot) => {
+        const projects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setSubmittedProjects(projects);
+        setIsFetchingSubmitted(false);
+      }, (err) => {
+        console.error("Admin: Error fetching submitted plans:", err);
+        setIsFetchingSubmitted(false);
+      });
+
+      const unsubscribeFolders = onSnapshot(foldersQ, (snapshot) => {
+        const foldersList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setSubmittedFolders(foldersList);
+        setIsFetchingSubmittedFolders(false);
+      }, (err) => {
+        console.error("Admin: Error fetching submitted folders:", err);
+        setIsFetchingSubmittedFolders(false);
+      });
+
+      return () => {
+        unsubscribePlans();
+        unsubscribeFolders();
+      };
+    } else {
+      // For non-admin teachers, fetch only their own submissions
+      // sorted client side to bypass any missing coordinate index errors
+      const plansQ = query(
+        collection(db, 'submitted_plans'),
+        where('userId', '==', user.uid)
+      );
+
+      const unsubscribePlans = onSnapshot(plansQ, (snapshot) => {
+        const projects = snapshot.docs
+          .map(doc => ({ id: doc.id, ...doc.data() }))
+          .sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
+        setSubmittedProjects(projects);
+        setIsFetchingSubmitted(false);
+      }, (err) => {
+        console.error("Teacher: Error fetching own submitted plans:", err);
+        setIsFetchingSubmitted(false);
+      });
+
+      return () => {
+        unsubscribePlans();
+      };
+    }
   }, [user, userRoles]);
 
   const updateSlideData = (index: number, field: string, value: any) => {
@@ -2548,6 +2740,22 @@ export default function App() {
   ];
 
   const yearGroups = ["Year 1", "Year 2", "Year 3", "Year 4", "Year 5", "Year 6", "Year 7", "Year 8", "Year 9", "Year 10", "Year 11"];
+  
+  const trackerWeeks = [
+    { id: 1, label: "Week 1", dates: "13/4-17/4" },
+    { id: 2, label: "Week 2", dates: "20/4-24/4" },
+    { id: 3, label: "Week 3", dates: "27/4-1/5" },
+    { id: 4, label: "Week 4", dates: "4/5-8/5" },
+    { id: 5, label: "Week 5", dates: "11/5-15/5" },
+    { id: 6, label: "Week 6", dates: "18/5-22/5" },
+    { id: 7, label: "Week 7", dates: "1/6-5/6" },
+    { id: 8, label: "Week 8", dates: "8/6-12/6" },
+    { id: 9, label: "Week 9", dates: "15/6-19/6" },
+    { id: 10, label: "Week 10", dates: "22/6-26/6" },
+    { id: 11, label: "Week 11", dates: "29/6-3/7" },
+    { id: 12, label: "Week 12", dates: "6/7-10/7" },
+  ];
+  const [selectedWeekForSubmission, setSelectedWeekForSubmission] = useState(1);
   const [editingTeacher, setEditingTeacher] = useState<any>(null);
   const [staffAssignments, setStaffAssignments] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
@@ -2691,6 +2899,26 @@ export default function App() {
   const [lpPreparedBy, setLpPreparedBy] = useState('');
   const [lpCheckedBy, setLpCheckedBy] = useState('');
   
+  // Synchronize dynamic Week Selection and Lesson Plan Date
+  useEffect(() => {
+    const rawDate = content?.lessonPlan?.date || lpDate;
+    if (rawDate) {
+      const calculatedWeek = getWeekFromDate(rawDate);
+      if (calculatedWeek && calculatedWeek !== selectedWeekForSubmission) {
+        setSelectedWeekForSubmission(calculatedWeek);
+      }
+    }
+  }, [content?.lessonPlan?.date, lpDate]);
+
+  const handleWeekSelectionChange = (weekId: number) => {
+    setSelectedWeekForSubmission(weekId);
+    const mappedDate = getDateForWeek(weekId);
+    setLpDate(mappedDate);
+    if (content?.lessonPlan) {
+      updateLessonPlanMetadata('date', mappedDate);
+    }
+  };
+  
   const worksheetRef = useRef<HTMLDivElement>(null);
   const readingProgramRef = useRef<HTMLDivElement>(null);
   const slideRef = useRef<HTMLDivElement>(null);
@@ -2728,14 +2956,13 @@ export default function App() {
 
     // Time slot generation
     const getSlots = (day: string, yearGroup: string) => {
-      const isPrimaryYear = isPrimary(yearGroup);
       const isMon = day === "Monday";
       
       const sessionTimes = [
         { start: "08:00", end: "08:30", type: "registration" },
-        { start: "08:30", end: "09:05", type: "period" },
-        { start: "09:05", end: "09:40", type: "period" },
-        { start: "09:40", end: "10:20", type: "period" },
+        { start: "08:30", end: "09:10", type: "period" },
+        { start: "09:10", end: "09:45", type: "period" },
+        { start: "09:45", end: "10:20", type: "period" },
         { start: "10:20", end: "10:55", type: "breakfast" },
         { start: "10:55", end: "11:30", type: isMon ? "assembly" : "period" },
         { start: "11:30", end: "12:05", type: "period" },
@@ -2743,17 +2970,193 @@ export default function App() {
         { start: "12:40", end: "13:15", type: "lunch" },
         { start: "13:15", end: "13:50", type: "period" },
         { start: "13:50", end: "14:25", type: "period" },
+        { start: "14:25", end: "15:00", type: "period" }
       ];
-
-      // Add 9th period for secondary
-      if (!isPrimaryYear) {
-        sessionTimes.push({ start: "14:25", end: "15:00", type: "period" });
-      }
 
       return sessionTimes;
     };
 
-    const autoGenerateTimetable = () => {
+    const renderCellContent = (day: string, sIdx: number) => {
+      const daySlots = getSlots(day, schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7");
+      if (sIdx >= daySlots.length) {
+        return (
+          <div className="bg-gray-50/20 rounded-2xl border-2 border-dashed border-gray-100 flex items-center justify-center min-h-[90px] w-full">
+            <p className="text-[10px] font-black text-gray-200 rotate-45 uppercase tracking-tighter">Day Finished</p>
+          </div>
+        );
+      }
+      
+      const currentSlot = daySlots[sIdx];
+      let cellContent = null;
+
+      if (currentSlot.type !== "period" && currentSlot.type !== "assembly" && currentSlot.type !== "registration") {
+        cellContent = (
+          <div className="min-h-[90px] p-4 rounded-xl bg-amber-50/30 border-2 border-dashed border-amber-200/50 flex flex-col justify-center items-center text-center w-full">
+            <p className="text-[10px] font-black text-amber-600/40 uppercase tracking-[0.2em]">{currentSlot.type.replace('_', ' ')}</p>
+          </div>
+        );
+      } else if (schedulerViewMode === 'class') {
+        const isAssembly = currentSlot.type === "assembly";
+        const isRegistration = currentSlot.type === "registration";
+        const manualAssignment = timetableGrid[schedulerYearGroup]?.[day]?.[sIdx];
+        const teacher = manualAssignment ? teachers.find(t => t.id === manualAssignment.teacherId) : null;
+        
+        if (isAssembly) {
+          cellContent = (
+            <div className="min-h-[90px] p-4 rounded-xl bg-indigo-50 border-2 border-indigo-100 flex flex-col justify-center items-center text-center w-full">
+              <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Assembly</p>
+              <p className="text-xs font-black text-indigo-900 leading-tight">Whole School Gathering</p>
+            </div>
+          );
+        } else if (isRegistration) {
+          const homeroomTeacherId = staffAssignments[`${schedulerYearGroup}-ASSEMBLY/ HOMEROOM`];
+          const homeroomTeacher = teachers.find(t => t.id === homeroomTeacherId);
+          cellContent = (
+            <div className="min-h-[90px] p-4 rounded-xl bg-[#ECFDF5] border-2 border-[#10B981]/20 flex flex-col justify-center items-center text-center w-full">
+              <p className="text-[10px] font-black text-[#059669] uppercase tracking-widest mb-1">Registration</p>
+              <p className="text-xs font-black text-[#064E3B] leading-tight">{homeroomTeacher?.name || "Homeroom Teacher"}</p>
+            </div>
+          );
+        } else {
+          cellContent = (
+            <div 
+              className={cn(
+                "group relative min-h-[90px] p-4 rounded-xl border-2 transition-all flex flex-col justify-center w-full",
+                manualAssignment 
+                  ? "bg-white border-[#FACC15] shadow-sm hover:scale-[1.02]" 
+                  : "bg-[#FDFBF7] border-dashed border-gray-200 hover:border-[#FACC15]/40"
+              )}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={() => {
+                if (!draggedAssignment) return;
+
+                // Check if teacher is already busy at this time in another year group
+                let isBusy = false;
+                let busyYg = "";
+                Object.entries(timetableGrid).forEach(([yg, days]) => {
+                  if (days[day]?.[sIdx]?.teacherId === draggedAssignment.teacherId) {
+                    isBusy = true;
+                    busyYg = yg;
+                  }
+                });
+
+                if (isBusy) {
+                  alert(`Conflict: This teacher is already scheduled for ${busyYg} during this time slot.`);
+                  return;
+                }
+
+                const remaining = getRemainingPeriods(draggedAssignment.teacherId, draggedAssignment.subject, schedulerYearGroup);
+                if (remaining <= 0) {
+                  alert("No periods remaining for this teacher/subject.");
+                  return;
+                }
+                const nextGrid = { ...timetableGrid };
+                if (!nextGrid[schedulerYearGroup][day]) nextGrid[schedulerYearGroup][day] = [];
+                nextGrid[schedulerYearGroup][day][sIdx] = { 
+                  teacherId: draggedAssignment.teacherId, 
+                  subject: draggedAssignment.subject 
+                };
+                setTimetableGrid(nextGrid);
+                setDraggedAssignment(null);
+              }}
+            >
+              {manualAssignment ? (
+                <>
+                  <div className="flex justify-between items-start mb-1">
+                    <p className="text-[9px] font-black uppercase text-[#064E3B]/60 leading-none">{manualAssignment.subject}</p>
+                    <button 
+                      onClick={() => {
+                        const nextGrid = { ...timetableGrid };
+                        nextGrid[schedulerYearGroup][day][sIdx] = null;
+                        setTimetableGrid(nextGrid);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-500 transition-opacity"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                  <p className="text-xs font-black text-[#064E3B]">{teacher?.name}</p>
+                  <p className="text-[10px] font-bold text-[#FACC15] mt-1">{currentSlot.start}</p>
+                </>
+              ) : (
+                <div className="text-center opacity-20 group-hover:opacity-100 transition-opacity">
+                  <p className="text-[8px] font-black uppercase tracking-widest text-[#064E3B]">Drag Here</p>
+                </div>
+              )}
+            </div>
+          );
+        }
+      } else {
+        // Teacher View
+        let assignedYearGroup = "";
+        let assignedSubject = "";
+        const isAssembly = currentSlot.type === "assembly";
+        const isRegistration = currentSlot.type === "registration";
+        
+        Object.entries(timetableGrid).forEach(([yg, days]) => {
+          const slotData = days[day]?.[sIdx];
+          if (slotData && slotData.teacherId === selectedTeacherSchedule) {
+            assignedYearGroup = yg;
+            assignedSubject = slotData.subject;
+          }
+        });
+
+        if (isRegistration) {
+          let homeroomFor = "";
+          Object.entries(staffAssignments).forEach(([key, tId]) => {
+            if (key.endsWith("-ASSEMBLY/ HOMEROOM") && tId === selectedTeacherSchedule) {
+              homeroomFor = key.replace("-ASSEMBLY/ HOMEROOM", "");
+            }
+          });
+
+          if (homeroomFor) {
+            cellContent = (
+              <div className="min-h-[90px] p-4 rounded-xl bg-[#0F766E] border-2 border-[#115E59] text-white flex flex-col justify-center items-center text-center shadow-md w-full">
+                <p className="text-[10px] font-black opacity-60 uppercase tracking-widest mb-1">Registration</p>
+                <p className="text-xs font-black leading-tight">{homeroomFor}</p>
+              </div>
+            );
+          } else {
+            cellContent = (
+              <div className="min-h-[90px] p-4 rounded-xl bg-gray-100/50 border-2 border-dashed border-gray-200 flex items-center justify-center opacity-30 w-full">
+                <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest">No Assignment</p>
+              </div>
+            );
+          }
+        } else {
+          cellContent = (
+            <div className={cn(
+              "group relative min-h-[90px] p-4 rounded-xl border-2 transition-all flex flex-col justify-center w-full",
+              isAssembly ? "bg-indigo-50 border-indigo-100" :
+              assignedYearGroup 
+                ? "bg-[#064E3B] border-[#064E3B] text-white shadow-md shadow-emerald-900/20" 
+                : "bg-gray-50 border-gray-100 opacity-40 hover:opacity-100"
+            )}>
+              {isAssembly ? (
+                <div className="text-center">
+                  <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Assembly</p>
+                  <p className="text-[10px] font-bold text-indigo-900/60 font-mono tracking-tight">Mon Only</p>
+                </div>
+              ) : assignedYearGroup ? (
+                <>
+                  <p className="text-[9px] font-black uppercase text-[#FACC15] mb-1">{assignedSubject}</p>
+                  <p className="text-xs font-black">{assignedYearGroup}</p>
+                  <p className="text-[9px] font-bold opacity-60 mt-1">{currentSlot.start}</p>
+                </>
+              ) : (
+                <div className="text-center">
+                  <p className="text-[8px] font-black uppercase tracking-widest text-gray-300">Free</p>
+                </div>
+              )}
+            </div>
+          );
+        }
+      }
+
+      return cellContent;
+    };
+
+    const runAutoGeneration = () => {
       // 1. Reset the grid completely
       const newGrid: Record<string, Record<string, (null | {teacherId: string, subject: string})[]>> = {};
       yearGroups.forEach(yg => {
@@ -2761,10 +3164,16 @@ export default function App() {
         ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach(day => {
           newGrid[yg][day] = Array(12).fill(null);
         });
+
+        // FIX SILENT READING: Friday 8:30 (Index 1)
+        const srTeacher = staffAssignments[`${yg}-SILENT READING`] || 'c-1';
+        newGrid[yg]["Friday"][1] = { teacherId: srTeacher, subject: "SILENT READING" };
       });
 
-      // 2. Prepare assignments - sort by priority (e.g., core subjects or teachers with fewer subjects)
-      const assignments = [...assignmentQuotas].sort((a, b) => b.total - a.total);
+      // 2. Prepare assignments - filter out Silent Reading as it's already fixed
+      const assignments = [...assignmentQuotas]
+        .filter(a => a.subject !== "SILENT READING")
+        .sort((a, b) => b.total - a.total);
       
       // 3. For each assignment, try to place periods
       assignments.forEach(assignment => {
@@ -2849,9 +3258,45 @@ export default function App() {
           }
         }
       });
+      return newGrid;
+    };
 
-      setTimetableGrid(newGrid);
-      alert("Whole-school timetable generated successfully!");
+    const calculateOptionQuality = (grid: Record<string, Record<string, (null | {teacherId: string, subject: string})[]>>) => {
+      let filled = 0;
+      let totalSlots = 0;
+      
+      yearGroups.forEach(yg => {
+        ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach(day => {
+          const slots = getSlots(day, yg);
+          slots.forEach((slot, idx) => {
+            if (slot.type === 'period') {
+              totalSlots++;
+              if (grid[yg]?.[day]?.[idx]) filled++;
+            }
+          });
+        });
+      });
+      
+      return {
+        filled,
+        percentage: totalSlots > 0 ? (filled / totalSlots) * 100 : 0
+      };
+    };
+
+    const autoGenerateTimetable = () => {
+      const options = [];
+      for (let i = 0; i < 5; i++) {
+        const grid = runAutoGeneration();
+        const { percentage, filled } = calculateOptionQuality(grid);
+        options.push({
+          grid,
+          quality: percentage,
+          filledSlots: filled
+        });
+      }
+      setTimetableOptions(options);
+      setSelectedTimetableOption(0); // Select first option by default
+      setTimetableGrid(options[0].grid);
     };
     
     // Calculate teacher loads
@@ -3238,14 +3683,75 @@ export default function App() {
           
           {adminTab === 'plans' && (
             <div className="max-w-6xl mx-auto space-y-8 pb-20">
-              <div className="flex justify-between items-center bg-white p-8 rounded-[2.5rem] shadow-xl border-b-8 border-black/5">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-8 rounded-[2.5rem] shadow-xl border-b-8 border-black/5 gap-4">
                 <div>
                   <h3 className="text-3xl font-black text-[#064E3B]">Submitted Lesson Plans</h3>
-                  <p className="text-[#064E3B]/60 font-bold mt-1">Review and monitor teacher prep progress ({submittedProjects.length} submitted)</p>
+                  <p className="text-[#064E3B]/60 font-bold mt-1">Review and monitor teacher prep progress ({submittedProjects.length} total)</p>
                 </div>
-                <div className="p-4 bg-[#F0FDF4] rounded-2xl border-2 border-[#D1FAE5] text-[#064E3B] font-black text-xs uppercase tracking-widest">
-                  Active Monitoring
+                <div className="flex items-center gap-4">
+                  <div className="flex bg-gray-100 p-1.5 rounded-2xl border-2 border-transparent">
+                    <button 
+                      onClick={() => setLessonPlanView('cards')}
+                      className={cn(
+                        "px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all",
+                        lessonPlanView === 'cards' ? "bg-white text-[#064E3B] shadow-sm" : "text-[#064E3B]/40 hover:text-[#064E3B]"
+                      )}
+                    >
+                      Cards
+                    </button>
+                    <button 
+                      onClick={() => setLessonPlanView('tracker')}
+                      className={cn(
+                        "px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all",
+                        lessonPlanView === 'tracker' ? "bg-white text-[#064E3B] shadow-sm" : "text-[#064E3B]/40 hover:text-[#064E3B]"
+                      )}
+                    >
+                      Weekly Tracker
+                    </button>
+                  </div>
+                  <button 
+                    onClick={createSubmittedFolder}
+                    className="p-3 bg-[#064E3B] text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-[#059669] transition-all shadow-md flex items-center gap-2"
+                  >
+                    <FolderPlus size={16} /> New Folder
+                  </button>
                 </div>
+              </div>
+
+              {/* Folders Bar */}
+              <div className="flex flex-wrap gap-3 pb-4 overflow-x-auto no-scrollbar">
+                <button
+                  onClick={() => setCurrentSubmittedFolderId(null)}
+                  className={cn(
+                    "px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest transition-all flex items-center gap-2 whitespace-nowrap",
+                    currentSubmittedFolderId === null 
+                      ? "bg-[#064E3B] text-white shadow-lg scale-105" 
+                      : "bg-white text-[#064E3B] hover:bg-gray-50 border-2 border-transparent"
+                  )}
+                >
+                  <Grid size={14} /> All Submissions
+                </button>
+                {submittedFolders.map(folder => (
+                  <div key={folder.id} className="relative group/folder">
+                    <button
+                      onClick={() => setCurrentSubmittedFolderId(folder.id)}
+                      className={cn(
+                        "px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest transition-all flex items-center gap-2 whitespace-nowrap pr-10",
+                        currentSubmittedFolderId === folder.id 
+                          ? "bg-[#FACC15] text-[#064E3B] shadow-lg scale-105" 
+                          : "bg-white text-[#064E3B] hover:bg-gray-50 border-2 border-transparent"
+                      )}
+                    >
+                      <Folder size={14} /> {folder.name}
+                    </button>
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); deleteSubmittedFolder(folder.id); }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-red-400 hover:text-red-600 opacity-0 group-hover/folder:opacity-100 transition-opacity"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
               </div>
 
               {isFetchingSubmitted ? (
@@ -3253,19 +3759,205 @@ export default function App() {
                   <Loader2 className="animate-spin text-[#059669]" size={48} />
                   <p className="font-bold text-[#064E3B]/60 italic">Fetching latest submissions...</p>
                 </div>
-              ) : submittedProjects.length === 0 ? (
+              ) : lessonPlanView === 'tracker' ? (
+                <div className="bg-white rounded-[2.5rem] shadow-2xl border-t-8 border-[#FACC15] overflow-hidden">
+                  <div className="overflow-x-auto custom-scrollbar">
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr className="bg-[#FEFCE8]">
+                          <th className="p-6 text-left border-b-2 border-r-2 border-black/5 min-w-[250px]">
+                            <span className="text-xs font-black uppercase tracking-widest text-[#854D0E]">Teacher & Subject</span>
+                          </th>
+                          <th className="p-6 text-left border-b-2 border-r-2 border-black/5 min-w-[200px]">
+                            <span className="text-xs font-black uppercase tracking-widest text-[#854D0E]">Link</span>
+                          </th>
+                          {trackerWeeks.map(week => (
+                            <th key={week.id} className="p-4 text-center border-b-2 border-r-2 border-black/5 min-w-[100px]">
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-[10px] font-black uppercase tracking-tighter text-[#854D0E] whitespace-nowrap">{week.label}</span>
+                                <span className="text-[8px] font-bold text-[#854D0E]/60">{week.dates}</span>
+                              </div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {teachers.map(teacher => {
+                          // Find all subjects this teacher is assigned to in staffAssignments
+                          const assignments = Object.entries(staffAssignments)
+                            .filter(([_, tId]) => tId === teacher.id)
+                            .map(([key, _]) => {
+                              const [yg, sub] = key.split('-');
+                              return { yg, sub, key };
+                            });
+
+                          if (assignments.length === 0) return null;
+
+                          const isExpanded = !!expandedTrackerTeachers[teacher.id];
+
+                          return (
+                            <React.Fragment key={teacher.id}>
+                              {/* Teacher Header Row */}
+                              <tr 
+                                onClick={() => {
+                                  setExpandedTrackerTeachers(prev => ({
+                                    ...prev,
+                                    [teacher.id]: !prev[teacher.id]
+                                  }));
+                                }}
+                                className="bg-gray-50/70 hover:bg-emerald-50/40 cursor-pointer transition-all duration-200 select-none group"
+                              >
+                                <td colSpan={trackerWeeks.length + 2} className="px-6 py-4.5 border-b border-black/5">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-4">
+                                      <div className="w-9 h-9 rounded-full bg-[#064E3B] text-white flex items-center justify-center text-sm font-black shadow-sm group-hover:scale-110 transition-transform">
+                                        {teacher.name.charAt(0)}
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-extrabold text-[#064E3B] uppercase tracking-wider text-sm">{teacher.name}</span>
+                                        <span className="px-2 py-0.5 bg-[#D1FAE5] text-[#059669] text-[8px] font-black uppercase rounded-full">{teacher.role}</span>
+                                      </div>
+                                      
+                                      {/* Interactive Show/Hide Toggle Button */}
+                                      <button 
+                                        className="ml-2 flex items-center gap-1.5 px-3 py-1 bg-white hover:bg-[#FEFCE8] text-[#854D0E] hover:text-[#064E3B] border border-emerald-100 rounded-full text-[10px] font-black uppercase tracking-wider transition-all shadow-sm"
+                                        onClick={(e) => {
+                                          e.stopPropagation(); // Prevent duplicate toggle trigger
+                                          setExpandedTrackerTeachers(prev => ({
+                                            ...prev,
+                                            [teacher.id]: !prev[teacher.id]
+                                          }));
+                                        }}
+                                      >
+                                        {isExpanded ? (
+                                          <>
+                                            <ChevronDown size={12} className="text-[#854D0E] animate-bounce" />
+                                            Hide Subjects
+                                          </>
+                                        ) : (
+                                          <>
+                                            <ChevronRight size={12} className="text-[#854D0E]" />
+                                            Show Subjects ({assignments.length})
+                                          </>
+                                        )}
+                                      </button>
+                                    </div>
+                                    <div className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/40 group-hover:text-[#059669] transition-colors">
+                                      {isExpanded ? "Click row to hide" : "Click row to view"}
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                              {isExpanded && assignments.map((asgn, idx) => {
+                                const subjectLabel = `${asgn.sub}`;
+                                const yearLabel = `${asgn.yg}`;
+                                
+                                const tNameLower = teacher.name?.toLowerCase().trim();
+                                const asgnSubLower = asgn.sub?.toLowerCase().trim();
+
+                                const matchProject = (p: any) => {
+                                  // 1. Teacher match
+                                  const pTeacherNameLower = p.teacherName?.toLowerCase().trim();
+                                  const preparedByLower = (p.content?.lessonPlan?.preparedBy || p.content?.preparedBy || p.content?.lessonTitle || "")?.toLowerCase().trim();
+                                  const matchingUser = allMembers.find(m => m.id === p.userId || m.uid === p.userId);
+                                  const userRegisteredNameLower = matchingUser?.teacherName?.toLowerCase().trim();
+
+                                  const isTeacherMatch = (
+                                    p.userId === teacher.id ||
+                                    (pTeacherNameLower && tNameLower && (pTeacherNameLower === tNameLower || pTeacherNameLower.includes(tNameLower) || tNameLower.includes(pTeacherNameLower))) ||
+                                    (preparedByLower && tNameLower && (preparedByLower === tNameLower || preparedByLower.includes(tNameLower) || tNameLower.includes(preparedByLower))) ||
+                                    (userRegisteredNameLower && tNameLower && (userRegisteredNameLower === tNameLower || userRegisteredNameLower.includes(tNameLower) || tNameLower.includes(userRegisteredNameLower)))
+                                  );
+
+                                  if (!isTeacherMatch) return false;
+
+                                  // 2. Subject match
+                                  const pSubjectLower = p.content?.subject?.toLowerCase().trim() || p.content?.lessonPlan?.subject?.toLowerCase().trim();
+                                  const pTitleLower = p.title?.toLowerCase().trim();
+
+                                  const isSubjectMatch = asgnSubLower && (
+                                    pSubjectLower === asgnSubLower ||
+                                    (pSubjectLower && (pSubjectLower.includes(asgnSubLower) || asgnSubLower.includes(pSubjectLower))) ||
+                                    (pTitleLower && pTitleLower.includes(asgnSubLower))
+                                  );
+
+                                  return !!isSubjectMatch;
+                                };
+                                
+                                return (
+                                  <tr key={asgn.key} className="hover:bg-gray-50 transition-colors group">
+                                    <td className="p-6 border-b border-r border-black/5 pl-14">
+                                      <div className="flex flex-col">
+                                        <span className="text-xs font-bold text-[#064E3B]">{subjectLabel}</span>
+                                        <span className="text-[10px] font-medium text-[#064E3B]/60 italic">{yearLabel}</span>
+                                      </div>
+                                    </td>
+                                    <td className="p-6 border-b border-r border-black/5">
+                                      <div className="flex flex-col gap-1">
+                                        {/* Find the latest submission for this teacher/subject to show a quick link */}
+                                        {submittedProjects.filter(matchProject).map((p, pIdx) => (
+                                          <button 
+                                            key={p.id}
+                                            onClick={() => loadProject(p, true)}
+                                            className="text-[10px] font-black text-[#059669] hover:underline text-left truncate max-w-[180px]"
+                                          >
+                                            → {p.yg || asgn.yg} {asgn.sub} Plan
+                                          </button>
+                                        )).slice(0, 1)}
+                                      </div>
+                                    </td>
+                                    {trackerWeeks.map(week => {
+                                      const submission = submittedProjects.find(p => 
+                                        matchProject(p) && p.weekId === week.id
+                                      );
+
+                                      return (
+                                        <td key={week.id} className="p-4 border-b border-r border-black/5 text-center">
+                                          {submission ? (
+                                            <button 
+                                              onClick={() => loadProject(submission, true)}
+                                              className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 border-2 border-emerald-100 flex items-center justify-center mx-auto hover:bg-emerald-100 transition-all shadow-sm"
+                                              title="View Submission"
+                                            >
+                                              <CheckCircle size={20} />
+                                            </button>
+                                          ) : (
+                                            <div className="w-10 h-10 rounded-xl bg-gray-50 border-2 border-gray-100/50 flex items-center justify-center mx-auto opacity-30">
+                                              <div className="w-2 h-2 rounded-full bg-gray-300" />
+                                            </div>
+                                          )}
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                );
+                              })}
+                            </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : submittedProjects.filter(p => currentSubmittedFolderId === null ? !p.folderId : p.folderId === currentSubmittedFolderId).length === 0 ? (
                 <div className="p-20 text-center space-y-6 bg-white rounded-[3rem] shadow-xl border-4 border-dashed border-[#D1FAE5]">
                   <div className="w-24 h-24 bg-[#F0FDF4] rounded-full flex items-center justify-center mx-auto shadow-sm">
                     <BookOpen size={40} className="text-[#D1FAE5]" />
                   </div>
                   <div>
-                    <h4 className="text-2xl font-black text-[#064E3B]">No Submissions Yet</h4>
-                    <p className="text-[#064E3B]/60 font-bold">When teachers submit their work, they will appear here instantly.</p>
+                    <h4 className="text-2xl font-black text-[#064E3B]">No Plans Found</h4>
+                    <p className="text-[#064E3B]/60 font-bold">
+                      {currentSubmittedFolderId 
+                        ? 'This folder is empty. Move plans here to organize them.'
+                        : 'When teachers submit their work, they will appear here instantly.'}
+                    </p>
                   </div>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {submittedProjects.map((project) => (
+                  {submittedProjects
+                    .filter(p => currentSubmittedFolderId === null ? !p.folderId : p.folderId === currentSubmittedFolderId)
+                    .map((project) => (
                     <motion.div 
                       key={project.id}
                       initial={{ opacity: 0, y: 10 }}
@@ -3276,8 +3968,15 @@ export default function App() {
                         <div className="p-3 bg-[#F0FDF4] rounded-2xl text-[#059669]">
                           <FileText size={24} />
                         </div>
-                        <div className="flex items-center gap-1.5 px-3 py-1 bg-green-50 text-green-600 rounded-full text-[10px] font-black uppercase tracking-widest border border-green-100">
-                          <CheckCircle size={10} /> {project.status}
+                        <div className="flex flex-col items-end gap-2">
+                          <div className="flex items-center gap-1.5 px-3 py-1 bg-green-50 text-green-600 rounded-full text-[10px] font-black uppercase tracking-widest border border-green-100">
+                            <CheckCircle size={10} /> {project.status}
+                          </div>
+                          {submittedFolders.find(f => f.id === project.folderId) && (
+                            <div className="flex items-center gap-1.5 px-3 py-1 bg-amber-50 text-amber-600 rounded-full text-[8px] font-black uppercase tracking-widest border border-amber-100">
+                              <Folder size={8} /> {submittedFolders.find(f => f.id === project.folderId)?.name}
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -3293,15 +3992,90 @@ export default function App() {
                         <div className="text-[9px] font-black text-gray-400 uppercase">
                           {new Date(project.timestamp).toLocaleDateString()}
                         </div>
-                        <button 
-                          onClick={() => loadProject(project, true)}
-                          className="flex items-center gap-2 px-4 py-2 bg-[#064E3B] text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[#059669] transition-all shadow-md active:scale-95"
-                        >
-                          <Eye size={12} /> View Plan
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => setIsMovingPlanToFolder(project.id)}
+                            className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition-all shadow-sm active:scale-95 flex items-center justify-center border border-blue-100"
+                            title="Move to Folder"
+                          >
+                            <FolderInput size={16} />
+                          </button>
+                          <button 
+                            onClick={() => loadProject(project, true)}
+                            className="flex items-center gap-2 px-4 py-2 bg-[#064E3B] text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[#059669] transition-all shadow-md active:scale-95"
+                          >
+                            <Eye size={12} /> View
+                          </button>
+                          <button 
+                            onClick={() => deleteSubmittedPlan(project.id)}
+                            className="p-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-all shadow-sm active:scale-95 flex items-center justify-center border border-red-100"
+                            title="Delete Submission"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                       </div>
                     </motion.div>
                   ))}
+                </div>
+              )}
+
+              {/* Move to Folder Modal */}
+              {isMovingPlanToFolder && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="bg-white rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl space-y-6"
+                  >
+                    <div className="flex justify-between items-center">
+                      <h4 className="text-xl font-black text-[#064E3B]">Move to Folder</h4>
+                      <button onClick={() => setIsMovingPlanToFolder(null)} className="p-2 hover:bg-gray-100 rounded-full">
+                        <X size={20} />
+                      </button>
+                    </div>
+                    <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                      <button
+                        onClick={() => {
+                          moveSubmittedPlanToFolder(isMovingPlanToFolder, null);
+                          setIsMovingPlanToFolder(null);
+                        }}
+                        className="w-full p-4 rounded-2xl border-2 border-gray-50 flex items-center gap-3 hover:border-[#FACC15] hover:bg-[#FEFCE8]/30 transition-all text-left"
+                      >
+                        <div className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center text-gray-400">
+                          <Grid size={20} />
+                        </div>
+                        <div>
+                          <p className="font-black text-[#064E3B]">Root Directory</p>
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Main View</p>
+                        </div>
+                      </button>
+                      {submittedFolders.map(folder => (
+                        <button
+                          key={folder.id}
+                          onClick={() => {
+                            moveSubmittedPlanToFolder(isMovingPlanToFolder, folder.id);
+                            setIsMovingPlanToFolder(null);
+                          }}
+                          className="w-full p-4 rounded-2xl border-2 border-gray-50 flex items-center gap-3 hover:border-[#FACC15] hover:bg-[#FEFCE8]/30 transition-all text-left"
+                        >
+                          <div className="w-10 h-10 bg-[#F0FDF4] rounded-xl flex items-center justify-center text-[#059669]">
+                            <Folder size={20} />
+                          </div>
+                          <div>
+                            <p className="font-black text-[#064E3B]">{folder.name}</p>
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Folder</p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={createSubmittedFolder}
+                      className="w-full py-4 bg-gray-50 text-[#064E3B] rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-[#FACC15] transition-all flex items-center justify-center gap-2"
+                    >
+                      <Plus size={16} /> Create New Folder
+                    </button>
+                  </motion.div>
                 </div>
               )}
             </div>
@@ -3515,6 +4289,29 @@ export default function App() {
                     >
                       <Zap size={14} className="fill-current" /> Auto-Generate
                     </button>
+
+                    <div className="flex bg-gray-100/50 p-1 rounded-xl border border-gray-200/50 gap-1 ml-4">
+                      <button 
+                        onClick={() => setTimetableOrientation('vertical')}
+                        title="Days as columns, times as rows"
+                        className={cn(
+                          "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5",
+                          timetableOrientation === 'vertical' ? "bg-[#064E3B] text-white shadow" : "text-[#064E3B]/60 hover:text-[#064E3B]"
+                        )}
+                      >
+                        <LayoutGrid size={12} /> Vertical View
+                      </button>
+                      <button 
+                        onClick={() => setTimetableOrientation('horizontal')}
+                        title="Days as rows, times as columns"
+                        className={cn(
+                          "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5",
+                          timetableOrientation === 'horizontal' ? "bg-[#064E3B] text-white shadow" : "text-[#064E3B]/60 hover:text-[#064E3B]"
+                        )}
+                      >
+                        <Layout size={12} /> Horizontal View
+                      </button>
+                    </div>
                   </div>
                 </div>
                 <div className="flex gap-4">
@@ -3561,6 +4358,129 @@ export default function App() {
                    </button>
                 </div>
               </div>
+
+              {timetableOptions.length > 0 && (
+                <motion.div 
+                  initial={{ opacity: 0, y: -20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="sticky top-24 z-[40] bg-[#FEFCE8] border-2 border-[#FACC15]/20 p-6 rounded-[2rem] shadow-2xl space-y-4"
+                >
+                  <div className="flex justify-between items-center px-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Zap size={18} className="text-amber-600 fill-amber-600" />
+                        <h4 className="text-lg font-black text-[#854D0E] uppercase tracking-tight">AI Generated Variations</h4>
+                      </div>
+                      <p className="text-[#854D0E]/60 font-bold text-[10px] uppercase tracking-widest mt-0.5">Previewing Option {selectedTimetableOption !== null ? selectedTimetableOption + 1 : "?"} of {timetableOptions.length}</p>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2 bg-white/50 p-1.5 rounded-xl border border-amber-200">
+                        <button 
+                          onClick={() => {
+                            const nextIdx = (selectedTimetableOption !== null ? (selectedTimetableOption - 1 + 5) % 5 : 0);
+                            setSelectedTimetableOption(nextIdx);
+                            setTimetableGrid(timetableOptions[nextIdx].grid);
+                          }}
+                          className="p-2 hover:bg-white rounded-lg transition-all text-[#854D0E]"
+                        >
+                          <ChevronLeft size={16} />
+                        </button>
+                        <span className="font-black text-xs text-[#854D0E] min-w-[70px] text-center">
+                          {selectedTimetableOption !== null ? selectedTimetableOption + 1 : 0} / 5
+                        </span>
+                        <button 
+                          onClick={() => {
+                            const nextIdx = (selectedTimetableOption !== null ? (selectedTimetableOption + 1) % 5 : 0);
+                            setSelectedTimetableOption(nextIdx);
+                            setTimetableGrid(timetableOptions[nextIdx].grid);
+                          }}
+                          className="p-2 hover:bg-white rounded-lg transition-all text-[#854D0E]"
+                        >
+                          <ChevronRight size={16} />
+                        </button>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          setTimetableOptions([]);
+                          setSelectedTimetableOption(null);
+                        }}
+                        className="p-2.5 bg-white text-[#854D0E] border-2 border-amber-200 rounded-xl hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-black"
+                        title="Cancel & Clear Options"
+                      >
+                        <X size={18} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                    {timetableOptions.map((opt, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => {
+                          setSelectedTimetableOption(idx);
+                          setTimetableGrid(opt.grid);
+                        }}
+                        className={cn(
+                          "relative p-4 rounded-2xl border-2 transition-all flex flex-col items-start gap-2",
+                          selectedTimetableOption === idx 
+                            ? "bg-[#064E3B] border-[#064E3B] text-white shadow-lg overflow-hidden" 
+                            : "bg-white border-[#FACC15]/20 text-[#064E3B] hover:border-[#FACC15]"
+                        )}
+                      >
+                        {selectedTimetableOption === idx && (
+                          <motion.div 
+                            layoutId="active-opt"
+                            className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent pointer-events-none"
+                          />
+                        )}
+                        
+                        <div className="flex justify-between items-center w-full">
+                          <span className={cn(
+                            "font-black text-[10px] uppercase tracking-tighter",
+                            selectedTimetableOption === idx ? "text-white" : "text-[#854D0E]"
+                          )}>Option {idx + 1}</span>
+                          <span className={cn(
+                             "text-[9px] font-bold px-1.5 py-0.5 rounded-full",
+                             selectedTimetableOption === idx ? "bg-white/20 text-white" : "bg-emerald-50 text-emerald-600"
+                          )}>{opt.quality.toFixed(0)}% Fill</span>
+                        </div>
+
+                        {/* Mini Timetable Visualization */}
+                        <div className="grid grid-cols-5 gap-0.5 w-full h-8 mt-1">
+                          {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => (
+                            <div key={day} className="flex flex-col gap-0.5 h-full opacity-60">
+                              {[0,1,2,3,4,5,6,7].map((sI) => (
+                                <div 
+                                  key={sI} 
+                                  className={cn(
+                                    "w-full h-px rounded-[0.5px]",
+                                    opt.grid[schedulerYearGroup]?.[day]?.[sI] 
+                                      ? (selectedTimetableOption === idx ? "bg-white" : "bg-[#064E3B]")
+                                      : (selectedTimetableOption === idx ? "bg-white/10" : "bg-gray-100")
+                                  )} 
+                                />
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex justify-center border-t border-[#FACC15]/20 pt-4 mt-2">
+                    <button
+                      onClick={() => {
+                        setTimetableOptions([]);
+                        setSelectedTimetableOption(null);
+                        alert("Timetable Variation Applied Successfully!");
+                      }}
+                      className="px-8 py-3 bg-[#064E3B] text-white rounded-xl font-black uppercase text-[10px] tracking-[0.2em] hover:bg-[#059669] transition-all shadow-xl flex items-center gap-3 active:scale-95"
+                    >
+                      <CheckCircle size={16} /> Confirm Selection
+                    </button>
+                  </div>
+                </motion.div>
+              )}
 
               <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-start">
                 {/* Assignments Sidebar */}
@@ -3625,211 +4545,82 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="lg:col-span-3 bg-white rounded-[3rem] p-10 shadow-2xl overflow-x-auto border-8 border-white ring-1 ring-black/5">
-                  <div className="grid grid-cols-6 gap-4 min-w-[900px]">
-                    <div className="h-16" /> {/* Corner Spacer */}
-                    {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => (
-                      <div key={day} className="h-16 flex flex-col items-center justify-center bg-[#FEFCE8]/50 rounded-2xl border-2 border-[#FACC15]/20">
-                        <p className="font-black text-[#064E3B] uppercase tracking-widest text-sm">{day}</p>
-                        <p className="text-[10px] font-bold text-[#064E3B]/60 font-mono tracking-tight">{day === "Friday" ? "1:10pm" : isPrimary(schedulerYearGroup) ? "2:30pm" : "3:00pm"}</p>
-                      </div>
-                    ))}
-
-                    {/* Period Mapping */}
-                    {getSlots("Monday", schedulerViewMode === 'class' ? yearGroup : "Year 7").map((slot, sIdx) => {
-                      const isTeaching = slot.type === "period" || (slot.type === "assembly" && schedulerViewMode === 'class');
-                      
-                      return (
-                      <React.Fragment key={sIdx}>
-                        <div className="flex flex-col items-end justify-center pr-6 py-2 border-r-2 border-[#FEFCE8]/50">
-                          {slot.type === "period" ? (
-                            <p className="text-[10px] font-black text-[#064E3B] opacity-40 uppercase tracking-widest leading-none mb-1">P{sIdx + 1}</p>
-                          ) : (
-                            <p className="text-[10px] font-black text-amber-600 opacity-60 uppercase tracking-widest leading-none mb-1">{slot.type.replace('_', ' ')}</p>
-                          )}
-                          <p className="text-sm font-black text-[#064E3B] whitespace-nowrap">{slot.start}</p>
-                          <p className="text-[10px] font-bold text-[#064E3B]/40 leading-none mt-1">{slot.end}</p>
+                <div className="lg:col-span-3 bg-white rounded-[3rem] p-10 shadow-2xl overflow-x-auto border-8 border-white ring-1 ring-black/5 animate-fade-in">
+                  {timetableOrientation === 'vertical' ? (
+                    <div className="grid grid-cols-6 gap-4 min-w-[900px]">
+                      <div className="h-16" /> {/* Corner Spacer */}
+                      {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => (
+                        <div key={day} className="h-16 flex flex-col items-center justify-center bg-[#FEFCE8]/50 rounded-2xl border-2 border-[#FACC15]/20">
+                          <p className="font-black text-[#064E3B] uppercase tracking-widest text-sm">{day}</p>
+                          <p className="text-[10px] font-bold text-[#064E3B]/60 font-mono tracking-tight">{day === "Friday" ? "1:10pm" : "3:00pm"}</p>
                         </div>
-                        {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => {
-                          const daySlots = getSlots(day, schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7");
-                          if (sIdx >= daySlots.length) return <div key={day} className="bg-gray-50/20 rounded-2xl border-2 border-dashed border-gray-100 flex items-center justify-center min-h-[100px]"><p className="text-[10px] font-black text-gray-200 rotate-45 uppercase tracking-tighter">Day Finished</p></div>;
-                          
-                          const currentSlot = daySlots[sIdx];
-                          let cellContent = null;
+                      ))}
 
-                          if (currentSlot.type !== "period" && currentSlot.type !== "assembly" && currentSlot.type !== "registration") {
-                            cellContent = (
-                              <div className="min-h-[90px] p-4 rounded-2xl bg-amber-50/30 border-2 border-dashed border-amber-200/50 flex items-center justify-center">
-                                <p className="text-[10px] font-black text-amber-600/40 uppercase tracking-[0.2em]">{currentSlot.type.replace('_', ' ')}</p>
-                              </div>
-                            );
-                          } else if (schedulerViewMode === 'class') {
-                            const isAssembly = currentSlot.type === "assembly";
-                            const isRegistration = currentSlot.type === "registration";
-                            const manualAssignment = timetableGrid[schedulerYearGroup]?.[day]?.[sIdx];
-                            const teacher = manualAssignment ? teachers.find(t => t.id === manualAssignment.teacherId) : null;
-                            
-                            if (isAssembly) {
-                              cellContent = (
-                                <div className="min-h-[90px] p-4 rounded-2xl bg-indigo-50 border-2 border-indigo-100 flex flex-col justify-center items-center text-center">
-                                  <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Assembly</p>
-                                  <p className="text-xs font-black text-indigo-900 leading-tight">Whole School Gathering</p>
-                                </div>
-                              );
-                            } else if (isRegistration) {
-                              const homeroomTeacherId = staffAssignments[`${schedulerYearGroup}-ASSEMBLY/ HOMEROOM`];
-                              const homeroomTeacher = teachers.find(t => t.id === homeroomTeacherId);
-                              cellContent = (
-                                <div className="min-h-[90px] p-4 rounded-2xl bg-[#ECFDF5] border-2 border-[#10B981]/20 flex flex-col justify-center items-center text-center">
-                                  <p className="text-[10px] font-black text-[#059669] uppercase tracking-widest mb-1">Registration</p>
-                                  <p className="text-xs font-black text-[#064E3B] leading-tight">{homeroomTeacher?.name || "Homeroom Teacher"}</p>
-                                </div>
-                              );
-                            } else {
-                              cellContent = (
-                                <div 
-                                  className={cn(
-                                    "group relative min-h-[90px] p-4 rounded-2xl border-2 transition-all flex flex-col justify-center",
-                                    manualAssignment 
-                                      ? "bg-white border-[#FACC15] shadow-sm hover:scale-[1.02]" 
-                                      : "bg-[#FDFBF7] border-dashed border-gray-200 hover:border-[#FACC15]/40"
-                                  )}
-                                  onDragOver={(e) => e.preventDefault()}
-                                  onDrop={() => {
-                                    if (!draggedAssignment) return;
-
-                                    // Check if teacher is already busy at this time in another year group
-                                    let isBusy = false;
-                                    let busyYg = "";
-                                    Object.entries(timetableGrid).forEach(([yg, days]) => {
-                                      if (days[day]?.[sIdx]?.teacherId === draggedAssignment.teacherId) {
-                                        isBusy = true;
-                                        busyYg = yg;
-                                      }
-                                    });
-
-                                    if (isBusy) {
-                                      alert(`Conflict: This teacher is already scheduled for ${busyYg} during this time slot.`);
-                                      return;
-                                    }
-
-                                    const remaining = getRemainingPeriods(draggedAssignment.teacherId, draggedAssignment.subject, schedulerYearGroup);
-                                    if (remaining <= 0) {
-                                      alert("No periods remaining for this teacher/subject.");
-                                      return;
-                                    }
-                                    const nextGrid = { ...timetableGrid };
-                                    if (!nextGrid[schedulerYearGroup][day]) nextGrid[schedulerYearGroup][day] = [];
-                                    nextGrid[schedulerYearGroup][day][sIdx] = { 
-                                      teacherId: draggedAssignment.teacherId, 
-                                      subject: draggedAssignment.subject 
-                                    };
-                                    setTimetableGrid(nextGrid);
-                                    setDraggedAssignment(null);
-                                  }}
-                                >
-                                  {manualAssignment ? (
-                                    <>
-                                      <div className="flex justify-between items-start mb-1">
-                                        <p className="text-[9px] font-black uppercase text-[#064E3B]/60 leading-none">{manualAssignment.subject}</p>
-                                        <button 
-                                          onClick={() => {
-                                            const nextGrid = { ...timetableGrid };
-                                            nextGrid[schedulerYearGroup][day][sIdx] = null;
-                                            setTimetableGrid(nextGrid);
-                                          }}
-                                          className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-500 transition-opacity"
-                                        >
-                                          <Trash2 size={12} />
-                                        </button>
-                                      </div>
-                                      <p className="text-xs font-black text-[#064E3B]">{teacher?.name}</p>
-                                      <p className="text-[10px] font-bold text-[#FACC15] mt-1">{currentSlot.start}</p>
-                                    </>
-                                  ) : (
-                                    <div className="text-center opacity-20 group-hover:opacity-100 transition-opacity">
-                                      <p className="text-[8px] font-black uppercase tracking-widest text-[#064E3B]">Drag Here</p>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            }
-                          } else {
-                            // Teacher View
-                            let assignedYearGroup = "";
-                            let assignedSubject = "";
-                            const isAssembly = currentSlot.type === "assembly";
-                            const isRegistration = currentSlot.type === "registration";
-                            
-                            Object.entries(timetableGrid).forEach(([yg, days]) => {
-                              const slotData = days[day]?.[sIdx];
-                              if (slotData && slotData.teacherId === selectedTeacherSchedule) {
-                                assignedYearGroup = yg;
-                                assignedSubject = slotData.subject;
-                              }
-                            });
-
-                            if (isRegistration) {
-                              let homeroomFor = "";
-                              Object.entries(staffAssignments).forEach(([key, tId]) => {
-                                if (key.endsWith("-ASSEMBLY/ HOMEROOM") && tId === selectedTeacherSchedule) {
-                                  homeroomFor = key.replace("-ASSEMBLY/ HOMEROOM", "");
-                                }
-                              });
-
-                              if (homeroomFor) {
-                                cellContent = (
-                                  <div className="min-h-[90px] p-4 rounded-2xl bg-[#0F766E] border-2 border-[#115E59] text-white flex flex-col justify-center items-center text-center shadow-md">
-                                    <p className="text-[10px] font-black opacity-60 uppercase tracking-widest mb-1">Registration</p>
-                                    <p className="text-xs font-black leading-tight">{homeroomFor}</p>
-                                  </div>
-                                );
-                              } else {
-                                cellContent = (
-                                  <div className="min-h-[90px] p-4 rounded-2xl bg-gray-100/50 border-2 border-dashed border-gray-200 flex items-center justify-center opacity-30">
-                                    <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest">No Assignment</p>
-                                  </div>
-                                );
-                              }
-                            } else {
-                              cellContent = (
-                                <div className={cn(
-                                  "group relative min-h-[90px] p-4 rounded-2xl border-2 transition-all flex flex-col justify-center",
-                                  isAssembly ? "bg-indigo-50 border-indigo-100" :
-                                  assignedYearGroup 
-                                    ? "bg-[#064E3B] border-[#064E3B] text-white shadow-md shadow-emerald-900/20" 
-                                    : "bg-gray-50 border-gray-100 opacity-40 hover:opacity-100"
-                                )}>
-                                  {isAssembly ? (
-                                    <div className="text-center">
-                                      <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Assembly</p>
-                                      <p className="text-[10px] font-bold text-indigo-900/60 font-mono tracking-tight">Mon Only</p>
-                                    </div>
-                                  ) : assignedYearGroup ? (
-                                    <>
-                                      <p className="text-[9px] font-black uppercase text-[#FACC15] mb-1">{assignedSubject}</p>
-                                      <p className="text-xs font-black">{assignedYearGroup}</p>
-                                      <p className="text-[9px] font-bold opacity-60 mt-1">{currentSlot.start}</p>
-                                    </>
-                                  ) : (
-                                    <div className="text-center">
-                                      <p className="text-[8px] font-black uppercase tracking-widest text-gray-300">Free</p>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            }
-                          }
-
-                          return (
-                            <div key={day}>
-                              {cellContent}
+                      {/* Period Mapping */}
+                      {getSlots("Monday", schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7").map((slot, sIdx) => {
+                        return (
+                          <React.Fragment key={sIdx}>
+                            <div className="flex flex-col items-end justify-center pr-6 py-2 border-r-2 border-[#FEFCE8]/50">
+                              {slot.type === "period" ? (
+                                <p className="text-[10px] font-black text-[#064E3B] opacity-40 uppercase tracking-widest leading-none mb-1">P{sIdx + 1}</p>
+                              ) : (
+                                <p className="text-[10px] font-black text-amber-600 opacity-60 uppercase tracking-widest leading-none mb-1">{slot.type.replace('_', ' ')}</p>
+                              )}
+                              <p className="text-sm font-black text-[#064E3B] whitespace-nowrap">{slot.start}</p>
+                              <p className="text-[10px] font-bold text-[#064E3B]/40 leading-none mt-1">{slot.end}</p>
                             </div>
-                          );
-                        })}
-                      </React.Fragment>
-                    );})}
-                  </div>
+                            {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => {
+                              return (
+                                <div key={day} className="flex items-center justify-center w-full">
+                                  {renderCellContent(day, sIdx)}
+                                </div>
+                              );
+                            })}
+                          </React.Fragment>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    /* Horizontal View (days as rows, times as columns) */
+                    <div 
+                      className="grid gap-4 min-w-[1000px]"
+                      style={{ 
+                        gridTemplateColumns: `repeat(${1 + getSlots("Monday", schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7").length}, minmax(130px, 1fr))` 
+                      }}
+                    >
+                      {/* Corner Spacer Header */}
+                      <div className="h-16 flex flex-col items-center justify-center bg-gray-50 rounded-2xl border-2 border-gray-200/50">
+                        <p className="font-black text-[#064E3B] uppercase tracking-widest text-[9px]">DAY \ SLOT</p>
+                      </div>
+
+                      {/* Timeslots Column Headers */}
+                      {getSlots("Monday", schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7").map((slot, sIdx) => (
+                        <div key={sIdx} className="h-16 flex flex-col items-center justify-center bg-[#FEFCE8]/50 rounded-2xl border-2 border-[#FACC15]/20 px-2 text-center">
+                          <p className="font-black text-[#064E3B] uppercase tracking-widest text-[11px] leading-tight">
+                            {slot.type === "period" ? `P${sIdx + 1}` : slot.type.replace('_', ' ')}
+                          </p>
+                          <p className="text-[9px] font-bold text-[#064E3B]/60 font-mono tracking-tight mt-0.5">{slot.start} - {slot.end}</p>
+                        </div>
+                      ))}
+
+                      {/* Rows corresponding to each Day */}
+                      {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => (
+                        <React.Fragment key={day}>
+                          <div className="flex flex-col items-center justify-center bg-gradient-to-br from-[#FEFCE8]/30 to-white rounded-2xl border-2 border-[#FACC15]/20 p-4 shadow-sm min-h-[90px]">
+                            <p className="font-black text-[#064E3B] uppercase tracking-wider text-xs">{day}</p>
+                            <p className="text-[9px] font-bold text-[#064E3B]/40 leading-none mt-1">
+                              {day === "Friday" ? "1:10pm" : "3:00pm"}
+                            </p>
+                          </div>
+                          {getSlots(day, schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7").map((slot, sIdx) => (
+                            <div key={sIdx} className="flex items-center justify-center w-full">
+                              {renderCellContent(day, sIdx)}
+                            </div>
+                          ))}
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -4238,12 +5029,15 @@ export default function App() {
                         project.category === 'lesson-plan' ? "bg-blue-500" :
                         project.category === 'slides' ? "bg-[#FACC15] text-[#064E3B]" :
                         project.category === 'worksheet' ? "bg-green-500" :
+                        project.category === 'notes' ? "bg-amber-500" :
+                        project.category === 'journal' ? "bg-[#064E3B]" :
                         "bg-purple-500"
                       )}>
                         {project.category === 'lesson-plan' && <BookOpen size={20} />}
                         {project.category === 'slides' && <Presentation size={20} />}
                         {project.category === 'worksheet' && <FileText size={20} />}
                         {project.category === 'notes' && <BookOpen size={20} />}
+                        {project.category === 'journal' && <Edit2 size={20} />}
                       </div>
                       
                       <div className="flex items-center gap-1">
@@ -4315,6 +5109,80 @@ export default function App() {
                     </button>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+
+          {/* Submissions & Status Tracker */}
+          <div className="space-y-8 pt-8 border-t border-[#064E3B]/10">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4 flex-1">
+                <h3 className="text-lg font-black uppercase tracking-[0.4em] text-[#064E3B]">Submission History & Status</h3>
+                <div className="h-px flex-1 bg-gradient-to-r from-[#064E3B]/20 to-transparent" />
+              </div>
+            </div>
+
+            {submittedProjects.length === 0 ? (
+              <div className="bg-white p-12 rounded-[2.5rem] border-2 border-dashed border-[#064E3B]/10 text-center">
+                <div className="w-16 h-16 bg-[#FBF9F1] rounded-2xl flex items-center justify-center text-[#064E3B]/20 mx-auto mb-4">
+                  <CheckCircle size={32} />
+                </div>
+                <h4 className="text-lg font-black text-[#064E3B]">No submitted plans yet</h4>
+                <p className="text-[#064E3B]/60 text-sm max-w-xs mx-auto mt-2 font-medium">
+                  When you submit your lesson plans or assessments, they will appear here with an instant live tracker status confirming they are in the database.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {submittedProjects.map((plan: any) => {
+                  const week = trackerWeeks.find(w => w.id === plan.weekId);
+                  const formattedDate = new Date(plan.timestamp).toLocaleDateString(undefined, {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  });
+                  return (
+                    <div 
+                      key={plan.id} 
+                      className="bg-white p-6 rounded-[2rem] border-2 border-emerald-100 shadow-sm relative hover:shadow-lg transition-all flex flex-col justify-between"
+                    >
+                      <div className="space-y-4">
+                        <div className="flex justify-between items-start">
+                          <span className="px-3 py-1 bg-emerald-50 text-[#064E3B] text-[9px] font-black uppercase tracking-wider rounded-full flex items-center gap-1.5 border border-emerald-100">
+                            <CheckCircle size={10} className="text-[#059669]" /> Submitted (Live)
+                          </span>
+                          <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100/50">
+                            {week ? week.label : `Week ${plan.weekId || '?'}`}
+                          </span>
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-black text-[#064E3B] line-clamp-1">{plan.title || "Untitled Submission"}</h4>
+                          <p className="text-[10px] font-extrabold text-[#064E3B]/40 uppercase tracking-widest mt-1">
+                            {plan.category === 'lesson-plan' ? 'Lesson Plan' : plan.category === 'slides' ? 'Presentation Slides' : plan.category === 'worksheet' ? 'Assessment Worksheet' : 'Handouts & Notes'}
+                          </p>
+                          {plan.content?.subject && (
+                            <p className="text-[10px] font-black text-[#059669] uppercase tracking-wider mt-1.5">
+                              Subject: {plan.content.subject}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="border-t border-gray-100 pt-4 mt-6 flex items-center justify-between">
+                        <span className="text-[10px] font-black text-gray-400">
+                          {formattedDate}
+                        </span>
+                        <button
+                          onClick={() => loadProject(plan, true)}
+                          className="px-4 py-1.5 bg-[#FEFCE8] text-[#854D0E] hover:bg-[#FACC15] hover:text-[#064E3B] rounded-xl font-black text-[10px] uppercase tracking-wider transition-all"
+                        >
+                          View Copy
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -4413,12 +5281,15 @@ export default function App() {
                       >
                         <PlusCircle size={14} /> Save
                       </button>
-                      <button 
-                        onClick={() => submitToAdmin()}
-                        className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
-                      >
-                        <CheckCircle size={14} /> Submit
-                      </button>
+                      <div className="flex items-center gap-4">
+                        <WeekSelector value={selectedWeekForSubmission} onChange={handleWeekSelectionChange} />
+                        <button 
+                          onClick={() => submitToAdmin()}
+                          className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
+                        >
+                          <CheckCircle size={14} /> Submit
+                        </button>
+                      </div>
                     </>
                   )}
                 </div>
@@ -5520,12 +6391,15 @@ export default function App() {
                   >
                     <PlusCircle size={14} /> Save
                   </button>
-                  <button 
-                    onClick={() => submitToAdmin()}
-                    className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
-                  >
-                    <CheckCircle size={14} /> Submit
-                  </button>
+                   <div className="flex items-center gap-4">
+                     <WeekSelector value={selectedWeekForSubmission} onChange={handleWeekSelectionChange} />
+                     <button 
+                       onClick={() => submitToAdmin()}
+                       className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
+                     >
+                       <CheckCircle size={14} /> Submit
+                     </button>
+                   </div>
                 </>
               )}
             </div>
@@ -6062,24 +6936,45 @@ export default function App() {
           </div>
           <div className="flex items-center gap-3">
             {!isReviewMode && (
-              <button 
-                onClick={() => content && saveProject(content, content.lessonTitle || lessonInput, 'notes')}
-                className="px-4 py-2 bg-[#059669] text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#047857] transition-all shadow-sm flex items-center gap-2"
-              >
-                <PlusCircle size={14} /> Save Library
-              </button>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => {
+                    if (content) {
+                      saveProject(content, `Journal: ${content.lessonTitle || 'Untitled'}`, 'journal');
+                    }
+                  }}
+                  className="px-4 py-2 bg-[#F0FDF4] text-[#059669] border-2 border-[#D1FAE5] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#D1FAE5] transition-all flex items-center gap-2"
+                >
+                  <PlusCircle size={14} /> Save Journal
+                </button>
+                <button 
+                  onClick={() => {
+                    if (content) {
+                      saveProject(content, `Notes: ${content.lessonTitle || 'Untitled'}`, 'notes');
+                    }
+                  }}
+                  className="px-4 py-2 bg-[#FEFCE8] text-[#854D0E] border-2 border-[#FACC15]/20 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#FACC15]/20 transition-all flex items-center gap-2"
+                >
+                  <PlusCircle size={14} /> Save Notes
+                </button>
+              </div>
             )}
           </div>
         </div>
 
-        <div className="flex-1 p-8 max-w-6xl mx-auto w-full overflow-y-auto custom-scrollbar">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+        <div className="flex-1 p-8 max-w-7xl mx-auto w-full overflow-y-auto custom-scrollbar">
+          <div className={cn("grid gap-10", fullscreenNote ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2")}>
             {/* Left Column: Teaching Journal */}
-            <motion.div 
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              className="bg-white rounded-[2.5rem] p-8 shadow-xl border-4 border-[#D1FAE5] h-full flex flex-col"
-            >
+            {(!fullscreenNote || fullscreenNote === 'journal') && (
+              <motion.div 
+                layout
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                className={cn(
+                  "bg-white rounded-[2.5rem] p-8 shadow-xl border-4 border-[#D1FAE5] flex flex-col transition-all duration-300",
+                  fullscreenNote === 'journal' ? "min-h-[75vh]" : "h-full"
+                )}
+              >
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-4">
                   <div className="p-3 bg-[#F0FDF4] rounded-2xl">
@@ -6091,13 +6986,22 @@ export default function App() {
                   </div>
                 </div>
                 
-                <button 
-                  onClick={() => downloadNotes(content.teachingJournal || "", `Teaching_Journal_${content.lessonTitle || 'Lesson'}`)}
-                  className="p-2.5 bg-[#F0FDF4] text-[#059669] rounded-xl hover:bg-[#D1FAE5] transition-all border border-[#D1FAE5] group"
-                  title="Download Journal"
-                >
-                  <Download size={18} className="group-hover:scale-110 transition-transform" />
-                </button>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setFullscreenNote(fullscreenNote === 'journal' ? null : 'journal')}
+                      className="p-2.5 bg-gray-50 text-gray-400 rounded-xl hover:bg-gray-100 transition-all border border-gray-100 group"
+                      title={fullscreenNote === 'journal' ? "Minimize" : "Fullscreen"}
+                    >
+                      {fullscreenNote === 'journal' ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                    </button>
+                    <button 
+                      onClick={() => downloadNotes(content.teachingJournal || "", `Teaching_Journal_${content.lessonTitle || 'Lesson'}`)}
+                      className="p-2.5 bg-[#F0FDF4] text-[#059669] rounded-xl hover:bg-[#D1FAE5] transition-all border border-[#D1FAE5] group"
+                      title="Download Journal"
+                    >
+                      <Download size={18} className="group-hover:scale-110 transition-transform" />
+                    </button>
+                  </div>
               </div>
 
               <textarea
@@ -6108,36 +7012,49 @@ export default function App() {
               />
             </motion.div>
 
+            )}
+
             {/* Right Column: Student Lesson Notes */}
-            <motion.div 
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.1 }}
-              className="bg-white rounded-[2.5rem] p-8 shadow-xl border-4 border-[#FACC15]/30 h-full flex flex-col"
-            >
-                <div className="flex items-center justify-between mb-6">
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 bg-[#FEFCE8] rounded-2xl">
-                      <BookOpen className="text-[#854D0E]" size={24} />
+            {(!fullscreenNote || fullscreenNote === 'notes') && (
+              <motion.div 
+                layout
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.1 }}
+                className={cn(
+                  "bg-white rounded-[2.5rem] p-8 shadow-xl border-4 border-[#FACC15]/30 flex flex-col transition-all duration-300",
+                  fullscreenNote === 'notes' ? "min-h-[75vh]" : "h-full"
+                )}
+              >
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-4">
+                      <div className="p-3 bg-[#FEFCE8] rounded-2xl">
+                        <BookOpen className="text-[#854D0E]" size={24} />
+                      </div>
+                      <div>
+                        <h2 className="text-xl font-black text-[#064E3B] uppercase tracking-tight">Student Lesson Notes</h2>
+                        <p className="text-[#854D0E] font-medium text-xs">Structured summary for learners.</p>
+                      </div>
                     </div>
-                    <div>
-                      <h2 className="text-xl font-black text-[#064E3B] uppercase tracking-tight">Student Lesson Notes</h2>
-                      <p className="text-[#854D0E] font-medium text-xs">Structured summary for learners.</p>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
+                    
+                    <div className="flex items-center gap-2">
+                       <button 
+                        onClick={() => setFullscreenNote(fullscreenNote === 'notes' ? null : 'notes')}
+                        className="p-2.5 bg-gray-50 text-gray-400 rounded-xl hover:bg-gray-100 transition-all border border-gray-100 group"
+                        title={fullscreenNote === 'notes' ? "Minimize" : "Fullscreen"}
+                      >
+                        {fullscreenNote === 'notes' ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                      </button>
                     <button 
                       onClick={() => setIsPreviewHandout(!isPreviewHandout)}
                       className={cn(
-                        "flex items-center gap-2 px-4 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all border",
+                        "flex items-center gap-2 px-4 py-1.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all border shadow-sm",
                         isPreviewHandout 
-                          ? "bg-[#059669] text-white border-[#059669]" 
+                          ? "bg-[#064E3B] text-white border-[#064E3B]" 
                           : "bg-white text-[#854D0E] border-[#FACC15]/50 hover:bg-[#FEFCE8]"
                       )}
                     >
-                      {isPreviewHandout ? <Edit2 size={12} /> : <Eye size={12} />} 
-                      {isPreviewHandout ? "Edit Mode" : "Preview Handout"}
+                      {isPreviewHandout ? <Edit2 size={12} /> : <Eye size={12} />} {isPreviewHandout ? 'Edit Mode' : 'Preview'}
                     </button>
 
                     <button 
@@ -6146,19 +7063,7 @@ export default function App() {
                       title="Export as Word Document"
                     >
                       <Download size={14} className="group-hover:scale-110 transition-transform" />
-                      <span className="text-[10px] font-black uppercase tracking-widest">Download .docx</span>
-                    </button>
-
-                    <button 
-                      onClick={() => setIsPreviewHandout(!isPreviewHandout)}
-                      className={cn(
-                        "flex items-center gap-2 px-3 py-1.5 rounded-xl font-black text-[9px] uppercase tracking-widest transition-all border",
-                        isPreviewHandout 
-                          ? "bg-[#064E3B] text-white border-[#064E3B]" 
-                          : "bg-white text-[#854D0E] border-[#FACC15]/50 hover:bg-[#FEFCE8]"
-                      )}
-                    >
-                      {isPreviewHandout ? <Edit2 size={12} /> : <Eye size={12} />} {isPreviewHandout ? 'Edit' : 'Preview'}
+                      <span className="text-[10px] font-black uppercase tracking-widest">Download</span>
                     </button>
 
                   {content.slides && content.slides.length > 0 && !isPreviewHandout && !isReviewMode && (
@@ -6311,6 +7216,7 @@ export default function App() {
                 </p>
               </div>
             </motion.div>
+          )}
           </div>
         </div>
       </div>
@@ -6521,12 +7427,15 @@ export default function App() {
                     >
                       <PlusCircle size={14} /> Save
                     </button>
-                     <button 
-                      onClick={() => submitToAdmin()}
-                      className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
-                    >
-                      <CheckCircle size={14} /> Submit
-                    </button>
+                    <div className="flex items-center gap-4">
+                      <WeekSelector value={selectedWeekForSubmission} onChange={handleWeekSelectionChange} />
+                      <button 
+                       onClick={() => submitToAdmin()}
+                       className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
+                     >
+                       <CheckCircle size={14} /> Submit
+                     </button>
+                    </div>
                    </>
                  )}
                </div>

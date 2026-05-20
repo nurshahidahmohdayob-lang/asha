@@ -23,7 +23,7 @@
         "folderId": { "type": "string" },
         "timestamp": { "type": "number" },
         "title": { "type": "string" },
-        "category": { "type": "string", "enum": ["lesson-plan", "worksheet", "slides", "poster", "all"] },
+        "category": { "type": "string", "enum": ["lesson-plan", "worksheet", "slides", "poster", "all", "notes", "journal"] },
         "status": { "type": "string", "enum": ["draft", "submitted"] },
         "teacherName": { "type": "string" },
         "content": { "type": "object" },
@@ -68,6 +68,12 @@
     "/folders/{folderId}": {
       "schema": "Folder",
       "description": "User organization folders"
+    },
+    "/submitted_folders/{folderId}": {
+      "description": "Admin folders for organizer submitted plans"
+    },
+    "/submitted_plans/{planId}": {
+      "description": "Plans submitted by teachers for review"
     },
     "/school_config/timetable": {
       "schema": "Timetable",
