@@ -3431,6 +3431,7 @@ export default function App() {
   const timetableRef = useRef<HTMLDivElement>(null);
 
   const [customThemes, setCustomThemes] = useState<AppTheme[]>([]);
+  const [expandedTeacherSubjects, setExpandedTeacherSubjects] = useState<Record<string, boolean>>({});
 
   const renderAdmin = () => {
     const isPrimary = (yg: string) => ["Year 1", "Year 2", "Year 3", "Year 4", "Year 5", "Year 6"].includes(yg);
@@ -6406,37 +6407,88 @@ export default function App() {
                         </div>
 
                         <div className="space-y-3 pt-4 border-t border-gray-100">
-                           <p className="text-[10px] font-black uppercase text-[#064E3B]/40 tracking-widest">Subject Load (Click to Edit)</p>
+                           <p className="text-[10px] font-black uppercase text-[#064E3B]/40 tracking-widest">Subject Load (Click to Expand)</p>
                            <div className="space-y-2">
                              {mappedAssignments.length === 0 ? (
-                               <p className="text-[10px] font-bold text-gray-300 italic italic">No subjects assigned in the table above.</p>
+                               <p className="text-[10px] font-bold text-gray-300 italic">No subjects assigned in the table above.</p>
                              ) : (
-                               mappedAssignments.map(({yg, sub}) => {
-                                 const q = assignmentQuotas.find(qq => qq.teacherId === teacher.id && qq.subject === sub && qq.yearGroup === yg);
-                                 return (
-                                   <div key={`${yg}-${sub}`} className="flex items-center justify-between text-xs p-2 bg-[#FDFBF7] rounded-xl border border-[#FACC15]/10">
-                                     <div className="flex flex-col">
-                                       <span className="font-black text-[#064E3B]">{sub}</span>
-                                       <span className="text-[8px] font-bold uppercase text-gray-400">{yg}</span>
-                                     </div>
-                                     <div className="flex items-center gap-2">
-                                       <input 
-                                         type="number" 
-                                         className="w-12 p-1 text-[10px] font-black bg-white border-2 border-transparent focus:border-[#FACC15] outline-none rounded-lg text-center"
-                                         value={q?.total || 0}
-                                         onChange={(e) => {
-                                           const val = parseInt(e.target.value) || 0;
-                                           const nextQuotas = assignmentQuotas.map(qq => 
-                                             (qq.teacherId === teacher.id && qq.subject === sub && qq.yearGroup === yg) ? { ...qq, total: val } : qq
-                                           );
-                                           updateAssignmentQuotasAndSave(nextQuotas);
+                               (() => {
+                                 const groupedBySubject = mappedAssignments.reduce<Record<string, { yg: string; sub: string }[]>>((acc, item) => {
+                                   if (!acc[item.sub]) {
+                                     acc[item.sub] = [];
+                                   }
+                                   if (!acc[item.sub].some(x => x.yg === item.yg)) {
+                                     acc[item.sub].push(item);
+                                   }
+                                   return acc;
+                                 }, {});
+
+                                 return Object.entries(groupedBySubject).map(([sub, items]) => {
+                                   const totalSubjectPeriods = items.reduce((acc, { yg, sub: sName }) => {
+                                     const q = assignmentQuotas.find(qq => qq.teacherId === teacher.id && qq.subject === sName && qq.yearGroup === yg);
+                                     const isAssemblyHomeroom = typeof sName === 'string' && (sName.toUpperCase().includes("ASSEMBLY") || sName.toUpperCase().includes("HOMEROOM") || sName.toUpperCase().includes("HOMERROM"));
+                                     return acc + (isAssemblyHomeroom ? 1 : (q?.total || 0));
+                                   }, 0);
+
+                                   const isExpanded = !!expandedTeacherSubjects[`${teacher.id}-${sub}`];
+
+                                   return (
+                                     <div key={sub} className="bg-white rounded-xl border border-gray-100 overflow-hidden shadow-xs hover:border-[#FACC15]/20 transition-all">
+                                       <button
+                                         type="button"
+                                         onClick={() => {
+                                           setExpandedTeacherSubjects(prev => ({
+                                             ...prev,
+                                             [`${teacher.id}-${sub}`]: !prev[`${teacher.id}-${sub}`]
+                                           }));
                                          }}
-                                       />
-                                       <span className="text-[10px] font-black text-gray-300">Pds</span>
+                                         className="w-full flex items-center justify-between p-3 bg-[#FDFBF7]/60 hover:bg-[#FDFBF7] transition-colors cursor-pointer text-left"
+                                       >
+                                         <div className="flex items-center gap-2">
+                                           <span className="font-extrabold text-[#064E3B] text-xs">{sub}</span>
+                                           <span className="text-[8px] font-black bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                             {totalSubjectPeriods} {totalSubjectPeriods === 1 ? 'Pd' : 'Pds'}
+                                           </span>
+                                         </div>
+                                         <div className="text-gray-400">
+                                           <ChevronDown 
+                                             size={14} 
+                                             className={cn("transition-transform duration-200", isExpanded ? "rotate-180" : "")} 
+                                           />
+                                         </div>
+                                       </button>
+
+                                       {isExpanded && (
+                                         <div className="p-2.5 bg-white border-t border-gray-50/50 space-y-1.5">
+                                           {items.map(({ yg, sub: sName }) => {
+                                             const q = assignmentQuotas.find(qq => qq.teacherId === teacher.id && qq.subject === sName && qq.yearGroup === yg);
+                                             return (
+                                               <div key={`${yg}-${sName}`} className="flex items-center justify-between text-xs p-1.5 bg-[#FDFBF7]/30 rounded-lg border border-gray-100">
+                                                 <span className="text-[9px] font-black uppercase text-gray-500">{yg}</span>
+                                                 <div className="flex items-center gap-1.5">
+                                                   <input 
+                                                     type="number" 
+                                                     className="w-12 p-1 text-[10px] font-black bg-white border border-gray-200 focus:border-[#FACC15] outline-none rounded-md text-center shadow-xs"
+                                                     value={q?.total || 0}
+                                                     onChange={(e) => {
+                                                       const val = parseInt(e.target.value) || 0;
+                                                       const nextQuotas = assignmentQuotas.map(qq => 
+                                                         (qq.teacherId === teacher.id && qq.subject === sName && qq.yearGroup === yg) ? { ...qq, total: val } : qq
+                                                       );
+                                                       updateAssignmentQuotasAndSave(nextQuotas);
+                                                     }}
+                                                   />
+                                                   <span className="text-[9px] font-black text-gray-400">Pds</span>
+                                                 </div>
+                                               </div>
+                                             );
+                                           })}
+                                         </div>
+                                       )}
                                      </div>
-                                   </div>
-                                 );
-                               })
+                                   );
+                                 });
+                               })()
                              )}
                            </div>
                         </div>
