@@ -6385,21 +6385,6 @@ export default function App() {
                                 />
                               </div>
                             </div>
-
-                            <div className="space-y-1">
-                              <div className="flex justify-between text-[8px] font-black uppercase tracking-widest text-[#064E3B]/40">
-                                <span>Placed Grid:</span>
-                                <span className={cn((teacherLoads[teacher.id] || 0) > teacher.maxPeriods ? "text-red-500 font-bold font-black text-[10px]" : "text-[#064E3B] font-black text-[10px]")}>
-                                  {teacherLoads[teacher.id] || 0} / {teacher.maxPeriods} Pds
-                                </span>
-                              </div>
-                              <div className="w-full h-1 bg-gray-200/50 rounded-full overflow-hidden">
-                                <div 
-                                  className={cn("h-full transition-all", (teacherLoads[teacher.id] || 0) > teacher.maxPeriods ? "bg-red-500" : "bg-emerald-500")} 
-                                  style={{ width: `${Math.min(100, ((teacherLoads[teacher.id] || 0) / teacher.maxPeriods) * 100)}%` }}
-                                />
-                              </div>
-                            </div>
                           </div>
                           <div className="flex gap-1.5 flex-wrap items-center mt-1">
                             <span className="text-[8px] font-black uppercase text-gray-400">Works On:</span>
