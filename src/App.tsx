@@ -26,6 +26,7 @@ import {
   History,
   Trash2,
   Edit2,
+  Shuffle,
   Image as ImageIcon,
   CheckCircle,
   Check,
@@ -81,6 +82,7 @@ import {
   LogOut,
   Mail,
   Lock,
+  Unlock,
   RefreshCw,
   Home,
   ArrowRightCircle,
@@ -95,9 +97,174 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import ReactMarkdown from 'react-markdown';
 import pptxgen from 'pptxgenjs';
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, SectionType } from 'docx';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, SectionType, Table, TableRow, TableCell, WidthType, BorderStyle, PageOrientation, VerticalAlign } from 'docx';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+
+const getSubjectColorClass = (subject: string): string => {
+  const s = (subject || '').trim().toLowerCase();
+  
+  if (s.includes('math')) {
+    return 'bg-amber-100 text-amber-950 border-amber-300';
+  }
+  if (s.includes('science') || s.includes('physic') || s.includes('chem') || s.includes('bio')) {
+    return 'bg-emerald-100 text-emerald-950 border-emerald-300';
+  }
+  if (s.includes('english') || s.includes('lang') || s.includes('liter')) {
+    return 'bg-sky-100 text-sky-950 border-sky-300';
+  }
+  if (s.includes('mandarin')) {
+    return 'bg-rose-100 text-rose-950 border-rose-300';
+  }
+  if (s.includes('malay')) {
+    return 'bg-lime-100 text-lime-950 border-lime-300';
+  }
+  if (s.includes('global perspective')) {
+    return 'bg-indigo-100 text-indigo-950 border-indigo-300';
+  }
+  if (s.includes('physical education') || s.includes('pe') || s.includes('sport')) {
+    return 'bg-orange-100 text-orange-950 border-orange-300';
+  }
+  if (s.includes('digital literacy') || s.includes('com') || s.includes('tech') || s.includes('it')) {
+    return 'bg-cyan-100 text-cyan-950 border-cyan-300';
+  }
+  if (s.includes('music')) {
+    return 'bg-fuchsia-100 text-fuchsia-950 border-fuchsia-300';
+  }
+  if (s.includes('silent reading')) {
+    return 'bg-slate-100 text-slate-900 border-slate-300';
+  }
+  if (s.includes('art') || s.includes('design')) {
+    return 'bg-pink-100 text-pink-950 border-pink-300';
+  }
+  if (s.includes('wellbeing')) {
+    return 'bg-teal-100 text-teal-950 border-teal-300';
+  }
+  if (s.includes('library')) {
+    return 'bg-violet-100 text-violet-950 border-violet-300';
+  }
+  if (s.includes('cca')) {
+    return 'bg-yellow-105 text-yellow-950 border-yellow-300';
+  }
+
+  // Deterministic fallback based on the subject's name to ensure any new subject has a different colour block
+  const palettes = [
+    { bg: 'bg-red-100', text: 'text-red-950', border: 'border-red-300' },
+    { bg: 'bg-orange-100', text: 'text-orange-950', border: 'border-orange-300' },
+    { bg: 'bg-amber-100', text: 'text-amber-950', border: 'border-amber-300' },
+    { bg: 'bg-yellow-100', text: 'text-yellow-950', border: 'border-yellow-300' },
+    { bg: 'bg-lime-100', text: 'text-lime-950', border: 'border-lime-300' },
+    { bg: 'bg-emerald-100', text: 'text-emerald-950', border: 'border-emerald-300' },
+    { bg: 'bg-teal-100', text: 'text-teal-950', border: 'border-teal-300' },
+    { bg: 'bg-cyan-100', text: 'text-cyan-950', border: 'border-cyan-300' },
+    { bg: 'bg-sky-100', text: 'text-sky-950', border: 'border-sky-300' },
+    { bg: 'bg-blue-100', text: 'text-blue-950', border: 'border-blue-300' },
+    { bg: 'bg-indigo-100', text: 'text-indigo-950', border: 'border-indigo-300' },
+    { bg: 'bg-violet-100', text: 'text-violet-950', border: 'border-violet-300' },
+    { bg: 'bg-purple-100', text: 'text-purple-950', border: 'border-purple-300' },
+    { bg: 'bg-fuchsia-100', text: 'text-fuchsia-950', border: 'border-fuchsia-300' },
+    { bg: 'bg-pink-100', text: 'text-pink-950', border: 'border-pink-300' },
+    { bg: 'bg-rose-100', text: 'text-rose-950', border: 'border-rose-300' },
+  ];
+
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) {
+    hash = s.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const index = Math.abs(hash) % palettes.length;
+  const p = palettes[index];
+  return `${p.bg} ${p.text} ${p.border}`;
+};
+
+const getSubjectHexColor = (subject: string): { fill: string; textColor: string } => {
+  const s = (subject || '').trim().toLowerCase();
+  if (s.includes('math')) {
+    return { fill: 'FEF3C7', textColor: '78350F' }; // amber-105 / amber-950
+  }
+  if (s.includes('science') || s.includes('physic') || s.includes('chem') || s.includes('bio')) {
+    return { fill: 'D1FAE5', textColor: '064E3B' }; // emerald-105 / emerald-950
+  }
+  if (s.includes('english') || s.includes('lang') || s.includes('liter')) {
+    return { fill: 'E0F2FE', textColor: '0C4A6E' }; // sky-105 / sky-950
+  }
+  if (s.includes('mandarin')) {
+    return { fill: 'FFE4E6', textColor: '881337' }; // rose-105 / rose-950
+  }
+  if (s.includes('malay')) {
+    return { fill: 'F7FEE7', textColor: '365314' }; // lime-105 / lime-950
+  }
+  if (s.includes('global perspective')) {
+    return { fill: 'E0E7FF', textColor: '312E81' }; // indigo-105 / indigo-950
+  }
+  if (s.includes('physical education') || s.includes('pe') || s.includes('sport')) {
+    return { fill: 'FFEDD5', textColor: '7C2D12' }; // orange-105 / orange-950
+  }
+  if (s.includes('digital literacy') || s.includes('com') || s.includes('tech') || s.includes('it')) {
+    return { fill: 'CFFAFE', textColor: '083344' }; // cyan-105 / cyan-950
+  }
+  if (s.includes('music')) {
+    return { fill: 'FAE8FF', textColor: '701A75' }; // fuchsia-105 / fuchsia-950
+  }
+  if (s.includes('silent reading')) {
+    return { fill: 'F1F5F9', textColor: '0F172A' }; // slate-105 / slate-900
+  }
+  if (s.includes('art') || s.includes('design')) {
+    return { fill: 'FCE7F3', textColor: '701A75' }; // pink-105 / fuchsia-950
+  }
+  if (s.includes('wellbeing')) {
+    return { fill: 'CCFBF1', textColor: '115E59' }; // teal-105 / teal-900
+  }
+  if (s.includes('library')) {
+    return { fill: 'EDE9FE', textColor: '4C1D95' }; // violet-105 / violet-950
+  }
+  if (s.includes('cca')) {
+    return { fill: 'FEF9C3', textColor: '713F12' }; // yellow-105 / yellow-950
+  }
+
+  // Deterministic fallback
+  const fallbackHexes = [
+    { fill: 'FEE2E2', textColor: '7F1D1D' }, // red
+    { fill: 'FFEDD5', textColor: '7C2D12' }, // orange
+    { fill: 'FEF3C7', textColor: '78350F' }, // amber
+    { fill: 'FEF9C3', textColor: '713F12' }, // yellow
+    { fill: 'F7FEE7', textColor: '365314' }, // lime
+    { fill: 'D1FAE5', textColor: '064E3B' }, // emerald
+    { fill: 'CCFBF1', textColor: '115E59' }, // teal
+    { fill: 'CFFAFE', textColor: '083344' }, // cyan
+    { fill: 'E0F2FE', textColor: '0C4A6E' }, // sky
+    { fill: 'DBEAFE', textColor: '1E3A8A' }, // blue
+    { fill: 'E0E7FF', textColor: '312E81' }, // indigo
+    { fill: 'EDE9FE', textColor: '4C1D95' }, // violet
+    { fill: 'F3E8FF', textColor: '581C87' }, // purple
+    { fill: 'FAE8FF', textColor: '701A75' }, // fuchsia
+    { fill: 'FCE7F3', textColor: '701A75' }, // pink
+    { fill: 'FFE4E6', textColor: '881337' }, // rose
+  ];
+
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) {
+    hash = s.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const index = Math.abs(hash) % fallbackHexes.length;
+  return fallbackHexes[index];
+};
+
+const getSubjectAbbreviation = (subject: string): string => {
+  if (!subject) return '';
+  const s = subject.trim().toUpperCase();
+  if (s.length <= 3) return s;
+  if (s.includes('MATH')) return 'MTH';
+  if (s.includes('ENGL')) return 'ENG';
+  if (s.includes('CHEM') || s.includes('CHM')) return 'CHM';
+  if (s.includes('BIO')) return 'BIO';
+  if (s.includes('PHYS')) return 'PHY';
+  if (s.includes('SCI')) return 'SCI';
+  if (s.includes('HIST')) return 'HIS';
+  if (s.includes('GEOG')) return 'GEO';
+  if (s.includes('REGE') || s.includes('REGISTR')) return 'REG';
+  if (s.includes('ASSEM')) return 'ASM';
+  return s.substring(0, 3);
+};
 
 // Firebase
 import { initializeApp } from 'firebase/app';
@@ -407,6 +574,121 @@ const CAMBRIDGE_SUBJECTS = [
   { group: "Cambridge IGCSE / Upper Secondary", subjects: ["English as a First Language (0500)", "English as a Second Language (0510)", "Mathematics (0580)", "Additional Mathematics (0606)", "Biology (0610)", "Chemistry (0620)", "Physics (0625)", "Combined Science (0653)", "Coordinated Sciences (0654)", "Business Studies (0450)", "Economics (0455)", "Accounting (0452)", "Computer Science (0478)", "ICT (0417)", "Art & Design (0400)", "Geography (0460)", "History (0470)", "Malay (Foreign Language) (0546)"] }
 ];
 
+interface SearchableSelectProps {
+  value: string;
+  onChange: (value: string) => void;
+  options: { id: string; name: string }[];
+  placeholder: string;
+}
+
+function SearchableSelect({ value, onChange, options, placeholder }: SearchableSelectProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  const selectedOption = options.find(o => String(o.id) === String(value));
+
+  const filtered = options.filter(o => 
+    o.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <div 
+      ref={containerRef} 
+      className={cn(
+        "relative w-full text-left", 
+        isOpen ? "z-[99] isolate" : "z-10"
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => {
+          setIsOpen(!isOpen);
+          setSearch('');
+        }}
+        className={cn(
+          "w-full px-2 py-1.5 text-[9px] font-black rounded-lg border-2 transition-all outline-none flex items-center justify-between gap-1 text-left",
+          value 
+            ? "bg-[#064E3B] text-white border-2 border-[#064E3B]" 
+            : "bg-white/80 border-emerald-100 text-[#064E3B]/30 opacity-60 hover:opacity-100 focus:opacity-100"
+        )}
+      >
+        <span className="truncate">{selectedOption ? selectedOption.name : placeholder}</span>
+        <span className="shrink-0 text-[8px] opacity-60">▼</span>
+      </button>
+
+      {isOpen && (
+        <div className="absolute left-0 mt-1 w-full min-w-[160px] bg-white border border-emerald-100 rounded-xl shadow-xl z-50 overflow-hidden flex flex-col max-h-[220px]">
+          <div className="p-1.5 border-b border-dashed border-emerald-50 bg-emerald-50/20">
+            <input
+              type="text"
+              autoFocus
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Type to search..."
+              className="w-full px-2 py-1 text-[9px] font-bold border border-emerald-100 rounded-md outline-none focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 text-gray-800"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+
+          <div className="overflow-y-auto flex-1 custom-scrollbar">
+            <button
+              type="button"
+              onClick={() => {
+                onChange('');
+                setIsOpen(false);
+              }}
+              className={cn(
+                "w-full text-left px-2.5 py-1.5 text-[9px] font-black hover:bg-emerald-50/50 transition-colors uppercase",
+                !value ? "bg-emerald-50 text-[#064E3B]" : "text-[#064E3B]/40"
+              )}
+            >
+              No Teacher
+            </button>
+
+            {filtered.length > 0 ? (
+              filtered.map(o => (
+                <button
+                  type="button"
+                  key={o.id}
+                  onClick={() => {
+                    onChange(o.id);
+                    setIsOpen(false);
+                  }}
+                  className={cn(
+                    "w-full text-left px-2.5 py-1.5 text-[9px] font-black hover:bg-emerald-50 transition-colors truncate block",
+                    value === o.id ? "bg-emerald-100 text-[#064E3B]" : "text-[#064E3B]"
+                  )}
+                >
+                  {o.name}
+                </button>
+              ))
+            ) : (
+              <div className="px-2.5 py-2 text-[9px] font-bold text-gray-400 italic text-center">
+                No matching teachers
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -419,7 +701,7 @@ export default function App() {
   const [registerRoles, setRegisterRoles] = useState<string[]>(['educator']);
   const [userRoles, setUserRoles] = useState<string[]>(['educator']);
   const [authError, setAuthError] = useState('');
-  const [isOnline, setIsOnline] = useState(true);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [firestoreError, setFirestoreError] = useState<string | null>(null);
 
   // --- Firebase Debugging ---
@@ -444,22 +726,42 @@ export default function App() {
           throw err;
         });
 
-        console.log("Firebase connection established.");
-        setIsOnline(true);
+        console.info("Firebase Firestore server connection active.");
         setFirestoreError(null);
         setFirestoreConnected(true);
       } catch (error: any) {
-        console.error("Firestore connectivity issue:", error);
-        setIsOnline(false);
-        setFirestoreError(error.message || "Could not reach Firestore backend");
+        // Log connection failure gracefully as info, as Firestore handles offline transitions seamlessly
+        if (error.message?.includes('offline') || error.message?.includes('timeout') || error.message?.includes('Could not reach')) {
+          console.info("Firestore is currently operating in offline caching mode. All operations will sync in the background.");
+        } else {
+          console.warn("Firestore connectivity warning:", error.message || error);
+        }
         setFirestoreConnected(false);
       }
     };
     testConnection();
 
+    // Monitor standard browser online/offline status for dynamic UI updates
+    const handleOnline = () => {
+      setIsOnline(true);
+      setFirestoreConnected(true);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      setFirestoreConnected(false);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
     const handleConnChange = (e: any) => setIsOnline(e.detail);
     window.addEventListener('firestore-connection-changed', handleConnChange);
-    return () => window.removeEventListener('firestore-connection-changed', handleConnChange);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('firestore-connection-changed', handleConnChange);
+    };
   }, []);
 
   const handleEduError = (err: any, context: string) => {
@@ -671,6 +973,31 @@ export default function App() {
         setStaffAssignments(data.staffAssignments || {});
         setAssignmentQuotas(data.assignmentQuotas || []);
         setTimetableGrid(data.timetableGrid || {});
+        setTeacherDuties(data.teacherDuties || {});
+        setCombinedClasses(data.combinedClasses || []);
+        if (data.parallelRules) setParallelRules(data.parallelRules);
+        if (data.subjects) {
+          const loaded: string[] = data.subjects || [];
+          const required = [
+            "ASSEMBLY/ HOMEROOM", "SILENT READING", "ENGLISH", "MATHEMATICS", 
+            "SCIENCE", "MANDARIN", "MALAY", "GLOBAL PERSPECTIVES", 
+            "PHYSICAL EDUCATION", "DIGITAL LITERACY", "MUSIC", 
+            "ART & DESIGN", "WELLBEING", "LIBRARY", "CCA",
+            "CHINESE (SECOND/FOREIGN)", "MALAY (FOREIGN)",
+            "ICT", "HISTORY", "SEJARAH / ENRICHMENT", "AGAMA",
+            "Biology", "First Language English", "English as a Second Language",
+            "Chinese (First)", "Chinese (Second & Foreign)", "Malay (Foreign)",
+            "English Enrichment", "Chemistry", "Business Studies", "Physics",
+            "Additional Mathematics", "Accounting"
+          ];
+          const merged = [...loaded];
+          required.forEach(req => {
+            if (!merged.includes(req)) {
+              merged.push(req);
+            }
+          });
+          setSubjects(merged);
+        }
       }
     }, (err) => {
       // Don't throw for read errors if not admin, but log it
@@ -680,6 +1007,103 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
+  // Cover Records Realtime Sync
+  useEffect(() => {
+    if (!user) return;
+    
+    const unsubscribe = onSnapshot(doc(db, 'school_config', 'covers'), (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        if (data.records) setCoverRecords(data.records);
+      }
+    }, (err) => {
+      console.warn("Covers read error (could be permission related):", err);
+    });
+    
+    return () => unsubscribe();
+  }, [user]);
+
+  const saveCoversToFirestore = async (newRecords: any[]) => {
+    if (!user || !userRoles.includes('admin')) return;
+    try {
+      await setDoc(doc(db, 'school_config', 'covers'), {
+        records: newRecords,
+        updatedAt: Date.now()
+      });
+    } catch (err) {
+      console.error("Failed to sync covers with cloud:", err);
+    }
+  };
+
+  // Helper to save current state variables to Firestore silently
+  const saveTimetableDataToFirestore = async (
+    newTeachers = teachers,
+    newAssignments = staffAssignments,
+    newQuotas = assignmentQuotas,
+    newGrid = timetableGrid,
+    newDuties = teacherDuties,
+    newCombined = combinedClasses,
+    newSubjects = subjects,
+    newParallelRules = parallelRules
+  ) => {
+    if (!user || !userRoles.includes('admin')) return;
+    try {
+      await setDoc(doc(db, 'school_config', 'timetable'), {
+        teachers: newTeachers,
+        staffAssignments: newAssignments,
+        assignmentQuotas: newQuotas,
+        timetableGrid: newGrid,
+        teacherDuties: newDuties,
+        combinedClasses: newCombined,
+        subjects: newSubjects,
+        parallelRules: newParallelRules,
+        updatedAt: Date.now()
+      });
+    } catch (err) {
+      console.error("Failed to sync timetable config with cloud:", err);
+    }
+  };
+
+  const updateTeachersAndSave = async (newTeachers: any[]) => {
+    setTeachers(newTeachers);
+    await saveTimetableDataToFirestore(newTeachers, staffAssignments, assignmentQuotas, timetableGrid, teacherDuties, combinedClasses, subjects, parallelRules);
+  };
+
+  const updateStaffAssignmentsAndSave = async (newAssignments: any) => {
+    setStaffAssignments(newAssignments);
+    await saveTimetableDataToFirestore(teachers, newAssignments, assignmentQuotas, timetableGrid, teacherDuties, combinedClasses, subjects, parallelRules);
+  };
+
+  const updateAssignmentQuotasAndSave = async (newQuotas: any[]) => {
+    setAssignmentQuotas(newQuotas);
+    await saveTimetableDataToFirestore(teachers, staffAssignments, newQuotas, timetableGrid, teacherDuties, combinedClasses, subjects, parallelRules);
+  };
+
+  const updateTimetableGridAndSave = async (newGrid: any) => {
+    setTimetableGrid(newGrid);
+    await saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, newGrid, teacherDuties, combinedClasses, subjects, parallelRules);
+  };
+
+  const updateTeacherDutiesAndSave = async (newDuties: any) => {
+    setTeacherDuties(newDuties);
+    await saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, timetableGrid, newDuties, combinedClasses, subjects, parallelRules);
+  };
+
+  const updateCombinedClassesAndSave = async (newCombined: any[]) => {
+    setCombinedClasses(newCombined);
+    await saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, timetableGrid, teacherDuties, newCombined, subjects, parallelRules);
+  };
+
+  const updateSubjectsAndSave = async (newSubjects: string[]) => {
+    setSubjects(newSubjects);
+    await saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, timetableGrid, teacherDuties, combinedClasses, newSubjects, parallelRules);
+  };
+
+  const updateParallelRulesAndSave = async (newRules: any[]) => {
+    setParallelRules(newRules);
+    await saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, timetableGrid, teacherDuties, combinedClasses, subjects, newRules);
+  };
+
   const saveTimetableToFirebase = async (newTeachers: any, newAssignments: any, newQuotas: any, newGrid: any) => {
     if (!user || !userRoles.includes('admin')) return;
     try {
@@ -688,6 +1112,10 @@ export default function App() {
         staffAssignments: newAssignments,
         assignmentQuotas: newQuotas,
         timetableGrid: newGrid,
+        teacherDuties: teacherDuties,
+        combinedClasses: combinedClasses,
+        parallelRules: parallelRules,
+        subjects: subjects,
         updatedAt: Date.now()
       });
       alert("Timetable configuration saved to cloud successfully!");
@@ -2631,7 +3059,7 @@ export default function App() {
   const [editingImageUrl, setEditingImageUrl] = useState<string | null>(null);
   const [imageEditorCallback, setImageEditorCallback] = useState<{ cb: (settings: any) => void }>({ cb: () => {} });
   const [currentView, setCurrentView] = useState<'home' | 'educator-suite' | 'lesson-plan' | 'slides' | 'worksheet' | 'notes' | 'admin'>('home');
-  const [adminTab, setAdminTab] = useState<'overview' | 'timetable' | 'teachers' | 'assignments' | 'plans' | 'members'>('overview');
+  const [adminTab, setAdminTab] = useState<'overview' | 'timetable' | 'teachers' | 'assignments' | 'plans' | 'members' | 'cover'>('overview');
   const [allMembers, setAllMembers] = useState<any[]>([]);
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
   
@@ -2705,7 +3133,7 @@ export default function App() {
     }
   };
 
-  const [teachers, setTeachers] = useState<{id: string, name: string, role: string, subjects: string[], maxPeriods: number}[]>(
+  const [teachers, setTeachers] = useState<{id: string, name: string, role: string, subjects: string[], maxPeriods: number, locked?: boolean, workingDays?: string[]}[]>(
     [
       { id: 'c-1', name: 'MS KANIMOZHI', role: 'Teacher', subjects: [], maxPeriods: 28 },
       { id: 'c-2', name: 'Head Coordinator 2', role: 'Coordinator', subjects: [], maxPeriods: 28 },
@@ -2732,14 +3160,25 @@ export default function App() {
     ]
   );
   
-  const subjects = [
-    "ASSEMBLY/ HOMEROOM", "SILENT READING", "ENGLISH", "MATHEMATICS", 
-    "SCIENCE", "MANDARIN", "MALAY", "GLOBAL PERSPECTIVES", 
-    "PHYSICAL EDUCATION", "DIGITAL LITERACY", "MUSIC", 
-    "ART & DESIGN", "WELLBEING", "LIBRARY", "CCA"
-  ];
+  const [subjects, setSubjects] = useState<string[]>(() => {
+    return [
+      "ASSEMBLY/ HOMEROOM", "SILENT READING", "ENGLISH", "MATHEMATICS", 
+      "SCIENCE", "MANDARIN", "MALAY", "GLOBAL PERSPECTIVES", 
+      "PHYSICAL EDUCATION", "DIGITAL LITERACY", "MUSIC", 
+      "ART & DESIGN", "WELLBEING", "LIBRARY", "CCA",
+      "CHINESE (SECOND/FOREIGN)", "MALAY (FOREIGN)",
+      "ICT", "HISTORY", "SEJARAH / ENRICHMENT", "AGAMA",
+      "Biology", "First Language English", "English as a Second Language",
+      "Chinese (First)", "Chinese (Second & Foreign)", "Malay (Foreign)",
+      "English Enrichment", "Chemistry", "Business Studies", "Physics",
+      "Additional Mathematics", "Accounting"
+    ];
+  });
 
   const yearGroups = ["Year 1", "Year 2", "Year 3", "Year 4", "Year 5", "Year 6", "Year 7", "Year 8", "Year 9", "Year 10", "Year 11"];
+  const primaryYearGroups = ["Year 1", "Year 2", "Year 3", "Year 4", "Year 5", "Year 6"];
+  const secondaryYearGroups = ["Year 7", "Year 8", "Year 9", "Year 10", "Year 11"];
+  const [activeMappingSegment, setActiveMappingSegment] = useState<'primary' | 'secondary'>('primary');
   
   const trackerWeeks = [
     { id: 1, label: "Week 1", dates: "13/4-17/4" },
@@ -2845,7 +3284,7 @@ export default function App() {
     return list;
   });
 
-  const [timetableGrid, setTimetableGrid] = useState<Record<string, Record<string, (null | {teacherId: string, subject: string})[]>>>(() => {
+  const [timetableGrid, setTimetableGrid] = useState<Record<string, Record<string, (null | {teacherId: string, subject: string} | {teacherId: string, subject: string}[])[]>>>(() => {
     const grid: any = {};
     yearGroups.forEach(yg => {
       grid[yg] = {};
@@ -2856,6 +3295,61 @@ export default function App() {
     return grid;
   });
 
+  const [parallelDropConfirm, setParallelDropConfirm] = useState<{
+    day: string;
+    sIdx: number;
+    newAssignment: { teacherId: string; subject: string };
+    existingAssignments: { teacherId: string; subject: string }[];
+  } | null>(null);
+
+  const [addTeacherModalOpen, setAddTeacherModalOpen] = useState(false);
+  const [combinedClasses, setCombinedClasses] = useState<{ id: string; subject: string; yearGroups: string[] }[]>([]);
+  const [newCombinedSubject, setNewCombinedSubject] = useState("PHYSICAL EDUCATION");
+  const [newCombinedYgs, setNewCombinedYgs] = useState<string[]>([]);
+  const [parallelRules, setParallelRules] = useState<{ id: string; yearGroup: string; subjects: string[] }[]>([]);
+  const [newParallelYg, setNewParallelYg] = useState("Year 7");
+  const [newParallelSubjects, setNewParallelSubjects] = useState<string[]>([]);
+  const [teacherSubjectInputs, setTeacherSubjectInputs] = useState<Record<string, string>>({});
+  const [newTeacherForm, setNewTeacherForm] = useState<{
+    name: string;
+    role: string;
+    maxPeriods: number;
+    workingDays: string[];
+  }>({
+    name: '',
+    role: 'Teacher',
+    maxPeriods: 28,
+    workingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+  });
+
+  const checkIsPE = (sub: string) => {
+    if (!sub) return false;
+    const u = sub.toUpperCase();
+    return u.includes("PHYSICAL EDUCATION") || u === "PE" || u.includes("P.E.");
+  };
+
+  const getParallelAssignmentsFor = (yg: string, subject: string) => {
+    const rule = parallelRules.find(r => r.yearGroup === yg && r.subjects.includes(subject));
+    if (!rule) return [];
+    const list: { teacherId: string; subject: string }[] = [];
+    rule.subjects.forEach(sub => {
+      const key = `${yg}-${sub}`;
+      const val = staffAssignments[key];
+      if (val) {
+        const ids = val.split(',').filter(Boolean);
+        ids.forEach(tId => {
+          list.push({ teacherId: tId.trim(), subject: sub });
+        });
+      }
+    });
+    return list;
+  };
+
+  const [coverRecords, setCoverRecords] = useState<any[]>([]);
+  const [selectedCoverWeek, setSelectedCoverWeek] = useState<number>(1);
+  const [coverAbsentTeacherId, setCoverAbsentTeacherId] = useState('');
+  const [coverAbsenceDays, setCoverAbsenceDays] = useState<string[]>(['Monday']);
+
   const getRemainingPeriods = (teacherId: string, subject: string, yg: string) => {
     const quota = assignmentQuotas.find(q => q.teacherId === teacherId && q.subject === subject && q.yearGroup === yg);
     if (!quota) return 0;
@@ -2865,8 +3359,13 @@ export default function App() {
     const yearData = timetableGrid[yg] || {};
     (Object.values(yearData) as any[][]).forEach((daySlots) => {
       daySlots.forEach((slot: any) => {
-        if (slot && slot.teacherId === teacherId && slot.subject === subject) {
-          used++;
+        if (slot) {
+          const arr = Array.isArray(slot) ? slot : [slot];
+          arr.forEach((item: any) => {
+            if (item && item.teacherId === teacherId && item.subject === subject) {
+              used++;
+            }
+          });
         }
       });
     });
@@ -2875,7 +3374,12 @@ export default function App() {
   };
 
   const [draggedAssignment, setDraggedAssignment] = useState<any>(null);
-  const [schedulerViewMode, setSchedulerViewMode] = useState<'class' | 'teacher'>('class');
+  const [schedulerViewMode, setSchedulerViewMode] = useState<'class' | 'teacher' | 'master'>('class');
+  const [teacherDuties, setTeacherDuties] = useState<Record<string, Record<string, Record<string, string>>>>({});
+  const [masterTeacherSearch, setMasterTeacherSearch] = useState('');
+  const [masterSubjectSearch, setMasterSubjectSearch] = useState('');
+  const [activeDutyCell, setActiveDutyCell] = useState<{ teacherId: string, day: string, key: string } | null>(null);
+  const [tempDutyText, setTempDutyText] = useState('');
   const [selectedTeacherSchedule, setSelectedTeacherSchedule] = useState<string>('');
   const [schedulerYearGroup, setSchedulerYearGroup] = useState("Year 1");
 
@@ -2924,6 +3428,7 @@ export default function App() {
   const slideRef = useRef<HTMLDivElement>(null);
   const lessonPlanRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const timetableRef = useRef<HTMLDivElement>(null);
 
   const [customThemes, setCustomThemes] = useState<AppTheme[]>([]);
 
@@ -2957,6 +3462,8 @@ export default function App() {
     // Time slot generation
     const getSlots = (day: string, yearGroup: string) => {
       const isMon = day === "Monday";
+      const isFriday = day === "Friday";
+      const primary = isPrimary(yearGroup || "Year 1");
       
       const sessionTimes = [
         { start: "08:00", end: "08:30", type: "registration" },
@@ -2965,23 +3472,1109 @@ export default function App() {
         { start: "09:45", end: "10:20", type: "period" },
         { start: "10:20", end: "10:55", type: "breakfast" },
         { start: "10:55", end: "11:30", type: isMon ? "assembly" : "period" },
-        { start: "11:30", end: "12:05", type: "period" },
+        { start: "11:30", end: "12:05", type: "period" }
+      ];
+
+      if (isFriday) {
+        return sessionTimes;
+      }
+
+      // Add lunch and afternoon periods for Mon-Thu
+      sessionTimes.push(
         { start: "12:05", end: "12:40", type: "period" },
         { start: "12:40", end: "13:15", type: "lunch" },
-        { start: "13:15", end: "13:50", type: "period" },
-        { start: "13:50", end: "14:25", type: "period" },
-        { start: "14:25", end: "15:00", type: "period" }
-      ];
+        { start: "13:15", end: "13:50", type: "period" }
+      );
+
+      if (primary) {
+        // For primary, the timetable is until 2:30 (14:30)
+        sessionTimes.push(
+          { start: "13:50", end: "14:30", type: "period" }
+        );
+      } else {
+        // For secondary, the timetable is until 3:00 (15:00)
+        sessionTimes.push(
+          { start: "13:50", end: "14:25", type: "period" },
+          { start: "14:25", end: "15:00", type: "period" }
+        );
+      }
 
       return sessionTimes;
     };
 
+    const getTimetableCellData = (day: string, sIdx: number) => {
+      const currentSlot = getSlots(day, schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7")[sIdx];
+      
+      if (!currentSlot) {
+        return { subject: "", subtitle: "", type: "empty", fill: "FFFFFF", textColor: "000000", isFree: true };
+      }
+
+      // Check custom type first (recess/lunch)
+      if (currentSlot.type !== "period" && currentSlot.type !== "assembly" && currentSlot.type !== "registration") {
+        return {
+          subject: currentSlot.type.toUpperCase(),
+          subtitle: `${currentSlot.start} - ${currentSlot.end}`,
+          type: currentSlot.type,
+          fill: "FEFCE8", // Pale warm yellow
+          textColor: "854D0E",
+          isFree: false
+        };
+      }
+
+      if (schedulerViewMode === 'class') {
+        const isAssembly = currentSlot.type === "assembly";
+        const isRegistration = currentSlot.type === "registration";
+        
+        if (isAssembly) {
+          return {
+            subject: "ASSEMBLY",
+            subtitle: "Whole School Gathering",
+            type: "assembly",
+            fill: "EEF2F6", // light greyish blue
+            textColor: "312E81",
+            isFree: false
+          };
+        } else if (isRegistration) {
+          const homeroomTeacherId = staffAssignments[`${schedulerYearGroup}-ASSEMBLY/ HOMEROOM`];
+          const homeroomTeacher = teachers.find(t => t.id === homeroomTeacherId);
+          return {
+            subject: "REGISTRATION",
+            subtitle: homeroomTeacher?.name || "Homeroom Teacher",
+            type: "registration",
+            fill: "ECFDF5", // light mint
+            textColor: "064E3B",
+            isFree: false
+          };
+        } else {
+          const slotValue = timetableGrid[schedulerYearGroup]?.[day]?.[sIdx];
+          if (slotValue) {
+            const items = Array.isArray(slotValue) ? slotValue : [slotValue];
+            if (items.length > 1) {
+              // Parallel lessons!
+              const mainSubjectText = items.map(it => it.subject).join(" / ");
+              const mainSubtitleText = items.map(it => {
+                const t = teachers.find(x => x.id === it.teacherId);
+                return t ? t.name : "Teacher";
+              }).join(" & ");
+              
+              const hexColor = getSubjectHexColor(items[0].subject);
+              const parallelLessonsParsed = items.map(it => {
+                const t = teachers.find(x => x.id === it.teacherId);
+                const subColors = getSubjectHexColor(it.subject);
+                return {
+                  subject: it.subject,
+                  subtitle: t ? t.name : "Teacher",
+                  fill: subColors.fill,
+                  textColor: subColors.textColor
+                };
+              });
+
+              return {
+                subject: mainSubjectText,
+                subtitle: mainSubtitleText,
+                type: "period",
+                fill: hexColor.fill,
+                textColor: hexColor.textColor,
+                isFree: false,
+                parallelLessons: parallelLessonsParsed
+              };
+            } else {
+              // Single assignment
+              const single = items[0];
+              const teacher = teachers.find(t => t.id === single.teacherId);
+              const hexColor = getSubjectHexColor(single.subject);
+              return {
+                subject: single.subject,
+                subtitle: teacher?.name || "",
+                type: "period",
+                fill: hexColor.fill,
+                textColor: hexColor.textColor,
+                isFree: false
+              };
+            }
+          } else {
+            return {
+              subject: "FREE",
+              subtitle: "Unassigned",
+              type: "period",
+              fill: "FAFAF9",
+              textColor: "9CA3AF",
+              isFree: true
+            };
+          }
+        }
+      } else {
+        // Teacher View
+        const isAssembly = currentSlot.type === "assembly";
+        const isRegistration = currentSlot.type === "registration";
+        
+        let assignedYearGroup = "";
+        let assignedSubject = "";
+        Object.entries(timetableGrid).forEach(([yg, daysData]) => {
+          const slotData = daysData[day]?.[sIdx];
+          if (slotData) {
+            const items = Array.isArray(slotData) ? slotData : [slotData];
+            const found = items.find((item: any) => item.teacherId === selectedTeacherSchedule);
+            if (found) {
+              assignedYearGroup = yg;
+              assignedSubject = found.subject;
+            }
+          }
+        });
+
+        if (isRegistration) {
+          let homeroomFor = "";
+          Object.entries(staffAssignments).forEach(([key, tId]) => {
+            const ids = tId ? tId.split(',') : [];
+            if (key.endsWith("-ASSEMBLY/ HOMEROOM") && ids.includes(selectedTeacherSchedule)) {
+              homeroomFor = key.replace("-ASSEMBLY/ HOMEROOM", "");
+            }
+          });
+          if (homeroomFor) {
+            return {
+              subject: "REGISTRATION",
+              subtitle: homeroomFor,
+              type: "registration",
+              fill: "0F766E", // teal
+              textColor: "FFFFFF",
+              isFree: false
+            };
+          } else {
+            return {
+              subject: "NO REGISTRATION",
+              subtitle: "",
+              type: "empty",
+              fill: "FAFAF9",
+              textColor: "9CA3AF",
+              isFree: true
+            };
+          }
+        } else {
+          if (isAssembly) {
+            return {
+              subject: "ASSEMBLY",
+              subtitle: "Mon Only Table",
+              type: "assembly",
+              fill: "EEF2F6",
+              textColor: "312E81",
+              isFree: false
+            };
+          } else if (assignedYearGroup) {
+            const hexColor = getSubjectHexColor(assignedSubject);
+            return {
+              subject: assignedSubject,
+              subtitle: assignedYearGroup,
+              type: "period",
+              fill: hexColor.fill,
+              textColor: hexColor.textColor,
+              isFree: false
+            };
+          } else {
+            return {
+              subject: "FREE",
+              subtitle: "No Assignment",
+              type: "period",
+              fill: "FAFAF9",
+              textColor: "9CA3AF",
+              isFree: true
+            };
+          }
+        }
+      }
+    };
+
+    const downloadTimetableExcel = () => {
+      setIsDownloading(true);
+      try {
+        const wb = XLSX.utils.book_new();
+        const activeName = schedulerViewMode === 'class' ? schedulerYearGroup : (teachers.find(t => t.id === selectedTeacherSchedule)?.name || "Teacher");
+        const activeTitle = `${activeName} Timetable (${timetableOrientation === 'vertical' ? 'Vertical' : 'Horizontal'} View)`;
+
+        const slots = getSlots("Monday", schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7");
+        const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+
+        const dataRows: any[][] = [];
+        dataRows.push([activeTitle]);
+        dataRows.push([]); // blank spacing
+
+        if (timetableOrientation === 'vertical') {
+          // Columns: [Time / Spot, Monday, Tuesday, Wednesday, Thursday, Friday]
+          dataRows.push(["Time / Spot", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]);
+          
+          slots.forEach((slot, sIdx) => {
+            const slotLabel = slot.type === 'period' ? `P${sIdx + 1} (${slot.start} - ${slot.end})` : `${slot.type.toUpperCase()} (${slot.start} - ${slot.end})`;
+            const rowData = [slotLabel];
+            days.forEach(day => {
+              const cellData = getTimetableCellData(day, sIdx);
+              if (cellData.subtitle) {
+                rowData.push(`${cellData.subject}\n(${cellData.subtitle})`);
+              } else {
+                rowData.push(cellData.subject);
+              }
+            });
+            dataRows.push(rowData);
+          });
+        } else {
+          // Horizontal orientation - columns are slots
+          const headers = ["Day"];
+          slots.forEach((slot, sIdx) => {
+            const slotLabel = slot.type === 'period' ? `P${sIdx + 1} (${slot.start} - ${slot.end})` : `${slot.type.toUpperCase()} (${slot.start} - ${slot.end})`;
+            headers.push(slotLabel);
+          });
+          dataRows.push(headers);
+
+          days.forEach(day => {
+            const rowData = [day];
+            slots.forEach((slot, sIdx) => {
+              const cellData = getTimetableCellData(day, sIdx);
+              if (cellData.subtitle) {
+                rowData.push(`${cellData.subject}\n(${cellData.subtitle})`);
+              } else {
+                rowData.push(cellData.subject);
+              }
+            });
+            dataRows.push(rowData);
+          });
+        }
+
+        const ws = XLSX.utils.aoa_to_sheet(dataRows);
+
+        const wscols = timetableOrientation === 'vertical' ? [
+          { wch: 25 },
+          { wch: 22 },
+          { wch: 22 },
+          { wch: 22 },
+          { wch: 22 },
+          { wch: 22 }
+        ] : [
+          { wch: 15 },
+          ...slots.map(() => ({ wch: 20 }))
+        ];
+        ws['!cols'] = wscols;
+
+        XLSX.utils.book_append_sheet(wb, ws, "Current Timetable");
+
+        // Download!
+        XLSX.writeFile(wb, `Timetable_${activeName.replace(/\s+/g, '_')}.xlsx`);
+      } catch (err) {
+        console.error("XLSX Export Error:", err);
+        alert("Failed to download Excel. Please try again.");
+      } finally {
+        setIsDownloading(false);
+      }
+    };
+
+    const downloadTimetablePDF = async () => {
+      if (!timetableRef.current) return;
+      setIsDownloading(true);
+      try {
+        const activeName = schedulerViewMode === 'class' ? schedulerYearGroup : (teachers.find(t => t.id === selectedTeacherSchedule)?.name || "Teacher");
+        const filename = `Timetable_${activeName.replace(/\s+/g, '_')}.pdf`;
+        const element = timetableRef.current!;
+
+        // Capture the full element content using html2canvas
+        const canvas = await html2canvas(element, {
+          scale: 2,
+          useCORS: true,
+          allowTaint: false,
+          backgroundColor: '#FFFFFF',
+          logging: false,
+          width: element.scrollWidth,
+          height: element.scrollHeight,
+          windowWidth: element.scrollWidth,
+          windowHeight: element.scrollHeight,
+          onclone: (clonedDoc) => {
+            // Fix oklch colors for html2canvas support in cloned document
+            const elements = clonedDoc.getElementsByTagName('*');
+            const tempCanvas = document.createElement('canvas');
+            const ctx = tempCanvas.getContext('2d');
+            if (ctx) {
+              for (let i = 0; i < elements.length; i++) {
+                const el = elements[i] as HTMLElement;
+                const props = ['color', 'backgroundColor', 'borderColor', 'fill', 'stroke'];
+                const computed = window.getComputedStyle(el);
+                props.forEach(prop => {
+                  const val = computed.getPropertyValue(prop);
+                  if (val && val.includes('oklch')) {
+                    ctx.fillStyle = val;
+                    el.style.setProperty(prop, ctx.fillStyle, 'important');
+                  }
+                });
+              }
+            }
+
+            // Make sure internal scrollable elements are fully expanded inside clone so they don't clip
+            const elInClone = clonedDoc.querySelector('[data-ref-id="timetable-capture-container"]');
+            if (elInClone instanceof HTMLElement) {
+              elInClone.style.overflow = 'visible';
+              elInClone.style.maxHeight = 'none';
+              elInClone.style.height = 'auto';
+              elInClone.style.width = 'auto';
+            }
+          }
+        });
+
+        const imgData = canvas.toDataURL('image/jpeg', 1.0);
+        const width = canvas.width;
+        const height = canvas.height;
+
+        // Convert to points for jsPDF (1px = 0.75pt)
+        const pdfWidth = width * 0.75;
+        const pdfHeight = height * 0.75;
+
+        const pdf = new jsPDF({
+          orientation: width > height ? 'l' : 'p',
+          unit: 'pt',
+          format: [pdfWidth, pdfHeight]
+        });
+
+        pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+        pdf.save(filename);
+      } catch (err) {
+        console.error("PDF Export Error:", err);
+        alert("Failed to download PDF. Please try again.");
+      } finally {
+        setIsDownloading(false);
+      }
+    };
+
+    const downloadTimetableDocx = async () => {
+      setIsDownloading(true);
+      try {
+        const activeName = schedulerViewMode === 'class' ? schedulerYearGroup : (teachers.find(t => t.id === selectedTeacherSchedule)?.name || "Teacher");
+        const activeTitle = `${activeName} Timetable`;
+        const activeSubtitle = `${timetableOrientation === 'vertical' ? 'Days as Columns, Times as Rows' : 'Days as Rows, Times as Columns'}`;
+
+        const slots = getSlots("Monday", schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7");
+        const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+
+        const docRows: TableRow[] = [];
+
+        // Helper function to create standard polished cells with perfect colors, margins and borders
+        const createStyledCell = (
+          text: string, 
+          subtitle: string | null, 
+          isHeader: boolean, 
+          fillHex: string, 
+          textHex: string, 
+          widthPct: number,
+          isBold: boolean
+        ) => {
+          const cleanFill = fillHex.replace("#", "");
+          const cleanText = textHex.replace("#", "");
+
+          // Dynamic compact font sizing so columns fit beautifully on a single line
+          const fontSize = isHeader 
+            ? (timetableOrientation === 'vertical' ? 18 : 14)
+            : (timetableOrientation === 'vertical' ? 16 : 13);
+
+          const subFontSize = isHeader
+            ? (timetableOrientation === 'vertical' ? 14 : 11)
+            : (timetableOrientation === 'vertical' ? 13 : 11);
+
+          return new TableCell({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                spacing: { before: 80, after: 80 },
+                children: [
+                  new TextRun({ 
+                    text: text, 
+                    bold: isBold, 
+                    color: cleanText, 
+                    font: "Inter", 
+                    size: fontSize 
+                  }),
+                  ...(subtitle ? [
+                    new TextRun({ 
+                      text: subtitle, 
+                      color: cleanText === "FFFFFF" ? "E2E8F0" : "64748B", 
+                      font: "Inter", 
+                      size: subFontSize, 
+                      break: 1 
+                    })
+                  ] : [])
+                ]
+              })
+            ],
+            shading: { fill: cleanFill },
+            verticalAlign: VerticalAlign.CENTER,
+            borders: {
+              top: { style: BorderStyle.SINGLE, size: 4, color: "CBD5E1" },
+              bottom: { style: BorderStyle.SINGLE, size: 4, color: "CBD5E1" },
+              left: { style: BorderStyle.SINGLE, size: 4, color: "CBD5E1" },
+              right: { style: BorderStyle.SINGLE, size: 4, color: "CBD5E1" }
+            },
+            width: { size: widthPct, type: WidthType.PERCENTAGE }
+          });
+        };
+
+        if (timetableOrientation === 'vertical') {
+          // Headers row: Period / Times followed by Days
+          const headerCells = [
+            createStyledCell("Time / Period", null, true, "064E3B", "FFFFFF", 15, true)
+          ];
+
+          days.forEach(day => {
+            headerCells.push(createStyledCell(day, null, true, "064E3B", "FFFFFF", 17, true));
+          });
+
+          docRows.push(new TableRow({ children: headerCells }));
+
+          // Value rows: One row per time slot
+          slots.forEach((slot, sIdx) => {
+            const slotName = slot.type === 'period' ? `P${sIdx + 1}` : slot.type.toUpperCase();
+            const slotTimes = `${slot.start} - ${slot.end}`;
+
+            const rowCells = [
+              createStyledCell(slotName, slotTimes, false, "F8FAF5", "064E3B", 15, true)
+            ];
+
+            days.forEach(day => {
+              const cellData = getTimetableCellData(day, sIdx);
+              rowCells.push(
+                createStyledCell(
+                  cellData.subject,
+                  cellData.subtitle || null,
+                  false,
+                  cellData.fill,
+                  cellData.textColor,
+                  17,
+                  !cellData.isFree
+                )
+              );
+            });
+
+            docRows.push(new TableRow({ children: rowCells }));
+          });
+        } else {
+          // Horizontal layout: Headers row showing Days column + all time slot headers
+          const headerCells = [
+            createStyledCell("Day", null, true, "064E3B", "FFFFFF", 10, true)
+          ];
+
+          const colPct = Math.floor(90 / slots.length);
+
+          slots.forEach((slot, sIdx) => {
+            const slotName = slot.type === 'period' ? `P${sIdx + 1}` : slot.type.toUpperCase();
+            const slotTimes = `${slot.start} - ${slot.end}`;
+            headerCells.push(createStyledCell(slotName, slotTimes, true, "064E3B", "FFFFFF", colPct, true));
+          });
+
+          docRows.push(new TableRow({ children: headerCells }));
+
+          // Value rows: One row per Day containing all corresponding time slots
+          days.forEach(day => {
+            const rowCells = [
+              createStyledCell(day, null, false, "F8FAF5", "064E3B", 10, true)
+            ];
+
+            slots.forEach((slot, sIdx) => {
+              const cellData = getTimetableCellData(day, sIdx);
+              rowCells.push(
+                createStyledCell(
+                  cellData.subject,
+                  cellData.subtitle || null,
+                  false,
+                  cellData.fill,
+                  cellData.textColor,
+                  colPct,
+                  !cellData.isFree
+                )
+              );
+            });
+
+            docRows.push(new TableRow({ children: rowCells }));
+          });
+        }
+
+        const table = new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: docRows
+        });
+
+        const doc = new Document({
+          sections: [{
+            properties: {
+              page: {
+                size: {
+                  orientation: PageOrientation.LANDSCAPE,
+                  width: 16838, // Standard A4 Landscape
+                  height: 11906
+                },
+                margin: {
+                  top: 720,    // Slimmer 0.5 in margins to allow absolute maximum space
+                  bottom: 720,
+                  left: 720,
+                  right: 720
+                }
+              }
+            },
+            children: [
+              new Paragraph({
+                heading: HeadingLevel.HEADING_1,
+                alignment: AlignmentType.CENTER,
+                spacing: { before: 100, after: 50 },
+                children: [
+                  new TextRun({
+                    text: activeTitle,
+                    bold: true,
+                    size: 28,
+                    color: "064E3B",
+                    font: "Inter"
+                  })
+                ]
+              }),
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                spacing: { after: 250 },
+                children: [
+                  new TextRun({
+                    text: activeSubtitle,
+                    italics: true,
+                    size: 14,
+                    color: "64748B",
+                    font: "Inter"
+                  })
+                ]
+              }),
+              table
+            ]
+          }]
+        });
+
+        const blob = await Packer.toBlob(doc);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Timetable_${activeName.replace(/\s+/g, '_')}.docx`;
+        a.click();
+      } catch (err) {
+        console.error("DOCX Export Error:", err);
+        alert("Failed to download Word Document. Please try again.");
+      } finally {
+        setIsDownloading(false);
+      }
+    };
+
+    const getDayFinishTime = (day: string) => {
+      const currentYg = schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7";
+      const slotsForDay = getSlots(day, currentYg);
+      const lastSlot = slotsForDay[slotsForDay.length - 1];
+      if (!lastSlot) return "";
+      
+      const endVal = lastSlot.end;
+      if (endVal === "12:05") return "12:05pm";
+      if (endVal === "14:30") return "2:30pm";
+      if (endVal === "15:00") return "3:00pm";
+      return `${endVal}`;
+    };
+
+    const getDayMasterColumns = (day: string) => {
+      const isFri = day === "Friday";
+      const cols = [
+        { key: "duty-morning-1", label: "DUTY", sub: "0800-0825", type: "duty", width: "105px" },
+        { key: "duty-morning-2", label: "DUTY/REG", sub: "0820-0830", type: "duty", width: "105px" },
+        { key: "slot-0", label: "0", sub: "0800-0830", type: "registration", width: "115px" },
+        { key: "slot-1", label: "1", sub: "0830-0910", type: "period", width: "115px" },
+        { key: "slot-2", label: "2", sub: "0910-0945", type: "period", width: "115px" },
+        { key: "slot-3", label: "3", sub: "0945-1020", type: "period", width: "115px" },
+        { key: "slot-4", label: "BREAK", sub: "1020-1055", type: "break", width: "105px" },
+        { key: "slot-5", label: day === "Monday" ? "Assembly" : "4", sub: "1055-1130", type: day === "Monday" ? "assembly" : "period", width: "115px" },
+        { key: "slot-6", label: day === "Monday" ? "4" : "5", sub: "1130-1205", type: "period", width: "115px" },
+      ];
+
+      if (!isFri) {
+        cols.push(
+          { key: "slot-7", label: day === "Monday" ? "5" : "6", sub: "1205-1240", type: "period", width: "115px" },
+          { key: "slot-8", label: "LUNCH", sub: "1240-1315", type: "lunch", width: "105px" },
+          { key: "slot-9", label: day === "Monday" ? "6" : "7", sub: "1315-1350", type: "period", width: "115px" },
+          { key: "slot-10", label: day === "Monday" ? "7" : "8", sub: "1350-1425", type: "period", width: "115px" },
+          { key: "slot-11", label: day === "Monday" ? "8" : "9", sub: "1425-1500", type: "period", width: "115px" },
+          { key: "duty-afternoon-1", label: "DUTY", sub: "1430-1450", type: "duty", width: "105px" },
+          { key: "duty-afternoon-2", label: "DUTY", sub: "1500-1520", type: "duty", width: "105px" }
+        );
+      }
+
+      return cols;
+    };
+
+    const getTeacherLessonAt = (teacherId: string, day: string, sIdx: number) => {
+      let assignedSubject = "";
+      let assignedYg = "";
+      Object.entries(timetableGrid).forEach(([yg, days]) => {
+        const slotData = days[day]?.[sIdx];
+        if (slotData) {
+          const items = Array.isArray(slotData) ? slotData : [slotData];
+          const found = items.find((item: any) => item?.teacherId === teacherId);
+          if (found) {
+            assignedSubject = found.subject;
+            assignedYg = yg;
+          }
+        }
+      });
+
+      if (assignedSubject) {
+        return { subject: assignedSubject, yearGroup: assignedYg };
+      }
+      return null;
+    };
+
+    const getTeacherRegistrationAt = (teacherId: string, day: string) => {
+      let homeroomYg = "";
+      Object.entries(staffAssignments).forEach(([key, val]) => {
+        const ids = val ? val.split(',') : [];
+        if (ids.includes(teacherId) && key.endsWith("-ASSEMBLY/ HOMEROOM")) {
+          homeroomYg = key.replace("-ASSEMBLY/ HOMEROOM", "");
+        }
+      });
+
+      if (homeroomYg) {
+        return `Registration Y${homeroomYg.replace("Year ", "")}`;
+      }
+      return null;
+    };
+
+    const handleSaveDutyCell = (text: string) => {
+      if (!activeDutyCell) return;
+      const { teacherId, day, key } = activeDutyCell;
+      const nextDuties = { ...teacherDuties };
+      if (!nextDuties[teacherId]) nextDuties[teacherId] = {};
+      if (!nextDuties[teacherId][day]) nextDuties[teacherId][day] = {};
+      
+      if (text.trim() === "") {
+        delete nextDuties[teacherId][day][key];
+      } else {
+        nextDuties[teacherId][day][key] = text;
+      }
+      updateTeacherDutiesAndSave(nextDuties);
+      setActiveDutyCell(null);
+    };
+
+    const downloadMasterExcel = () => {
+      const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+      
+      const mainHeader = ["TEACHERS"];
+      const subHeader = ["Time slots"];
+      const labelHeader = ["Periods"];
+
+      days.forEach(day => {
+        const dayCols = getDayMasterColumns(day);
+        dayCols.forEach((col, idx) => {
+          if (idx === 0) {
+            mainHeader.push(day.toUpperCase());
+          } else {
+            mainHeader.push("");
+          }
+          subHeader.push(col.sub);
+          labelHeader.push(col.label || col.type.toUpperCase());
+        });
+      });
+
+      const rows = [mainHeader, subHeader, labelHeader];
+
+      const filteredTeachers = teachers.filter(t => 
+        t.name.toLowerCase().includes(masterTeacherSearch.toLowerCase())
+      );
+
+      filteredTeachers.forEach(teacher => {
+        const row = [teacher.name];
+        
+        days.forEach(day => {
+          const dayCols = getDayMasterColumns(day);
+          dayCols.forEach(col => {
+            if (col.type === "duty" || col.type === "break" || col.type === "lunch") {
+              const val = teacherDuties[teacher.id]?.[day]?.[col.key] || (col.type === "duty" ? "" : col.label);
+              row.push(val);
+            } else if (col.type === "registration") {
+              const regVal = getTeacherRegistrationAt(teacher.id, day);
+              const val = teacherDuties[teacher.id]?.[day]?.[col.key] || regVal || "";
+              row.push(val);
+            } else {
+              const sIdx = parseInt(col.key.split("-")[1]);
+              const lesson = getTeacherLessonAt(teacher.id, day, sIdx);
+              if (lesson) {
+                row.push(`${lesson.subject} (${lesson.yearGroup.replace("Year ", "Y")})`);
+              } else {
+                const customVal = teacherDuties[teacher.id]?.[day]?.[col.key] || "";
+                row.push(customVal);
+              }
+            }
+          });
+        });
+        rows.push(row);
+      });
+
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      
+      const merges: any[] = [];
+      let curCol = 1;
+      days.forEach(day => {
+        const dayColCount = getDayMasterColumns(day).length;
+        merges.push({ s: { r: 0, c: curCol }, e: { r: 0, c: curCol + dayColCount - 1 } });
+        curCol += dayColCount;
+      });
+      ws["!merges"] = merges;
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Master Spreadsheet");
+      XLSX.writeFile(wb, "Overall_Teachers_Master_Spreadsheet.xlsx");
+    };
+
+    const renderMasterSpreadsheet = () => {
+      const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+      const filteredTeachers = teachers.filter(t => {
+        const matchesName = t.name.toLowerCase().includes(masterTeacherSearch.toLowerCase());
+        if (!matchesName) return false;
+
+        if (masterSubjectSearch) {
+          let hasSubject = false;
+          Object.values(timetableGrid).forEach(ygDays => {
+            Object.values(ygDays).forEach((slots: any[]) => {
+              slots.forEach((slot) => {
+                if (slot && slot.teacherId === t.id && slot.subject.toLowerCase().includes(masterSubjectSearch.toLowerCase())) {
+                  hasSubject = true;
+                }
+              });
+            });
+          });
+          return hasSubject;
+        }
+        return true;
+      });
+
+      return (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-4 bg-[#FEFCE8]/20 border-2 border-[#FEFCE8] p-4 rounded-2xl">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-[#064E3B] rounded-xl text-white">
+                <Calendar size={18} />
+              </div>
+              <div>
+                <h4 className="text-sm font-black text-[#064E3B] uppercase tracking-wide">Overall Teachers Master Spreadsheet</h4>
+                <p className="text-[10px] text-[#064E3B]/60 font-medium">Click on any empty cell, Duty slot, Break, or Lunch to schedule customizable duties. First column is sticky for easy horizontal tracking.</p>
+              </div>
+            </div>
+            
+            <button
+              type="button"
+              onClick={downloadMasterExcel}
+              className="flex items-center gap-2 bg-[#064E3B] hover:bg-[#064E3B]/95 text-white font-black uppercase text-[10px] tracking-wider px-4 py-2 rounded-xl transition-all shadow-md cursor-pointer hover:scale-[1.02]"
+            >
+              <Download size={14} className="stroke-[3]" />
+              Download Excel Spreadsheet
+            </button>
+          </div>
+
+          <div className="border border-gray-150 rounded-2xl overflow-hidden shadow-md max-w-full bg-white">
+            <div className="overflow-x-auto overflow-y-auto max-h-[70vh] custom-scrollbar">
+              <table className="table-fixed border-collapse select-none text-left w-max">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200">
+                    <th className="sticky left-0 bg-gray-100 z-30 border-r border-gray-250 w-[180px] p-2 text-center align-middle font-black text-[12px] text-[#064E3B] h-11 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                      TEACHERS
+                    </th>
+                    {days.map(day => {
+                      const cols = getDayMasterColumns(day);
+                      return (
+                        <th 
+                          key={day} 
+                          colSpan={cols.length} 
+                          className="text-center align-middle font-black text-[11px] text-[#064E3B] border-r border-gray-200 bg-[#E6F4EA] uppercase tracking-wider h-11"
+                        >
+                          {day}
+                        </th>
+                      );
+                    })}
+                  </tr>
+
+                  <tr className="bg-gray-50 border-b border-gray-150">
+                    <th className="sticky left-0 bg-gray-50 z-30 border-r border-gray-250 text-center py-1 font-mono font-bold text-[9px] text-[#064E3B]/60 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                      5.1.2026
+                    </th>
+                    {days.map(day => {
+                      const cols = getDayMasterColumns(day);
+                      return cols.map((col) => (
+                        <th 
+                          key={`${day}-${col.key}`} 
+                          style={{ width: col.width }}
+                          className="text-center align-middle py-1 px-1 font-mono font-bold text-[8px] text-gray-500 border-r border-gray-150 bg-gray-50"
+                        >
+                          {col.sub}
+                        </th>
+                      ));
+                    })}
+                  </tr>
+
+                  <tr className="bg-[#FEFCE8]/10 border-b-2 border-gray-200">
+                    <th className="sticky left-0 bg-[#FDFBF7] z-30 border-r border-gray-250 text-[#064E3B]/40 font-black text-[10px] p-2 tracking-wide uppercase text-center shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
+                      Period
+                    </th>
+                    {days.map(day => {
+                      const cols = getDayMasterColumns(day);
+                      return cols.map((col) => (
+                        <th 
+                          key={`${day}-${col.key}-label`} 
+                          className="text-center align-middle py-1.5 px-1 font-black text-[9px] text-[#064E3B] border-r border-gray-150 bg-[#FEFCE8]/40 uppercase tracking-widest"
+                        >
+                          {col.label}
+                        </th>
+                      ));
+                    })}
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {filteredTeachers.length === 0 ? (
+                    <tr>
+                      <td colSpan={75} className="py-12 text-center font-bold text-gray-400">
+                        No teachers found matching search parameters.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredTeachers.map((teacher, tIdx) => (
+                      <tr 
+                        key={teacher.id} 
+                        className={cn(
+                          "hover:bg-[#FEFCE8]/10 border-b border-gray-100",
+                          tIdx % 2 === 1 ? "bg-gray-50/40" : "bg-white"
+                        )}
+                      >
+                        <td className="sticky left-0 bg-white z-20 border-r-2 border-gray-250 p-2 font-black text-xs text-[#064E3B] flex items-center gap-1.5 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] min-h-[52px]">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                          <span className="truncate" title={teacher.name}>{teacher.name}</span>
+                        </td>
+
+                        {days.map(day => {
+                          const cols = getDayMasterColumns(day);
+                          return cols.map((col) => {
+                            const customText = teacherDuties[teacher.id]?.[day]?.[col.key];
+
+                            if (col.type === "period") {
+                              const sIdx = parseInt(col.key.split("-")[1]);
+                              const lesson = getTeacherLessonAt(teacher.id, day, sIdx);
+                              
+                              if (lesson) {
+                                const sColors = getSubjectColorClass(lesson.subject);
+                                return (
+                                  <td 
+                                    key={col.key} 
+                                    className="p-1 border-r border-gray-100 align-middle text-center overflow-hidden"
+                                  >
+                                    <div 
+                                      className={cn(
+                                        "w-full h-10 px-1 py-0.5 rounded-lg border-2 flex flex-col items-center justify-center transition-all cursor-not-allowed select-none",
+                                        sColors
+                                      )}
+                                      title={`${lesson.subject} (${lesson.yearGroup})`}
+                                    >
+                                      <p className="text-[9px] font-black uppercase truncate max-w-full leading-none">{getSubjectAbbreviation(lesson.subject)}</p>
+                                      <p className="text-[7px] font-bold opacity-80 mt-0.5">Y{lesson.yearGroup.replace("Year ", "")}</p>
+                                    </div>
+                                  </td>
+                                );
+                              }
+                            }
+
+                            let finalDisplay = customText || "";
+                            let isCustom = !!customText;
+                            
+                            if (!customText) {
+                              if (col.type === "break" || col.type === "lunch") {
+                                finalDisplay = col.label;
+                              } else if (col.type === "assembly" && day === "Monday") {
+                                finalDisplay = "Assembly";
+                              } else if (col.type === "registration") {
+                                const regVal = getTeacherRegistrationAt(teacher.id, day);
+                                if (regVal) {
+                                  finalDisplay = regVal;
+                                } else {
+                                  finalDisplay = "-";
+                                }
+                              } else {
+                                finalDisplay = "-";
+                              }
+                            }
+
+                            const textUpper = finalDisplay.toUpperCase();
+                            const isSpecialDuty = textUpper.includes("GROUND FLOOR") || 
+                                                  textUpper.includes("CANTEEN") || 
+                                                  textUpper.includes("SUPERVISOR") || 
+                                                  textUpper.includes("LIBRARY") || 
+                                                  textUpper.includes("LIFT") || 
+                                                  textUpper.includes("PICKUP");
+
+                            let cellStyleClass = "";
+                            if (isSpecialDuty) {
+                              cellStyleClass = "bg-[#EF4444] border-red-700 text-yellow-300 font-black shadow-md";
+                            } else if (isCustom) {
+                              cellStyleClass = "bg-amber-100 border-amber-300 text-amber-955 font-bold";
+                            } else if (col.type === "break" || col.type === "lunch") {
+                              cellStyleClass = "bg-gray-100 text-gray-400 font-extrabold";
+                            } else if (col.type === "registration" && finalDisplay.startsWith("Registration")) {
+                              cellStyleClass = "bg-emerald-150 border-emerald-300 text-emerald-950 font-extrabold";
+                            } else if (col.type === "assembly") {
+                              cellStyleClass = "bg-indigo-100 border-indigo-200 text-indigo-950 font-black";
+                            } else {
+                              cellStyleClass = "bg-gray-50/50 hover:bg-gray-50 border-gray-100 text-gray-300 font-medium";
+                            }
+
+                            return (
+                              <td 
+                                key={col.key} 
+                                className="p-1 border-r border-gray-100 align-middle text-center overflow-hidden"
+                              >
+                                <div 
+                                  onClick={() => {
+                                    setActiveDutyCell({ teacherId: teacher.id, day, key: col.key });
+                                    setTempDutyText(customText || "");
+                                  }}
+                                  className={cn(
+                                    "w-full h-10 px-1 rounded-lg border flex items-center justify-center text-[8px] uppercase tracking-wide leading-tight text-center cursor-pointer hover:scale-105 transition-all truncate",
+                                    cellStyleClass
+                                  )}
+                                  title="Click to customize duty cell"
+                                >
+                                  {finalDisplay}
+                                </div>
+                              </td>
+                            );
+                          });
+                        })}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <AnimatePresence>
+            {activeDutyCell && (
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+              >
+                <motion.div 
+                  initial={{ scale: 0.95 }}
+                  animate={{ scale: 1 }}
+                  exit={{ scale: 0.95 }}
+                  className="bg-white rounded-3xl p-6 shadow-2xl border-2 border-amber-200/50 max-w-md w-full space-y-4"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex justify-between items-start border-b pb-3 border-gray-100">
+                    <div>
+                      <span className="text-[9px] font-black uppercase text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-200 shadow-sm">
+                        Assign Duty / Override Cell
+                      </span>
+                      <h5 className="text-lg font-black text-[#064E3B] mt-1.5 leading-tight">
+                        {teachers.find(t => t.id === activeDutyCell.teacherId)?.name || 'Teacher'}
+                      </h5>
+                      <p className="text-[10px] text-gray-400 font-bold">
+                        {activeDutyCell.day} • {getDayMasterColumns(activeDutyCell.day).find(c => c.key === activeDutyCell.key)?.sub || ""}
+                      </p>
+                    </div>
+                    <button 
+                      type="button"
+                      onClick={() => setActiveDutyCell(null)}
+                      className="p-1.5 hover:bg-gray-100 rounded-full transition-all text-gray-400 hover:text-gray-600"
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase text-gray-500 tracking-wider">Custom Label / Duty Title</label>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text"
+                        value={tempDutyText}
+                        onChange={(e) => setTempDutyText(e.target.value)}
+                        placeholder="Enter custom duty task..."
+                        className="flex-1 border-2 border-gray-200 px-3.5 py-2 rounded-xl text-xs font-bold text-gray-800 outline-none focus:border-[#064E3B] bg-gray-50/50"
+                      />
+                      {tempDutyText && (
+                        <button 
+                          type="button" 
+                          onClick={() => setTempDutyText('')} 
+                          className="text-[10px] font-black text-red-500 hover:text-red-700 px-2"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-black uppercase text-gray-500 tracking-wider">Popular School Duties</p>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {[
+                        "GROUND FLOOR",
+                        "CANTEEN",
+                        "CANTEEN SUPERVISOR",
+                        "LIBRARY SUPERVISOR",
+                        "LIFT & GROUND FLOOR",
+                        "PICKUP AREA",
+                        "BREAK SUPERVISOR",
+                        "LUNCH SUPERVISOR",
+                        "EXAM INVIGILATOR",
+                        "FREE"
+                      ].map((duty) => (
+                        <button
+                          key={duty}
+                          type="button"
+                          onClick={() => setTempDutyText(duty)}
+                          className={cn(
+                            "py-1.5 px-2.5 text-[9px] font-black tracking-wider uppercase border text-left rounded-lg transition-all truncate",
+                            tempDutyText.toUpperCase() === duty.toUpperCase()
+                              ? "bg-amber-100 border-amber-400 text-amber-950 shadow-sm"
+                              : "bg-white border-gray-100 text-gray-500 hover:bg-gray-50"
+                          )}
+                        >
+                          {duty}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 pt-4 border-t border-gray-100">
+                    <button
+                      type="button"
+                      onClick={() => handleSaveDutyCell("")}
+                      className="flex-1 py-2 text-[10px] font-black uppercase tracking-wider bg-red-50 border border-red-200 text-red-600 rounded-xl transition-all hover:bg-red-100 cursor-pointer"
+                    >
+                      Clear Override
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSaveDutyCell(tempDutyText)}
+                      className="flex-1 py-2 text-[10px] font-black uppercase tracking-wider bg-[#064E3B] text-white rounded-xl transition-all hover:bg-[#064e3b]/95 shadow-md cursor-pointer"
+                    >
+                      Apply & Save
+                    </button>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      );
+    };
+
     const renderCellContent = (day: string, sIdx: number) => {
+      const checkIsPE = (sub: string) => {
+        if (!sub) return false;
+        const u = sub.toUpperCase();
+        return u.includes("PHYSICAL EDUCATION") || u === "PE" || u.includes("P.E.");
+      };
+
       const daySlots = getSlots(day, schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7");
       if (sIdx >= daySlots.length) {
         return (
-          <div className="bg-gray-50/20 rounded-2xl border-2 border-dashed border-gray-100 flex items-center justify-center min-h-[90px] w-full">
-            <p className="text-[10px] font-black text-gray-200 rotate-45 uppercase tracking-tighter">Day Finished</p>
+          <div className="bg-gray-50/20 rounded-2xl border-2 border-dashed border-gray-100 flex items-center justify-center min-h-[70px] w-full">
+            <p className="text-[9px] font-black text-gray-200 rotate-45 uppercase tracking-tighter">Finished</p>
           </div>
         );
       }
@@ -2991,57 +4584,103 @@ export default function App() {
 
       if (currentSlot.type !== "period" && currentSlot.type !== "assembly" && currentSlot.type !== "registration") {
         cellContent = (
-          <div className="min-h-[90px] p-4 rounded-xl bg-amber-50/30 border-2 border-dashed border-amber-200/50 flex flex-col justify-center items-center text-center w-full">
-            <p className="text-[10px] font-black text-amber-600/40 uppercase tracking-[0.2em]">{currentSlot.type.replace('_', ' ')}</p>
+          <div className="min-h-[70px] p-2 rounded-xl bg-amber-50/30 border-2 border-dashed border-amber-200/50 flex flex-col justify-center items-center text-center w-full">
+            <p className="text-[9px] font-black text-amber-600/40 uppercase tracking-widest">{currentSlot.type.replace('_', ' ')}</p>
           </div>
         );
       } else if (schedulerViewMode === 'class') {
         const isAssembly = currentSlot.type === "assembly";
         const isRegistration = currentSlot.type === "registration";
-        const manualAssignment = timetableGrid[schedulerYearGroup]?.[day]?.[sIdx];
-        const teacher = manualAssignment ? teachers.find(t => t.id === manualAssignment.teacherId) : null;
+        const rawSlotValue = timetableGrid[schedulerYearGroup]?.[day]?.[sIdx];
+        const hasAssignment = !!rawSlotValue;
+        const assignmentsList = rawSlotValue 
+          ? (Array.isArray(rawSlotValue) ? rawSlotValue : [rawSlotValue])
+          : [];
         
         if (isAssembly) {
           cellContent = (
-            <div className="min-h-[90px] p-4 rounded-xl bg-indigo-50 border-2 border-indigo-100 flex flex-col justify-center items-center text-center w-full">
-              <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Assembly</p>
-              <p className="text-xs font-black text-indigo-900 leading-tight">Whole School Gathering</p>
+            <div className="min-h-[70px] p-2 rounded-xl bg-indigo-50 border-2 border-indigo-100 flex flex-col justify-center items-center text-center w-full">
+              <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest leading-none mb-0.5">Assembly</p>
+              <p className="text-[11px] font-black text-indigo-900 leading-tight">Gathering</p>
             </div>
           );
         } else if (isRegistration) {
           const homeroomTeacherId = staffAssignments[`${schedulerYearGroup}-ASSEMBLY/ HOMEROOM`];
           const homeroomTeacher = teachers.find(t => t.id === homeroomTeacherId);
           cellContent = (
-            <div className="min-h-[90px] p-4 rounded-xl bg-[#ECFDF5] border-2 border-[#10B981]/20 flex flex-col justify-center items-center text-center w-full">
-              <p className="text-[10px] font-black text-[#059669] uppercase tracking-widest mb-1">Registration</p>
-              <p className="text-xs font-black text-[#064E3B] leading-tight">{homeroomTeacher?.name || "Homeroom Teacher"}</p>
+            <div className="min-h-[70px] p-2 rounded-xl bg-[#ECFDF5] border-2 border-[#10B981]/20 flex flex-col justify-center items-center text-center w-full">
+              <p className="text-[9px] font-black text-[#059669] uppercase tracking-widest leading-none mb-0.5">Registration</p>
+              <p className="text-[11px] font-black text-[#064E3B] leading-tight truncate w-full">{homeroomTeacher?.name || "Homeroom"}</p>
             </div>
           );
         } else {
           cellContent = (
             <div 
               className={cn(
-                "group relative min-h-[90px] p-4 rounded-xl border-2 transition-all flex flex-col justify-center w-full",
-                manualAssignment 
-                  ? "bg-white border-[#FACC15] shadow-sm hover:scale-[1.02]" 
+                "group relative min-h-[70px] p-1.5 rounded-xl border-2 transition-all flex flex-col justify-center w-full shadow-sm",
+                hasAssignment 
+                  ? "bg-white border-amber-300" 
                   : "bg-[#FDFBF7] border-dashed border-gray-200 hover:border-[#FACC15]/40"
               )}
               onDragOver={(e) => e.preventDefault()}
               onDrop={() => {
                 if (!draggedAssignment) return;
 
+                const isPe = checkIsPE(draggedAssignment.subject);
+
+                // Check Physical Education slot restriction (9:10 - 10:20 a.m. only, ie. sIdx === 2 or sIdx === 3)
+                if (isPe) {
+                  if (sIdx !== 2 && sIdx !== 3) {
+                    alert("Physical Education can only be scheduled at 9.10-10.20 a.m. (Slot 2 or 3).");
+                    return;
+                  }
+                }
+
                 // Check if teacher is already busy at this time in another year group
                 let isBusy = false;
                 let busyYg = "";
+
+                // Get the list of all PE teachers to schedule for this year group
+                const peKey = `${schedulerYearGroup}-PHYSICAL EDUCATION`;
+                const peTeacherIds = staffAssignments[peKey] ? staffAssignments[peKey].split(',') : [draggedAssignment.teacherId];
+                const teachersToPlace = isPe ? peTeacherIds : [draggedAssignment.teacherId];
+
                 Object.entries(timetableGrid).forEach(([yg, days]) => {
-                  if (days[day]?.[sIdx]?.teacherId === draggedAssignment.teacherId) {
-                    isBusy = true;
-                    busyYg = yg;
+                  if (yg === schedulerYearGroup) return;
+
+                  // Skip busy check if these classes are combined for this subject
+                  const areCombined = combinedClasses.some(rule => 
+                    rule.subject === draggedAssignment.subject && 
+                    rule.yearGroups.includes(schedulerYearGroup) && 
+                    rule.yearGroups.includes(yg)
+                  );
+                  if (areCombined) return;
+
+                  if (isPe) {
+                    const isBusy2 = days[day]?.[2] && (Array.isArray(days[day]?.[2]) 
+                      ? (days[day]?.[2] as any[]).some((item: any) => teachersToPlace.includes(item.teacherId))
+                      : teachersToPlace.includes((days[day]?.[2] as any).teacherId));
+                    const isBusy3 = days[day]?.[3] && (Array.isArray(days[day]?.[3]) 
+                      ? (days[day]?.[3] as any[]).some((item: any) => teachersToPlace.includes(item.teacherId))
+                      : teachersToPlace.includes((days[day]?.[3] as any).teacherId));
+                    if (isBusy2 || isBusy3) {
+                      isBusy = true;
+                      busyYg = yg;
+                    }
+                  } else {
+                    const slotData = days[day]?.[sIdx];
+                    if (slotData) {
+                      const items = Array.isArray(slotData) ? slotData : [slotData];
+                      if (items.some((item: any) => teachersToPlace.includes(item.teacherId))) {
+                        isBusy = true;
+                        busyYg = yg;
+                      }
+                    }
                   }
                 });
 
                 if (isBusy) {
-                  alert(`Conflict: This teacher is already scheduled for ${busyYg} during this time slot.`);
+                  alert(`Conflict: One or more of the assigned Physical Education teachers are already scheduled for ${busyYg} during this time slot.`);
                   return;
                 }
 
@@ -3050,37 +4689,153 @@ export default function App() {
                   alert("No periods remaining for this teacher/subject.");
                   return;
                 }
-                const nextGrid = { ...timetableGrid };
-                if (!nextGrid[schedulerYearGroup][day]) nextGrid[schedulerYearGroup][day] = [];
-                nextGrid[schedulerYearGroup][day][sIdx] = { 
-                  teacherId: draggedAssignment.teacherId, 
-                  subject: draggedAssignment.subject 
-                };
-                setTimetableGrid(nextGrid);
-                setDraggedAssignment(null);
+
+                const currentSlotValue = timetableGrid[schedulerYearGroup]?.[day]?.[sIdx];
+                if (currentSlotValue) {
+                  const items = Array.isArray(currentSlotValue) ? currentSlotValue : [currentSlotValue];
+                  // If same teacher, block it
+                  if (items.some((item: any) => teachersToPlace.includes(item.teacherId))) {
+                    alert("One of the teachers in this Physical Education/Subject cohort is already assigned to this slot for this year group.");
+                    return;
+                  }
+                  // Otherwise, show parallel split prompt / confirm modal!
+                  setParallelDropConfirm({
+                    day,
+                    sIdx,
+                    newAssignment: {
+                      teacherId: draggedAssignment.teacherId,
+                      subject: draggedAssignment.subject
+                    },
+                    existingAssignments: items
+                  });
+                } else {
+                  // Standard direct assign
+                  const nextGrid = { ...timetableGrid };
+
+                  // Find combined partners
+                  const matchingRules = combinedClasses.filter(rule => 
+                    rule.subject === draggedAssignment.subject && 
+                    rule.yearGroups.includes(schedulerYearGroup)
+                  );
+
+                  const targetYGs = new Set<string>([schedulerYearGroup]);
+                  matchingRules.forEach(rule => {
+                    rule.yearGroups.forEach(yg => targetYGs.add(yg));
+                  });
+
+                  targetYGs.forEach(yg => {
+                    if (!nextGrid[yg]) nextGrid[yg] = {};
+                    if (!nextGrid[yg][day]) nextGrid[yg][day] = [];
+                    if (isPe) {
+                      const loopPeKey = `${yg}-PHYSICAL EDUCATION`;
+                      const loopPeIds = staffAssignments[loopPeKey] ? staffAssignments[loopPeKey].split(',') : [draggedAssignment.teacherId];
+                      const peAssignments = loopPeIds.map(tId => ({
+                        teacherId: tId,
+                        subject: draggedAssignment.subject
+                      }));
+                      nextGrid[yg][day][2] = peAssignments;
+                      nextGrid[yg][day][3] = peAssignments;
+                    } else {
+                      const parallelAsgs = getParallelAssignmentsFor(yg, draggedAssignment.subject);
+                      if (parallelAsgs.length > 1) {
+                        nextGrid[yg][day][sIdx] = parallelAsgs;
+                      } else {
+                        nextGrid[yg][day][sIdx] = { 
+                          teacherId: draggedAssignment.teacherId, 
+                          subject: draggedAssignment.subject 
+                        };
+                      }
+                    }
+                  });
+
+                  setTimetableGrid(nextGrid);
+                  saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, nextGrid, teacherDuties, combinedClasses);
+                  setDraggedAssignment(null);
+                }
               }}
             >
-              {manualAssignment ? (
-                <>
-                  <div className="flex justify-between items-start mb-1">
-                    <p className="text-[9px] font-black uppercase text-[#064E3B]/60 leading-none">{manualAssignment.subject}</p>
-                    <button 
-                      onClick={() => {
-                        const nextGrid = { ...timetableGrid };
-                        nextGrid[schedulerYearGroup][day][sIdx] = null;
-                        setTimetableGrid(nextGrid);
-                      }}
-                      className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-500 transition-opacity"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                  <p className="text-xs font-black text-[#064E3B]">{teacher?.name}</p>
-                  <p className="text-[10px] font-bold text-[#FACC15] mt-1">{currentSlot.start}</p>
-                </>
+              {hasAssignment ? (
+                <div className="flex flex-col gap-1 w-full">
+                  {assignmentsList.map((asg, index) => {
+                    const asgTeacher = teachers.find(t => t.id === asg.teacherId);
+                    const isPe = checkIsPE(asg.subject);
+                    const isCombined = combinedClasses.some(rule => 
+                      rule.subject === asg.subject && 
+                      rule.yearGroups.includes(schedulerYearGroup)
+                    );
+                    return (
+                      <div 
+                        key={`${asg.teacherId}-${asg.subject}-${index}`}
+                          className={cn(
+                            "p-1.5 rounded-lg border flex flex-col justify-center relative group/item",
+                            getSubjectColorClass(asg.subject)
+                          )}
+                        >
+                          <div className="flex justify-between items-start leading-none mb-0.5">
+                            <p className="text-[9px] font-black uppercase opacity-75 truncate mr-1 flex items-center gap-1">
+                              {asg.subject} {isCombined && <span className="text-[#059669]" title="Combined Class">🔄</span>}
+                            </p>
+                            <button 
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const nextGrid = { ...timetableGrid };
+
+                                // Deletion propagation for combined classes
+                                const matchingRules = combinedClasses.filter(rule => 
+                                  rule.subject === asg.subject && 
+                                  rule.yearGroups.includes(schedulerYearGroup)
+                                );
+
+                                const targetYGs = new Set<string>([schedulerYearGroup]);
+                                matchingRules.forEach(rule => {
+                                  rule.yearGroups.forEach(yg => targetYGs.add(yg));
+                                });
+
+                                targetYGs.forEach(yg => {
+                                  if (isPe) {
+                                    // PE typically spans 2 & 3. If removing PE from a split cell, let's remove it from both 2 and 3.
+                                    [2, 3].forEach(slotIdx => {
+                                      const cellVal = nextGrid[yg]?.[day]?.[slotIdx];
+                                      if (cellVal) {
+                                        const items = Array.isArray(cellVal) ? cellVal : [cellVal];
+                                        const filtered = items.filter((item: any) => item.teacherId !== asg.teacherId || item.subject !== asg.subject);
+                                        nextGrid[yg][day][slotIdx] = filtered.length === 0 ? null : (filtered.length === 1 ? filtered[0] : filtered);
+                                      }
+                                    });
+                                  } else {
+                                    const cellVal = nextGrid[yg]?.[day]?.[sIdx];
+                                    if (cellVal) {
+                                      const items = Array.isArray(cellVal) ? cellVal : [cellVal];
+                                      const filtered = items.filter((item: any) => item.teacherId !== asg.teacherId || item.subject !== asg.subject);
+                                      nextGrid[yg][day][sIdx] = filtered.length === 0 ? null : (filtered.length === 1 ? filtered[0] : filtered);
+                                    }
+                                  }
+                                });
+
+                                setTimetableGrid(nextGrid);
+                                saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, nextGrid, teacherDuties, combinedClasses);
+                              }}
+                              className="opacity-0 group-hover:opacity-100 group-hover/item:opacity-100 text-red-600 hover:text-red-700 hover:scale-105 transition-all outline-none"
+                              title={isCombined ? "Remove this subject from ALL combined year groups" : "Remove this subject"}
+                            >
+                              <Trash2 size={10} />
+                            </button>
+                          </div>
+                          <p className="text-[10px] font-black opacity-100 truncate leading-tight">{asgTeacher?.name || "Teacher"}</p>
+                          {isCombined && (
+                            <div className="mt-0.5 flex gap-0.5 flex-wrap">
+                              <span className="text-[7.5px] font-extrabold text-[#064E3B] bg-[#F0FDF4] px-1 py-0.2 rounded border border-[#D1FAE5]">Combined</span>
+                            </div>
+                          )}
+                        </div>
+                    );
+                  })}
+                  <p className="text-[8px] font-bold text-gray-400 text-right mr-1 leading-none mt-0.5">{currentSlot.start}</p>
+                </div>
               ) : (
-                <div className="text-center opacity-20 group-hover:opacity-100 transition-opacity">
-                  <p className="text-[8px] font-black uppercase tracking-widest text-[#064E3B]">Drag Here</p>
+                <div className="text-center opacity-25 group-hover:opacity-100 transition-opacity">
+                  <p className="text-[8px] font-bold uppercase tracking-wider text-[#064E3B]/70">Drag Here</p>
                 </div>
               )}
             </div>
@@ -3095,53 +4850,58 @@ export default function App() {
         
         Object.entries(timetableGrid).forEach(([yg, days]) => {
           const slotData = days[day]?.[sIdx];
-          if (slotData && slotData.teacherId === selectedTeacherSchedule) {
-            assignedYearGroup = yg;
-            assignedSubject = slotData.subject;
+          if (slotData) {
+            const items = Array.isArray(slotData) ? slotData : [slotData];
+            const found = items.find((item: any) => item.teacherId === selectedTeacherSchedule);
+            if (found) {
+              assignedYearGroup = yg;
+              assignedSubject = found.subject;
+            }
           }
         });
 
         if (isRegistration) {
           let homeroomFor = "";
           Object.entries(staffAssignments).forEach(([key, tId]) => {
-            if (key.endsWith("-ASSEMBLY/ HOMEROOM") && tId === selectedTeacherSchedule) {
+            const ids = tId ? tId.split(',') : [];
+            if (key.endsWith("-ASSEMBLY/ HOMEROOM") && ids.includes(selectedTeacherSchedule)) {
               homeroomFor = key.replace("-ASSEMBLY/ HOMEROOM", "");
             }
           });
 
           if (homeroomFor) {
             cellContent = (
-              <div className="min-h-[90px] p-4 rounded-xl bg-[#0F766E] border-2 border-[#115E59] text-white flex flex-col justify-center items-center text-center shadow-md w-full">
-                <p className="text-[10px] font-black opacity-60 uppercase tracking-widest mb-1">Registration</p>
-                <p className="text-xs font-black leading-tight">{homeroomFor}</p>
+              <div className="min-h-[70px] p-2 rounded-xl bg-[#0F766E] border-2 border-[#115E59] text-white flex flex-col justify-center items-center text-center shadow-sm w-full">
+                <p className="text-[9px] font-black opacity-60 uppercase tracking-widest leading-none mb-0.5">Registration</p>
+                <p className="text-[11px] font-black leading-tight truncate w-full">{homeroomFor}</p>
               </div>
             );
           } else {
             cellContent = (
-              <div className="min-h-[90px] p-4 rounded-xl bg-gray-100/50 border-2 border-dashed border-gray-200 flex items-center justify-center opacity-30 w-full">
-                <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest">No Assignment</p>
+              <div className="min-h-[70px] p-2 rounded-xl bg-gray-100/50 border-2 border-dashed border-gray-200 flex items-center justify-center opacity-30 w-full">
+                <p className="text-[8px] font-black text-gray-500 uppercase tracking-widest">Free</p>
               </div>
             );
           }
         } else {
           cellContent = (
             <div className={cn(
-              "group relative min-h-[90px] p-4 rounded-xl border-2 transition-all flex flex-col justify-center w-full",
+              "group relative min-h-[70px] p-2 rounded-xl border-2 transition-all flex flex-col justify-center w-full",
               isAssembly ? "bg-indigo-50 border-indigo-100" :
               assignedYearGroup 
-                ? "bg-[#064E3B] border-[#064E3B] text-white shadow-md shadow-emerald-900/20" 
+                ? `${getSubjectColorClass(assignedSubject)} shadow-sm` 
                 : "bg-gray-50 border-gray-100 opacity-40 hover:opacity-100"
             )}>
               {isAssembly ? (
                 <div className="text-center">
-                  <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Assembly</p>
-                  <p className="text-[10px] font-bold text-indigo-900/60 font-mono tracking-tight">Mon Only</p>
+                  <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest leading-none">Assembly</p>
+                  <p className="text-[8px] font-bold text-indigo-900/60 font-mono tracking-tight mt-0.5">Mon Only</p>
                 </div>
               ) : assignedYearGroup ? (
                 <>
-                  <p className="text-[9px] font-black uppercase text-[#FACC15] mb-1">{assignedSubject}</p>
-                  <p className="text-xs font-black">{assignedYearGroup}</p>
-                  <p className="text-[9px] font-bold opacity-60 mt-1">{currentSlot.start}</p>
+                  <p className="text-[9px] font-black uppercase opacity-75 mb-0.5 truncate">{assignedSubject}</p>
+                  <p className="text-[11px] font-black opacity-100 truncate leading-tight">{assignedYearGroup}</p>
+                  <p className="text-[8px] font-bold opacity-60 mt-0.5">{currentSlot.start}</p>
                 </>
               ) : (
                 <div className="text-center">
@@ -3157,111 +4917,699 @@ export default function App() {
     };
 
     const runAutoGeneration = () => {
-      // 1. Reset the grid completely
-      const newGrid: Record<string, Record<string, (null | {teacherId: string, subject: string})[]>> = {};
+      // Find teachers with locked timetables
+      const lockedTeacherIds = new Set(
+        teachers.filter(t => t.locked).map(t => t.id)
+      );
+
+      const checkIsPE = (sub: string) => {
+        if (!sub) return false;
+        const u = sub.toUpperCase();
+        return u.includes("PHYSICAL EDUCATION") || u === "PE" || u.includes("P.E.");
+      };
+
+      // 1. Reset the grid completely, but preserve locked schedules
+      const newGrid: Record<string, Record<string, (null | {teacherId: string, subject: string} | {teacherId: string, subject: string}[])[]>> = {};
       yearGroups.forEach(yg => {
         newGrid[yg] = {};
         ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach(day => {
           newGrid[yg][day] = Array(12).fill(null);
+
+          // Copy existing locked teacher slots from current grid
+          const currentDaySlots = timetableGrid[yg]?.[day];
+          if (currentDaySlots) {
+            currentDaySlots.forEach((slot, sIdx) => {
+              if (slot) {
+                const items = Array.isArray(slot) ? slot : [slot];
+                const lockedItems = items.filter((item: any) => lockedTeacherIds.has(item.teacherId));
+                if (lockedItems.length > 0) {
+                  const assignmentVal = lockedItems.length === 1 ? lockedItems[0] : lockedItems;
+                  newGrid[yg][day][sIdx] = assignmentVal as any;
+                }
+              }
+            });
+          }
         });
 
         // FIX SILENT READING: Friday 8:30 (Index 1)
-        const srTeacher = staffAssignments[`${yg}-SILENT READING`] || 'c-1';
-        newGrid[yg]["Friday"][1] = { teacherId: srTeacher, subject: "SILENT READING" };
+        // Only place if not already occupied by a locked slot
+        if (newGrid[yg]["Friday"][1] === null) {
+          const srTeacher = staffAssignments[`${yg}-SILENT READING`] || 'c-1';
+          newGrid[yg]["Friday"][1] = { teacherId: srTeacher, subject: "SILENT READING" };
+        }
       });
 
-      // 2. Prepare assignments - filter out Silent Reading as it's already fixed
+      // 2. Prepare assignments - filter out Silent Reading and locked teachers as they are already fixed
+      // Prioritize Physical Education to be scheduled first since it is extremely constrained to only 9.10 - 10.20 a.m.
       const assignments = [...assignmentQuotas]
-        .filter(a => a.subject !== "SILENT READING")
-        .sort((a, b) => b.total - a.total);
+        .filter(a => a.subject !== "SILENT READING" && !lockedTeacherIds.has(a.teacherId))
+        .sort((a, b) => {
+          const aIsPE = checkIsPE(a.subject);
+          const bIsPE = checkIsPE(b.subject);
+          if (aIsPE && !bIsPE) return -1;
+          if (!aIsPE && bIsPE) return 1;
+          return (b.total - a.total) + (Math.random() * 0.4 - 0.2);
+        });
+
+      // Helper to check if a teacher has physical education resting constraint conflict
+      const isPEConstraintViolated = (
+        grid: any,
+        teacherId: string,
+        day: string,
+        sIdx: number,
+        subjectToPlace: string
+      ) => {
+        if (!teacherId) return false;
+
+        const isPE = checkIsPE(subjectToPlace);
+        const slots = getSlots(day, yearGroups[0]);
+
+        // Get period indices on this day
+        const periodIndices: number[] = [];
+        slots.forEach((slot, idx) => {
+          if (slot.type === 'period') {
+            periodIndices.push(idx);
+          }
+        });
+
+        const currentPos = periodIndices.indexOf(sIdx);
+        if (currentPos === -1) return false;
+
+        // 1. Check preceding period slots: under no circumstances can this teacher have a PE class
+        // in the 2 periods preceding sIdx.
+        for (let offset = 1; offset <= 2; offset++) {
+          const prevIdx = periodIndices[currentPos - offset];
+          if (prevIdx !== undefined) {
+            for (const yg of yearGroups) {
+              const slot = grid[yg]?.[day]?.[prevIdx];
+              if (slot) {
+                const items = Array.isArray(slot) ? slot : [slot];
+                if (items.some((item: any) => item.teacherId === teacherId && checkIsPE(item.subject))) {
+                  return true; // Blocked: teacher had PE class in preceding 2 periods
+                }
+              }
+            }
+          }
+        }
+
+        // 2. Check succeeding period slots (only if placing a PE class): the teacher cannot have any classes
+        // in the 2 periods following sIdx.
+        if (isPE) {
+          for (let offset = 1; offset <= 2; offset++) {
+            const nextIdx = periodIndices[currentPos + offset];
+            if (nextIdx !== undefined) {
+              for (const yg of yearGroups) {
+                const slot = grid[yg]?.[day]?.[nextIdx];
+                if (slot) {
+                  const items = Array.isArray(slot) ? slot : [slot];
+                  if (items.some((item: any) => item.teacherId === teacherId)) {
+                    return true; // Blocked: teacher is assigned to another class in succeeding 2 periods
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        return false;
+      };
+
+      // Helper to check if a teacher violates the daily period limit (max 7) or straight period limit (max 2 consecutive)
+      const checkTeacherDayValidity = (
+        grid: any,
+        teacherId: string,
+        day: string
+      ): boolean => {
+        if (!teacherId) return true;
+
+        // 1. Calculate the total period load on this day across all year groups
+        let dailyPeriodCount = 0;
+        for (let sIdx = 0; sIdx < 12; sIdx++) {
+          const isTeaching = yearGroups.some(yg => {
+            const slot = grid[yg]?.[day]?.[sIdx];
+            if (!slot) return false;
+            const items = Array.isArray(slot) ? slot : [slot];
+            return items.some((item: any) => item.teacherId === teacherId);
+          });
+          if (isTeaching) {
+            dailyPeriodCount++;
+          }
+        }
+
+        if (dailyPeriodCount > 7) {
+          return false; // Violation: more than 7 periods per day
+        }
+
+        // 2. Check for straight/consecutive periods. The length of any contiguous sequence of teaching periods must be at most 2.
+        // That means no 3 consecutive teaching periods.
+        let consecutiveCount = 0;
+        for (let sIdx = 0; sIdx < 12; sIdx++) {
+          const isTeaching = yearGroups.some(yg => {
+            const slot = grid[yg]?.[day]?.[sIdx];
+            if (!slot) return false;
+            const items = Array.isArray(slot) ? slot : [slot];
+            return items.some((item: any) => item.teacherId === teacherId);
+          });
+
+          if (isTeaching) {
+            consecutiveCount++;
+            if (consecutiveCount >= 3) {
+              return false; // Violation: teacher has 3 or more straight periods
+            }
+          } else {
+            consecutiveCount = 0;
+          }
+        }
+
+        return true;
+      };
       
-      // 3. For each assignment, try to place periods
+      // Helper to count periods already assigned in the generator run
+      const countAssignedPeriods = (yg: string, subject: string, teacherId: string) => {
+        let count = 0;
+        ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach(day => {
+          const daySlots = newGrid[yg]?.[day];
+          if (daySlots) {
+            daySlots.forEach(slot => {
+              if (slot) {
+                const items = Array.isArray(slot) ? slot : [slot];
+                items.forEach((item: any) => {
+                  if (item && item.subject === subject && item.teacherId === teacherId) {
+                    count++;
+                  }
+                });
+              }
+            });
+          }
+        });
+        return count;
+      };
+
+      // Helper to check parallel subjects for a given year group & subject
+      const getParallelGroup = (yg: string, subject: string) => {
+        const rule = parallelRules?.find(r => r.yearGroup === yg && r.subjects.includes(subject));
+        if (!rule) return null;
+        return rule.subjects;
+      };
+
+      // Helper to find all parallel assignments mapped and still active under quota
+      const getActiveSimultaneousAssignments = (mainAsg: any) => {
+        const list: { teacherId: string; subject: string; targetQuota: number }[] = [];
+        const pGroup = getParallelGroup(mainAsg.yearGroup, mainAsg.subject);
+        if (pGroup) {
+          pGroup.forEach(sub => {
+            const asmKey = `${mainAsg.yearGroup}-${sub}`;
+            const tIdStr = staffAssignments[asmKey];
+            if (tIdStr) {
+              const tIds = tIdStr.split(',').filter(Boolean).map(id => id.trim());
+              tIds.forEach(tId => {
+                const quotaObj = assignmentQuotas.find(q => q.yearGroup === mainAsg.yearGroup && q.subject === sub && q.teacherId === tId);
+                const quotaTotal = quotaObj ? quotaObj.total : 0;
+                const currentScheduled = countAssignedPeriods(mainAsg.yearGroup, sub, tId);
+                if (currentScheduled < quotaTotal) {
+                  list.push({ teacherId: tId, subject: sub, targetQuota: quotaTotal });
+                }
+              });
+            }
+          });
+        } else {
+          const asmKey = `${mainAsg.yearGroup}-${mainAsg.subject}`;
+          const tIds = staffAssignments[asmKey] ? staffAssignments[asmKey].split(',').filter(Boolean).map(id => id.trim()) : [mainAsg.teacherId];
+          tIds.forEach(tId => {
+            const quotaObj = assignmentQuotas.find(q => q.yearGroup === mainAsg.yearGroup && q.subject === mainAsg.subject && q.teacherId === tId);
+            const quotaTotal = quotaObj ? quotaObj.total : mainAsg.total;
+            list.push({ teacherId: tId, subject: mainAsg.subject, targetQuota: quotaTotal });
+          });
+        }
+        return list;
+      };
+
+      // 3. For each assignment, try to place periods in balanced blocks (e.g. 2,2,2,1 for 7 periods)
       assignments.forEach(assignment => {
-        let placed = 0;
         const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
         
-        // --- START NEW DOUBLE PERIOD LOGIC ---
-        // If a subject has exactly 2 periods, try to place them together as a double period first
-        if (assignment.total === 2) {
-          const shuffledDays = [...days].sort(() => Math.random() - 0.5);
-          for (const day of shuffledDays) {
-            const slots = getSlots(day, assignment.yearGroup);
-            for (let sIdx = 0; sIdx < slots.length - 1; sIdx++) {
-              // Check if both are 'period' type and empty
-              if (slots[sIdx].type === 'period' && slots[sIdx+1].type === 'period' &&
-                  newGrid[assignment.yearGroup][day][sIdx] === null && 
-                  newGrid[assignment.yearGroup][day][sIdx+1] === null) {
-                
-                // Check teacher availability for both slots
-                let teacherBusy = false;
-                if (assignment.teacherId) {
-                  for (const yg of yearGroups) {
-                    if (newGrid[yg][day][sIdx]?.teacherId === assignment.teacherId ||
-                        newGrid[yg][day][sIdx+1]?.teacherId === assignment.teacherId) {
+        // Skip if this assignment has already been fully scheduled through parallel rules
+        const currentCount = countAssignedPeriods(assignment.yearGroup, assignment.subject, assignment.teacherId);
+        if (currentCount >= assignment.total) {
+          return;
+        }
+
+        let blocks: number[] = [];
+        const tot = assignment.total;
+        if (tot === 7) blocks = [2, 2, 2, 1];
+        else if (tot === 6) blocks = [2, 2, 2];
+        else if (tot === 5) blocks = [2, 2, 1];
+        else if (tot === 4) blocks = [2, 2];
+        else if (tot === 3) blocks = [2, 1];
+        else if (tot === 2) blocks = [2];
+        else if (tot === 1) blocks = [1];
+        else {
+          let temp = tot;
+          while (temp > 0) {
+            if (temp >= 2) {
+              blocks.push(2);
+              temp -= 2;
+            } else {
+              blocks.push(1);
+              temp -= 1;
+            }
+          }
+        }
+
+        const scheduledDaysForThisAssignment = new Set<string>();
+
+        let blockIndex = 0;
+        while (blockIndex < blocks.length) {
+          const blockSize = blocks[blockIndex];
+          let blockPlaced = false;
+
+          const activeSimultaneous = getActiveSimultaneousAssignments(assignment);
+          if (activeSimultaneous.length === 0) {
+            blockIndex++;
+            continue;
+          }
+
+          if (blockSize === 2) {
+            // Try to place as double period on some day
+            const shuffledDays = [...days].sort(() => Math.random() - 0.5);
+            for (const day of shuffledDays) {
+              if (scheduledDaysForThisAssignment.has(day)) continue;
+
+              // Check working days constraint for all parallel teachers
+              let workingDaysValid = true;
+              for (const item of activeSimultaneous) {
+                const teacherObj = teachers.find(t => t.id === item.teacherId);
+                if (teacherObj && teacherObj.workingDays && !teacherObj.workingDays.includes(day)) {
+                  workingDaysValid = false;
+                  break;
+                }
+              }
+              if (!workingDaysValid) continue;
+
+              const slots = getSlots(day, assignment.yearGroup);
+              for (let sIdx = 0; sIdx < slots.length - 1; sIdx++) {
+                // Physical Education can only be scheduled at 9.10-10.20 a.m. (sIdx===2 and sIdx===3)
+                if (checkIsPE(assignment.subject)) {
+                  if (sIdx !== 2) continue;
+                }
+
+                if (slots[sIdx].type === 'period' && slots[sIdx+1].type === 'period' &&
+                    newGrid[assignment.yearGroup][day][sIdx] === null && 
+                    newGrid[assignment.yearGroup][day][sIdx+1] === null) {
+                  
+                  // Check teacher availability for both slots
+                  let teacherBusy = false;
+                  for (const item of activeSimultaneous) {
+                    for (const yg of yearGroups) {
+                      const slotVal2 = newGrid[yg][day][sIdx];
+                      const slotVal3 = newGrid[yg][day][sIdx+1];
+                      
+                      const teachersBusyS1 = slotVal2 ? (Array.isArray(slotVal2) ? slotVal2.map((x: any) => x.teacherId) : [slotVal2.teacherId]) : [];
+                      const teachersBusyS2 = slotVal3 ? (Array.isArray(slotVal3) ? slotVal3.map((x: any) => x.teacherId) : [slotVal3.teacherId]) : [];
+
+                      if (teachersBusyS1.includes(item.teacherId) || teachersBusyS2.includes(item.teacherId)) {
+                        teacherBusy = true;
+                        break;
+                      }
+                    }
+                    if (teacherBusy) break;
+                    
+                    // Check physical education recovery constraint
+                    if (isPEConstraintViolated(newGrid, item.teacherId, day, sIdx, item.subject) ||
+                        isPEConstraintViolated(newGrid, item.teacherId, day, sIdx + 1, item.subject)) {
                       teacherBusy = true;
                       break;
                     }
                   }
-                }
 
-                if (!teacherBusy) {
-                  newGrid[assignment.yearGroup][day][sIdx] = { teacherId: assignment.teacherId, subject: assignment.subject };
-                  newGrid[assignment.yearGroup][day][sIdx+1] = { teacherId: assignment.teacherId, subject: assignment.subject };
-                  placed = 2;
+                  if (!teacherBusy) {
+                    // Temporarily place the double period
+                    const multiS1 = activeSimultaneous.map(item => ({
+                      teacherId: item.teacherId,
+                      subject: item.subject
+                    }));
+                    const multiS2 = activeSimultaneous
+                      .filter(item => (item.targetQuota - countAssignedPeriods(assignment.yearGroup, item.subject, item.teacherId)) >= 2)
+                      .map(item => ({
+                        teacherId: item.teacherId,
+                        subject: item.subject
+                      }));
+
+                    if (multiS1.length > 1) {
+                      newGrid[assignment.yearGroup][day][sIdx] = multiS1;
+                    } else if (multiS1.length === 1) {
+                      newGrid[assignment.yearGroup][day][sIdx] = multiS1[0];
+                    } else {
+                      newGrid[assignment.yearGroup][day][sIdx] = null;
+                    }
+
+                    if (multiS2.length > 1) {
+                      newGrid[assignment.yearGroup][day][sIdx+1] = multiS2;
+                    } else if (multiS2.length === 1) {
+                      newGrid[assignment.yearGroup][day][sIdx+1] = multiS2[0];
+                    } else {
+                      newGrid[assignment.yearGroup][day][sIdx+1] = null;
+                    }
+                    
+                    // Validate day constraints (max 7 periods, split as at most 2 contiguous periods)
+                    let allTeachersValid = true;
+                    for (const item of activeSimultaneous) {
+                      if (!checkTeacherDayValidity(newGrid, item.teacherId, day)) {
+                        allTeachersValid = false;
+                        break;
+                      }
+                    }
+
+                    if (allTeachersValid) {
+                      blockPlaced = true;
+                      scheduledDaysForThisAssignment.add(day);
+                      break;
+                    } else {
+                      // Revert if invalid
+                      newGrid[assignment.yearGroup][day][sIdx] = null;
+                      newGrid[assignment.yearGroup][day][sIdx+1] = null;
+                    }
+                  }
+                }
+              }
+              if (blockPlaced) break;
+            }
+
+            if (!blockPlaced) {
+              if (assignment.total === 2) {
+                // Strictly do not split for subjects with only 2 periods total per week.
+              } else {
+                // Fallback: split failed double period into two single periods
+                blocks.push(1);
+                blocks.push(1);
+              }
+            }
+          } else {
+            // blockSize === 1
+            // Try to place on a day not scheduled yet (if possible, else any day)
+            let shuffledDays = [...days].sort(() => Math.random() - 0.5);
+            shuffledDays.sort((d1, d2) => {
+              const hasD1 = scheduledDaysForThisAssignment.has(d1) ? 1 : 0;
+              const hasD2 = scheduledDaysForThisAssignment.has(d2) ? 1 : 0;
+              return hasD1 - hasD2;
+            });
+
+            for (const day of shuffledDays) {
+              // Check working days constraint for all parallel teachers
+              let workingDaysValid = true;
+              for (const item of activeSimultaneous) {
+                const teacherObj = teachers.find(t => t.id === item.teacherId);
+                if (teacherObj && teacherObj.workingDays && !teacherObj.workingDays.includes(day)) {
+                  workingDaysValid = false;
                   break;
                 }
               }
-            }
-            if (placed === 2) break;
-          }
-        }
-        // --- END NEW DOUBLE PERIOD LOGIC ---
+              if (!workingDaysValid) continue;
 
-        // Attempt to distribute periods across days (standard logic for others or if double failed)
-        for (let pass = 0; pass < 12 && placed < assignment.total; pass++) {
-          const shuffledDays = [...days].sort(() => Math.random() - 0.5);
-          
-          for (const day of shuffledDays) {
-            if (placed >= assignment.total) break;
-            
-            const slots = getSlots(day, assignment.yearGroup);
-            for (let sIdx = 0; sIdx < slots.length; sIdx++) {
-              if (placed >= assignment.total) break;
+              const slots = getSlots(day, assignment.yearGroup);
+              for (let sIdx = 0; sIdx < slots.length; sIdx++) {
+                if (slots[sIdx].type !== 'period') continue;
+                if (newGrid[assignment.yearGroup][day][sIdx] !== null) continue;
+
+                // Physical Education can only be scheduled at 9.10-10.20 a.m. (Slot index 2 or 3)
+                if (checkIsPE(assignment.subject)) {
+                  if (sIdx !== 2 && sIdx !== 3) continue;
+                }
+
+                let teacherBusy = false;
+                for (const item of activeSimultaneous) {
+                  for (const yg of yearGroups) {
+                    const slotVal = newGrid[yg][day][sIdx];
+                    const teachersBusyInSlot = slotVal ? (Array.isArray(slotVal) ? slotVal.map((x: any) => x.teacherId) : [slotVal.teacherId]) : [];
+                    if (teachersBusyInSlot.includes(item.teacherId)) {
+                      teacherBusy = true;
+                      break;
+                    }
+                  }
+                  if (teacherBusy) break;
+
+                  if (isPEConstraintViolated(newGrid, item.teacherId, day, sIdx, item.subject)) {
+                    teacherBusy = true;
+                    break;
+                  }
+                }
+
+                if (teacherBusy) continue;
+
+                let subjectToday = 0;
+                newGrid[assignment.yearGroup][day].forEach(slot => {
+                  const arr = slot ? (Array.isArray(slot) ? slot : [slot]) : [];
+                  if (arr.some((item: any) => item.subject === assignment.subject)) {
+                    subjectToday++;
+                  }
+                });
+                if (subjectToday >= 2 && assignment.total < 10) continue;
+
+                // Temporarily place the period
+                const multiAssignments = activeSimultaneous.map(item => ({
+                  teacherId: item.teacherId,
+                  subject: item.subject
+                }));
+
+                if (multiAssignments.length > 1) {
+                  newGrid[assignment.yearGroup][day][sIdx] = multiAssignments;
+                } else if (multiAssignments.length === 1) {
+                  newGrid[assignment.yearGroup][day][sIdx] = multiAssignments[0];
+                } else {
+                  newGrid[assignment.yearGroup][day][sIdx] = null;
+                }
+
+                let allTeachersValid = true;
+                for (const item of activeSimultaneous) {
+                  if (!checkTeacherDayValidity(newGrid, item.teacherId, day)) {
+                    allTeachersValid = false;
+                    break;
+                  }
+                }
+
+                if (allTeachersValid) {
+                  blockPlaced = true;
+                  scheduledDaysForThisAssignment.add(day);
+                  break;
+                } else {
+                  newGrid[assignment.yearGroup][day][sIdx] = null;
+                }
+              }
+              if (blockPlaced) break;
+            }
+          }
+
+          blockIndex++;
+        }
+      });
+
+      // --- PASS 4a: Fill remaining gaps with regular assigned teachers for this year group's subjects ---
+      const shuffledYgs4a = [...yearGroups].sort(() => Math.random() - 0.5);
+      shuffledYgs4a.forEach(yg => {
+        const shuffledDays4a = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].sort(() => Math.random() - 0.5);
+        shuffledDays4a.forEach(day => {
+          const slots = getSlots(day, yg);
+          for (let sIdx = 0; sIdx < slots.length; sIdx++) {
+            if (slots[sIdx].type !== 'period') continue;
+            if (newGrid[yg][day][sIdx] !== null) continue; // Already filled
+
+            // Collect all subject-teacher options mapped to this year group
+            const availableOptions: { subject: string; teacherId: string }[] = [];
+            subjects.forEach(sub => {
+              if (sub === "ASSEMBLY/ HOMEROOM" || sub === "SILENT READING" || checkIsPE(sub)) return;
+              const tId = staffAssignments[`${yg}-${sub}`];
+              if (tId) {
+                availableOptions.push({ subject: sub, teacherId: tId });
+              }
+            });
+
+            // Prioritize subjects with fewer total occurrences inside this year group so far to balance the academic load
+            const subjectCounts: Record<string, number> = {};
+            subjects.forEach(sub => { subjectCounts[sub] = 0; });
+            ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach(d => {
+              newGrid[yg][d].forEach(slot => {
+                if (slot) {
+                  const items = Array.isArray(slot) ? slot : [slot];
+                  items.forEach((item: any) => {
+                    subjectCounts[item.subject] = (subjectCounts[item.subject] || 0) + 1;
+                  });
+                }
+              });
+            });
+
+            // Shuffle first to prevent identical choices, then sort with subtle random jitter
+            const shuffledOptions = [...availableOptions].sort(() => Math.random() - 0.5);
+            shuffledOptions.sort((a, b) => ((subjectCounts[a.subject] || 0) - (subjectCounts[b.subject] || 0)) + (Math.random() * 0.4 - 0.2));
+
+            // Try to assign a valid subject-teacher option
+            for (const option of shuffledOptions) {
+              const assignedTeacherObj = teachers.find(t => t.id === option.teacherId);
               
-              if (slots[sIdx].type !== 'period') continue;
-              if (newGrid[assignment.yearGroup][day][sIdx] !== null) continue;
-              
+              if (assignedTeacherObj && assignedTeacherObj.workingDays && !assignedTeacherObj.workingDays.includes(day)) {
+                continue;
+              }
+
               let teacherIsBusy = false;
-              if (assignment.teacherId) {
-                for (const yg of yearGroups) {
-                  if (newGrid[yg][day][sIdx]?.teacherId === assignment.teacherId) {
+              for (const otherYg of yearGroups) {
+                const otherSlot = newGrid[otherYg]?.[day]?.[sIdx];
+                if (otherSlot) {
+                  const items = Array.isArray(otherSlot) ? otherSlot : [otherSlot];
+                  if (items.some((item: any) => item.teacherId === option.teacherId)) {
                     teacherIsBusy = true;
                     break;
                   }
                 }
               }
-              
               if (teacherIsBusy) continue;
 
-              let subjectToday = 0;
-              newGrid[assignment.yearGroup][day].forEach(slot => {
-                if (slot?.subject === assignment.subject) subjectToday++;
-              });
-              if (pass < 2 && subjectToday >= 2 && assignment.total < 10) continue;
+              if (isPEConstraintViolated(newGrid, option.teacherId, day, sIdx, option.subject)) {
+                continue;
+              }
 
-              newGrid[assignment.yearGroup][day][sIdx] = {
-                teacherId: assignment.teacherId,
-                subject: assignment.subject
+              // Temporarily place the period
+              newGrid[yg][day][sIdx] = {
+                teacherId: option.teacherId,
+                subject: option.subject
               };
-              placed++;
+
+              // Validate maximum daily load and consecutive period rules
+              if (checkTeacherDayValidity(newGrid, option.teacherId, day)) {
+                break; // Assignment successful, move to next gap
+              } else {
+                newGrid[yg][day][sIdx] = null; // Revert
+              }
             }
           }
-        }
+        });
       });
+
+      // --- PASS 4b: Hard Gaps Fallback (assign ANY free teacher to a subject if regular teachers are busy) ---
+      const shuffledYgs4b = [...yearGroups].sort(() => Math.random() - 0.5);
+      shuffledYgs4b.forEach(yg => {
+        const shuffledDays4b = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].sort(() => Math.random() - 0.5);
+        shuffledDays4b.forEach(day => {
+          const slots = getSlots(day, yg);
+          for (let sIdx = 0; sIdx < slots.length; sIdx++) {
+            if (slots[sIdx].type !== 'period') continue;
+            if (newGrid[yg][day][sIdx] !== null) continue; // Already filled
+
+            // Search for any qualified teacher who is free right now
+            const shuffledTeachersList = [...teachers].sort(() => Math.random() - 0.5);
+            for (const t of shuffledTeachersList) {
+              if (t.locked) continue;
+
+              if (t.workingDays && !t.workingDays.includes(day)) {
+                continue;
+              }
+
+              let teacherIsBusy = false;
+              for (const otherYg of yearGroups) {
+                const otherSlot = newGrid[otherYg]?.[day]?.[sIdx];
+                if (otherSlot) {
+                  const items = Array.isArray(otherSlot) ? otherSlot : [otherSlot];
+                  if (items.some((item: any) => item.teacherId === t.id)) {
+                    teacherIsBusy = true;
+                    break;
+                  }
+                }
+              }
+              if (teacherIsBusy) continue;
+
+              // Pick the year group's subjects, defaulting to REVISION (excluding PE)
+              let chosenSubject = "REVISION";
+              const ygSubjects = subjects.filter(s => s !== "ASSEMBLY/ HOMEROOM" && s !== "SILENT READING" && !checkIsPE(s)).sort(() => Math.random() - 0.5);
+              if (ygSubjects.length > 0) {
+                chosenSubject = ygSubjects[sIdx % ygSubjects.length];
+              }
+
+              if (isPEConstraintViolated(newGrid, t.id, day, sIdx, chosenSubject)) {
+                continue;
+              }
+
+              newGrid[yg][day][sIdx] = {
+                teacherId: t.id,
+                subject: chosenSubject
+              };
+
+              if (checkTeacherDayValidity(newGrid, t.id, day)) {
+                break; // Succeeded
+              } else {
+                newGrid[yg][day][sIdx] = null; // Revert
+              }
+            }
+          }
+        });
+      });
+
+      // --- PASS 4c: Absolute No-Gap Safeguard (if any period remains unassigned, assign ANY teacher who is not busy in another year group) ---
+      const shuffledYgs4c = [...yearGroups].sort(() => Math.random() - 0.5);
+      shuffledYgs4c.forEach(yg => {
+        const shuffledDays4c = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].sort(() => Math.random() - 0.5);
+        shuffledDays4c.forEach(day => {
+          const slots = getSlots(day, yg);
+          for (let sIdx = 0; sIdx < slots.length; sIdx++) {
+            if (slots[sIdx].type !== 'period') continue;
+            if (newGrid[yg][day][sIdx] !== null) continue; // Already filled
+
+            let assigned = false;
+            // First try to find any teacher who isn't teaching in another year group right now and satisfies basic day presence
+            const shuffledTeachersList = [...teachers].sort(() => Math.random() - 0.5);
+            for (const t of shuffledTeachersList) {
+              if (t.locked) continue;
+              if (t.workingDays && !t.workingDays.includes(day)) {
+                continue;
+              }
+
+              let teacherIsBusy = false;
+              for (const otherYg of yearGroups) {
+                const otherSlot = newGrid[otherYg]?.[day]?.[sIdx];
+                if (otherSlot) {
+                  const items = Array.isArray(otherSlot) ? otherSlot : [otherSlot];
+                  if (items.some((item: any) => item.teacherId === t.id)) {
+                    teacherIsBusy = true;
+                    break;
+                  }
+                }
+              }
+              if (teacherIsBusy) continue;
+
+              let chosenSubject = "REVISION";
+              const ygSubjects = subjects.filter(s => s !== "ASSEMBLY/ HOMEROOM" && s !== "SILENT READING" && !checkIsPE(s)).sort(() => Math.random() - 0.5);
+              if (ygSubjects.length > 0) {
+                chosenSubject = ygSubjects[sIdx % ygSubjects.length];
+              }
+
+              newGrid[yg][day][sIdx] = {
+                teacherId: t.id,
+                subject: chosenSubject
+              };
+              assigned = true;
+              break;
+            }
+
+            // Desperate fallback if all other teachers are busy (excluding PE)
+            if (!assigned) {
+              const fallbackTeacherObj = [...teachers].filter(t => !t.locked).sort(() => Math.random() - 0.5)[0] || teachers[0];
+              if (fallbackTeacherObj) {
+                let chosenSubject = "REVISION";
+                const ygSubjects = subjects.filter(s => s !== "ASSEMBLY/ HOMEROOM" && s !== "SILENT READING" && !checkIsPE(s)).sort(() => Math.random() - 0.5);
+                if (ygSubjects.length > 0) {
+                  chosenSubject = ygSubjects[0];
+                }
+                newGrid[yg][day][sIdx] = {
+                  teacherId: fallbackTeacherObj.id,
+                  subject: chosenSubject
+                };
+              }
+            }
+          }
+        });
+      });
+
       return newGrid;
     };
 
-    const calculateOptionQuality = (grid: Record<string, Record<string, (null | {teacherId: string, subject: string})[]>>) => {
+    const calculateOptionQuality = (grid: any) => {
       let filled = 0;
       let totalSlots = 0;
       
@@ -3283,9 +5631,172 @@ export default function App() {
       };
     };
 
+    // --- Teacher Cover Substitution System ---
+    const isTeacherBusyAtPeriod = (teacherId: string, day: string, sIdx: number) => {
+      let isBusy = false;
+      Object.entries(timetableGrid).forEach(([yg, days]) => {
+        const slotData = days[day]?.[sIdx];
+        if (slotData) {
+          const items = Array.isArray(slotData) ? slotData : [slotData];
+          if (items.some((item: any) => item?.teacherId === teacherId)) {
+            isBusy = true;
+          }
+        }
+      });
+      return isBusy;
+    };
+
+    const getDailyLoad = (teacherId: string, day: string) => {
+      let load = 0;
+      Object.values(timetableGrid).forEach((days) => {
+        const dayData = days[day] || [];
+        dayData.forEach((slot) => {
+          if (slot) {
+            const items = Array.isArray(slot) ? slot : [slot];
+            if (items.some((item: any) => item?.teacherId === teacherId)) {
+              load++;
+            }
+          }
+        });
+      });
+      const hasHomeroom = Object.entries(staffAssignments).some(([key, tId]) => {
+        const ids = tId ? tId.split(',') : [];
+        return key.endsWith("-ASSEMBLY/ HOMEROOM") && ids.includes(teacherId);
+      });
+      if (hasHomeroom) {
+        load += 0.5;
+      }
+      return load;
+    };
+
+    const getWeeklyCoverCount = (teacherId: string, weekId: number, currentRecords: any[]) => {
+      return currentRecords.filter(r => r.coverTeacherId === teacherId && r.weekId === weekId).length;
+    };
+
+    const getAbsentTeacherDuties = (teacherId: string, day: string) => {
+      const duties: { yg: string; subject: string; sIdx: number; label: string; start: string; end: string }[] = [];
+      const daySlots = getSlots(day, "Year 1");
+
+      Object.entries(timetableGrid).forEach(([yg, days]) => {
+        const dayData = days[day] || [];
+        dayData.forEach((slot, sIdx) => {
+          if (slot) {
+            const items = Array.isArray(slot) ? slot : [slot];
+            const found = items.find((item: any) => item?.teacherId === teacherId);
+            if (found) {
+              const tSlot = daySlots[sIdx];
+              duties.push({
+                yg,
+                subject: found.subject,
+                sIdx,
+                label: tSlot?.type === 'period' ? `P${sIdx}` : tSlot?.type || `P${sIdx + 1}`,
+                start: tSlot?.start || "00:00",
+                end: tSlot?.end || "00:00"
+              });
+            }
+          }
+        });
+      });
+
+      const homeroomYg = Object.entries(staffAssignments).find(([key, tId]) => {
+        const ids = tId ? tId.split(',') : [];
+        return key.endsWith("-ASSEMBLY/ HOMEROOM") && ids.includes(teacherId);
+      });
+      if (homeroomYg) {
+        const yg = homeroomYg[0].replace("-ASSEMBLY/ HOMEROOM", "");
+        const regSlot = daySlots[0];
+        duties.push({
+          yg,
+          subject: "Registration & Homeroom",
+          sIdx: 0,
+          label: "Registration",
+          start: regSlot?.start || "08:00",
+          end: regSlot?.end || "08:30"
+        });
+      }
+
+      return duties;
+    };
+
+    const generateCoversForDays = (absentTeacherId: string, daysArray: string[], weekId: number) => {
+      const absentTeacher = teachers.find(t => t.id === absentTeacherId);
+      if (!absentTeacher) return false;
+
+      let updatedRecords = [...coverRecords];
+
+      updatedRecords = updatedRecords.filter(r => !(r.absentTeacherId === absentTeacherId && r.weekId === weekId && daysArray.includes(r.day)));
+
+      let anyGenerated = false;
+
+      daysArray.forEach(day => {
+        const duties = getAbsentTeacherDuties(absentTeacherId, day);
+
+        duties.forEach(duty => {
+          const candidates = teachers.filter(t => {
+            const worksThisDay = !t.workingDays || t.workingDays.includes(day);
+            return t.id !== absentTeacherId && t.role !== 'Coordinator' && worksThisDay;
+          });
+
+          const eligibleCandidates = candidates.map(candidate => {
+            const isBusy = isTeacherBusyAtPeriod(candidate.id, day, duty.sIdx);
+            const hasExistingCoverDuty = updatedRecords.some(r => r.weekId === weekId && r.day === day && r.periodIdx === duty.sIdx && r.coverTeacherId === candidate.id);
+            const dailyLoad = getDailyLoad(candidate.id, day);
+            const weeklyCoverCount = getWeeklyCoverCount(candidate.id, weekId, updatedRecords);
+            const isEligible = !isBusy && !hasExistingCoverDuty;
+
+            return {
+              teacher: candidate,
+              isEligible,
+              dailyLoad,
+              weeklyCoverCount
+            };
+          }).filter(c => c.isEligible);
+
+          let bestCandidate = null;
+          if (eligibleCandidates.length > 0) {
+            eligibleCandidates.sort((a, b) => {
+              if (a.weeklyCoverCount !== b.weeklyCoverCount) {
+                return a.weeklyCoverCount - b.weeklyCoverCount;
+              }
+              return a.dailyLoad - b.dailyLoad;
+            });
+
+            const nonLoadedCandidates = eligibleCandidates.filter(c => c.dailyLoad < 4);
+            const resolvedList = nonLoadedCandidates.length > 0 ? nonLoadedCandidates : eligibleCandidates;
+            bestCandidate = resolvedList[0];
+          }
+
+          if (bestCandidate) {
+            const coverRecord = {
+              id: `cover-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+              weekId,
+              day,
+              absentTeacherId,
+              absentTeacherName: absentTeacher.name,
+              periodIdx: duty.sIdx,
+              periodLabel: duty.label,
+              start: duty.start,
+              end: duty.end,
+              yearGroup: duty.yg,
+              subject: duty.subject,
+              coverTeacherId: bestCandidate.teacher.id,
+              coverTeacherName: bestCandidate.teacher.name,
+              timestamp: Date.now()
+            };
+            updatedRecords.push(coverRecord);
+            anyGenerated = true;
+          }
+        });
+      });
+
+      setCoverRecords(updatedRecords);
+      saveCoversToFirestore(updatedRecords);
+      return anyGenerated;
+    };
+
     const autoGenerateTimetable = () => {
       const options = [];
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 12; i++) {
         const grid = runAutoGeneration();
         const { percentage, filled } = calculateOptionQuality(grid);
         options.push({
@@ -3307,17 +5818,78 @@ export default function App() {
       Object.values(timetableGrid).forEach(yearData => {
         Object.values(yearData).forEach(daySlots => {
           daySlots.forEach(slot => {
-            if (slot && slot.teacherId) {
-              loads[slot.teacherId] = (loads[slot.teacherId] || 0) + 1;
+            if (slot) {
+              const items = Array.isArray(slot) ? slot : [slot];
+              items.forEach((item: any) => {
+                if (item && item.teacherId) {
+                  const isAssemblyHomeroom = typeof item.subject === 'string' && (item.subject.toUpperCase().includes("ASSEMBLY") || item.subject.toUpperCase().includes("HOMEROOM") || item.subject.toUpperCase().includes("HOMERROM"));
+                  if (!isAssemblyHomeroom) {
+                    loads[item.teacherId] = (loads[item.teacherId] || 0) + 1;
+                  }
+                }
+              });
             }
           });
         });
       });
 
+      // Add exactly 1 period for each year group where mapped to ASSEMBLY/ HOMEROOM in staffAssignments
+      Object.entries(staffAssignments || {}).forEach(([key, val]) => {
+        if (key.toUpperCase().includes("ASSEMBLY") || key.toUpperCase().includes("HOMEROOM") || key.toUpperCase().includes("HOMERROM")) {
+          if (val) {
+            const ids = val.split(',').filter(Boolean).map(id => id.trim());
+            ids.forEach(tId => {
+              loads[tId] = (loads[tId] || 0) + 1;
+            });
+          }
+        }
+      });
+
       return loads;
+    };
+
+    const calculateAllPlannedLoads = () => {
+      const planned: Record<string, number> = {};
+      
+      teachers.forEach(t => {
+        planned[t.id] = 0;
+      });
+
+      // Sum of quotas
+      assignmentQuotas.forEach(q => {
+        if (q.teacherId) {
+          const ids = q.teacherId.split(',').filter(Boolean).map(id => id.trim());
+          ids.forEach(tId => {
+            const isAssemblyHomeroom = typeof q.subject === 'string' && (q.subject.toUpperCase().includes("ASSEMBLY") || q.subject.toUpperCase().includes("HOMEROOM") || q.subject.toUpperCase().includes("HOMERROM"));
+            planned[tId] = (planned[tId] || 0) + (isAssemblyHomeroom ? 1 : q.total);
+          });
+        }
+      });
+
+      // Also ensure that if a teacher is assigned Assembly/Homeroom in staffAssignments, it counts as exactly 1
+      Object.entries(staffAssignments || {}).forEach(([key, val]) => {
+        if (key.toUpperCase().includes("ASSEMBLY") || key.toUpperCase().includes("HOMEROOM") || key.toUpperCase().includes("HOMERROM")) {
+          if (val) {
+            const ids = val.split(',').filter(Boolean).map(id => id.trim());
+            ids.forEach(tId => {
+              const hasQuota = assignmentQuotas.some(q => 
+                q.teacherId && 
+                q.teacherId.split(',').filter(Boolean).map(id => id.trim()).includes(tId) && 
+                (q.subject.toUpperCase().includes("ASSEMBLY") || q.subject.toUpperCase().includes("HOMEROOM") || q.subject.toUpperCase().includes("HOMERROM"))
+              );
+              if (!hasQuota) {
+                planned[tId] = (planned[tId] || 0) + 1;
+              }
+            });
+          }
+        }
+      });
+
+      return planned;
     };
     
     const teacherLoads = calculateAllLoads();
+    const teacherPlannedLoads = calculateAllPlannedLoads();
 
     return (
       <div className="flex-1 flex flex-col h-screen bg-[#F0FDF4] overflow-hidden">
@@ -3326,7 +5898,7 @@ export default function App() {
           <div className="flex items-center gap-8">
             <h2 className="text-2xl font-black text-[#064E3B]">Admin Dashboard</h2>
             <nav className="flex gap-4">
-              {['overview', 'timetable', 'teachers', 'assignments', 'plans', 'members'].map((tab) => (
+              {['overview', 'timetable', 'teachers', 'assignments', 'plans', 'cover', 'members'].map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setAdminTab(tab as any)}
@@ -3335,7 +5907,7 @@ export default function App() {
                     adminTab === tab ? "bg-[#064E3B] text-white" : "text-[#064E3B]/60 hover:bg-[#D1FAE5]"
                   )}
                 >
-                  {tab === 'plans' ? 'Lesson Plans' : tab}
+                  {tab === 'plans' ? 'Lesson Plans' : tab === 'cover' ? 'Cover Planner' : tab}
                 </button>
               ))}
             </nav>
@@ -3450,107 +6022,269 @@ export default function App() {
 
               {/* Subject Mapping Table */}
               <div className="bg-white rounded-3xl p-10 shadow-2xl space-y-6">
-                <div className="flex justify-between items-center mb-4">
-                   <div className="flex items-center gap-6">
-                     <h4 className="text-xl font-black text-[#064E3B] uppercase tracking-widest">Yearly Subject Mapping</h4>
-                     <button 
-                       onClick={() => {
-                         setStaffAssignments({});
-                         setAssignmentQuotas([]);
-                         // Reset the grid completely
-                         const newGrid: Record<string, Record<string, (null | {teacherId: string, subject: string})[]>> = {};
-                         yearGroups.forEach(yg => {
-                           newGrid[yg] = {};
-                           ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach(day => {
-                             newGrid[yg][day] = Array(12).fill(null);
+                <div className="flex justify-between items-center mb-4 border-b border-emerald-50 pb-4">
+                   <div className="flex flex-wrap items-center gap-6 justify-between w-full">
+                     <div className="flex flex-wrap items-center gap-6">
+                       <h4 className="text-xl font-black text-[#064E3B] uppercase tracking-widest">Yearly Subject Mapping</h4>
+                       
+                       <div className="flex bg-emerald-50/50 p-1.5 rounded-2xl border border-emerald-100 shadow-inner">
+                         <button
+                           onClick={() => setActiveMappingSegment('primary')}
+                           className={cn(
+                             "px-5 py-2.5 rounded-xl text-[10.5px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5",
+                             activeMappingSegment === 'primary'
+                               ? "bg-[#064E3B] text-white shadow-lg scale-105"
+                               : "text-[#064E3B]/60 hover:text-[#064E3B] hover:bg-emerald-100/50"
+                           )}
+                         >
+                           🏃‍♂️ Primary (Y1 - Y6)
+                         </button>
+                         <button
+                           onClick={() => setActiveMappingSegment('secondary')}
+                           className={cn(
+                             "px-5 py-2.5 rounded-xl text-[10.5px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5",
+                             activeMappingSegment === 'secondary'
+                               ? "bg-[#064E3B] text-white shadow-lg scale-105"
+                               : "text-[#064E3B]/60 hover:text-[#064E3B] hover:bg-emerald-100/50"
+                           )}
+                         >
+                           🎓 Secondary (Y7 - Y11)
+                         </button>
+                       </div>
+
+                       <button 
+                         onClick={() => {
+                           if (!confirm("Are you sure you want to reset all staff assignments and empty the entire master timetable? This action is irreversible.")) return;
+                           setStaffAssignments({});
+                           setAssignmentQuotas([]);
+                           // Reset the grid completely
+                           const newGrid: Record<string, Record<string, (null | {teacherId: string, subject: string})[]>> = {};
+                           yearGroups.forEach(yg => {
+                             newGrid[yg] = {};
+                             ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach(day => {
+                               newGrid[yg][day] = Array(12).fill(null);
+                             });
                            });
-                         });
-                         setTimetableGrid(newGrid);
-                       }}
-                       className="px-4 py-2 border-2 border-red-100 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-50 transition-colors flex items-center gap-2"
-                     >
-                       <RotateCcw size={12} /> Reset Mapping
-                     </button>
+                           setTimetableGrid(newGrid);
+                         }}
+                         className="px-4 py-2 border-2 border-red-100 text-red-500 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-50 transition-colors flex items-center gap-2 cursor-pointer"
+                       >
+                         <RotateCcw size={12} /> Reset Mapping
+                       </button>
+                     </div>
+                     <p className="text-[10px] font-black text-[#064E3B]/45 uppercase hidden lg:block tracking-wide">Assign teachers to specific subjects per year group</p>
                    </div>
-                   <p className="text-[10px] font-black text-[#064E3B]/40 uppercase">Assign teachers to specific subjects per year group</p>
                 </div>
-                
-                <div className="overflow-x-auto min-h-[400px]">
-                  <table className="w-full border-separate border-spacing-y-2">
-                    <thead>
-                      <tr className="text-[#064E3B]/40 text-[10px] uppercase font-black tracking-widest text-left">
-                        <th className="px-4 py-2 sticky left-0 bg-white z-10">Year Group</th>
-                        {subjects.map(s => <th key={s} className="px-4 py-2 min-w-[140px]">{s}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {yearGroups.map(yg => (
-                        <tr key={yg} className="group">
-                          <td className="px-4 py-3 bg-[#FDFBF7] rounded-l-2xl font-black text-[#064E3B] text-sm whitespace-nowrap sticky left-0 z-10 border-r border-[#FACC15]/20">{yg}</td>
-                          {subjects.map(s => {
-                            const assignmentKey = `${yg}-${s}`;
-                            const assignedId = staffAssignments[assignmentKey];
-                            const currentQuota = assignmentQuotas.find(q => q.yearGroup === yg && q.subject === s);
+                              {(() => {
+                  const filteredYearGroups = activeMappingSegment === 'primary' ? primaryYearGroups : secondaryYearGroups;
+                  const filteredSubjects = subjects.filter(sub => {
+                    const s = sub.toUpperCase().trim();
+                    const primaryAllowed = [
+                      "ASSEMBLY/ HOMEROOM", "SILENT READING", "ENGLISH", "MATHEMATICS", 
+                      "SCIENCE", "MANDARIN", "MALAY", "GLOBAL PERSPECTIVES", 
+                      "PHYSICAL EDUCATION", "DIGITAL LITERACY", "MUSIC", 
+                      "ART & DESIGN", "WELLBEING", "LIBRARY", "CCA"
+                    ].map(x => x.toUpperCase().trim());
+                    
+                    const secondaryAllowed = [
+                      "ASSEMBLY/ HOMEROOM", "ASSEMBLY/ HOMERROM", "SILENT READING", "ENGLISH", "MATHEMATICS", 
+                      "SCIENCE", "CHINESE (SECOND/FOREIGN)", "CHINESE (SECOND & FOREIGN)", "MALAY (FOREIGN)", "GLOBAL PERSPECTIVES", 
+                      "PHYSICAL EDUCATION", "ICT", "MUSIC", "ART & DESIGN", "WELLBEING", 
+                      "HISTORY", "SEJARAH / ENRICHMENT", "AGAMA", "CCA", 
+                      "Silent Reading", "Mathematics", "Physical Education", "Biology", 
+                      "First Language English", "English as a Second Language", "Chinese (First)", 
+                      "Chinese (Second & Foreign)", "Malay (Foreign)", "English Enrichment", 
+                      "Chemistry", "Business Studies", "Physics", "Additional Mathematics", "Accounting"
+                    ].map(x => x.toUpperCase().trim());
 
-                            return (
-                              <td key={s} className="px-1 py-1">
-                                <div className="space-y-1.5 p-1 bg-white border border-gray-50 rounded-xl transition-all hover:border-[#FACC15]/30">
-                                  <select 
-                                    value={assignedId || ""}
-                                    onChange={(e) => {
-                                      const tId = e.target.value;
-                                      setStaffAssignments(prev => ({ ...prev, [assignmentKey]: tId }));
-                                      
-                                      setAssignmentQuotas(prev => {
-                                        const filtered = prev.filter(q => !(q.yearGroup === yg && q.subject === s));
-                                        if (tId) {
-                                          return [...filtered, {
-                                            id: `q-${yg}-${s}-${Math.random().toString(36).substr(2, 5)}`,
-                                            teacherId: tId,
-                                            subject: s,
-                                            yearGroup: yg,
-                                            total: currentQuota?.total || 2
-                                          }];
-                                        }
-                                        return filtered;
-                                      });
-                                    }}
-                                    className={cn(
-                                      "w-full px-2 py-1.5 text-[9px] font-black rounded-lg border-2 transition-all outline-none",
-                                      assignedId ? "bg-[#064E3B] text-white border-[#064E3B]" : "bg-gray-50 border-gray-100 text-[#064E3B]/30 opacity-40 hover:opacity-100 focus:opacity-100"
-                                    )}
-                                  >
-                                    <option value="">No Teacher</option>
-                                    {teachers.map(t => (
-                                      <option key={t.id} value={t.id}>{t.name}</option>
-                                    ))}
-                                  </select>
+                    const isPrimaryRef = primaryAllowed.includes(s);
+                    const isSecondaryRef = secondaryAllowed.includes(s);
 
-                                  {assignedId && (
-                                    <div className="flex items-center justify-between gap-1 px-2 py-1 bg-[#FEFCE8]/50 rounded-lg border border-[#FACC15]/20">
-                                      <span className="text-[8px] font-black text-[#064E3B]/40 uppercase tracking-tighter">Pds:</span>
-                                      <input 
-                                        type="number"
-                                        value={currentQuota?.total || 2}
-                                        onChange={(e) => {
-                                          const val = parseInt(e.target.value) || 0;
-                                          setAssignmentQuotas(prev => prev.map(q => 
-                                            (q.yearGroup === yg && q.subject === s) ? { ...q, total: val } : q
-                                          ));
-                                        }}
-                                        className="w-full bg-transparent text-[10px] font-black text-[#064E3B] outline-none text-right"
-                                      />
+                    // If it is a completely custom subject not in our reference templates, show in both
+                    if (!isPrimaryRef && !isSecondaryRef) {
+                      return true;
+                    }
+
+                    if (activeMappingSegment === 'primary') {
+                      return isPrimaryRef;
+                    } else {
+                      return isSecondaryRef;
+                    }
+                  });
+
+                  // Ensure assembly/homeroom or assembly/homerrom is sorted to the front if present
+                  filteredSubjects.sort((a, b) => {
+                    const cleanA = a.toUpperCase().trim();
+                    const cleanB = b.toUpperCase().trim();
+                    const isA_HR = cleanA.includes("HOMEROOM") || cleanA.includes("HOMERROM") || cleanA.includes("ASSEMBLY");
+                    const isB_HR = cleanB.includes("HOMEROOM") || cleanB.includes("HOMERROM") || cleanB.includes("ASSEMBLY");
+                    if (isA_HR && !isB_HR) return -1;
+                    if (!isA_HR && isB_HR) return 1;
+                    return 0;
+                  });
+
+                  return (
+                    <div className="overflow-auto max-h-[650px] border border-emerald-50 rounded-2xl relative custom-scrollbar">
+                      <table className="w-full border-separate border-spacing-y-2">
+                        <thead>
+                          <tr className="text-[#064E3B]/60 text-[10px] uppercase font-black tracking-widest text-left">
+                            <th className="px-4 py-3 sticky top-0 left-0 bg-white z-30 border-r border-b-2 border-emerald-100 shadow-[2px_2px_4px_rgba(0,0,0,0.02)]">Year Group</th>
+                            {filteredSubjects.map(s => (
+                              <th key={s} className="px-4 py-3 min-w-[140px] sticky top-0 bg-white z-20 border-b-2 border-emerald-100 shadow-[0_2px_4px_rgba(0,0,0,0.02)]">
+                                {s}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredYearGroups.map(yg => (
+                            <tr key={yg} className="group">
+                              <td className="px-4 py-3 bg-[#FDFBF7] rounded-l-2xl font-black text-[#064E3B] text-sm whitespace-nowrap sticky left-0 z-10 border-r border-[#FACC15]/20">{yg}</td>
+                              {filteredSubjects.map(s => {
+                                const assignmentKey = `${yg}-${s}`;
+                                const assignedId = staffAssignments[assignmentKey];
+                                const currentQuota = assignmentQuotas.find(q => q.yearGroup === yg && q.subject === s);
+
+                                const isPE = s.toUpperCase().includes("PHYSICAL EDUCATION") || s === "PE" || s.includes("P.E.");
+
+                                return (
+                                  <td key={s} className="px-1 py-1">
+                                    <div className={cn(
+                                      "space-y-1.5 p-1 rounded-xl transition-all hover:border-[#FACC15]/30 min-w-[140px]",
+                                      isPE 
+                                        ? "bg-[#ECFDF5] border border-emerald-200" 
+                                        : "bg-white border border-gray-50"
+                                    )}>
+                                      {isPE && (
+                                        <div className="text-[7.5px] font-black uppercase text-[#064E3B] tracking-wider mb-1 flex items-center gap-1 px-1">
+                                          🏃‍♂️ PE Cohort
+                                        </div>
+                                      )}
+                                      {(() => {
+                                        const assignedIds = assignedId ? assignedId.split(',') : [];
+                                        const displayIds = assignedIds.length > 0 ? assignedIds : [""];
+                                        return (
+                                          <>
+                                            {displayIds.map((tId, idx) => (
+                                              <div key={idx} className="flex items-center gap-1">
+                                                <div className="flex-1 min-w-0">
+                                                  <SearchableSelect 
+                                                    value={tId || ""}
+                                                    onChange={(newId) => {
+                                                      const nextIds = [...assignedIds];
+                                                      if (idx < assignedIds.length) {
+                                                        if (newId === '') {
+                                                          nextIds.splice(idx, 1);
+                                                        } else {
+                                                          nextIds[idx] = newId;
+                                                        }
+                                                      } else if (newId !== '') {
+                                                        nextIds.push(newId);
+                                                      }
+                                                      const combinedVal = nextIds.map(id => id.trim()).filter(Boolean).join(",");
+                                                      const nextAssignments = { ...staffAssignments, [assignmentKey]: combinedVal };
+                                                      setStaffAssignments(nextAssignments);
+                                                      
+                                                      const nextQuotas = (() => {
+                                                        const filtered = assignmentQuotas.filter(q => !(q.yearGroup === yg && q.subject === s));
+                                                        if (combinedVal) {
+                                                          return [...filtered, {
+                                                            id: `q-${yg}-${s}-${Math.random().toString(36).substr(2, 5)}`,
+                                                            teacherId: combinedVal,
+                                                            subject: s,
+                                                            yearGroup: yg,
+                                                            total: currentQuota?.total || 2
+                                                          }];
+                                                        }
+                                                        return filtered;
+                                                      })();
+                                                      setAssignmentQuotas(nextQuotas);
+                                                      saveTimetableDataToFirestore(teachers, nextAssignments, nextQuotas, timetableGrid);
+                                                    }}
+                                                    options={teachers}
+                                                    placeholder={idx === 0 ? "No Teacher" : `Co-Teacher ${idx}`}
+                                                  />
+                                                </div>
+
+                                                {assignedIds.length > 1 && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      const nextIds = assignedIds.filter((_, i) => i !== idx);
+                                                      const combinedVal = nextIds.map(id => id.trim()).filter(Boolean).join(",");
+                                                      const nextAssignments = { ...staffAssignments, [assignmentKey]: combinedVal };
+                                                      setStaffAssignments(nextAssignments);
+                                                      
+                                                      const nextQuotas = (() => {
+                                                        const filtered = assignmentQuotas.filter(q => !(q.yearGroup === yg && q.subject === s));
+                                                        if (combinedVal) {
+                                                          return [...filtered, {
+                                                            id: `q-${yg}-${s}-${Math.random().toString(36).substr(2, 5)}`,
+                                                            teacherId: combinedVal,
+                                                            subject: s,
+                                                            yearGroup: yg,
+                                                            total: currentQuota?.total || 2
+                                                          }];
+                                                        }
+                                                        return filtered;
+                                                      })();
+                                                      setAssignmentQuotas(nextQuotas);
+                                                      saveTimetableDataToFirestore(teachers, nextAssignments, nextQuotas, timetableGrid);
+                                                    }}
+                                                    className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition-all shrink-0 cursor-pointer"
+                                                    title="Remove Teacher"
+                                                  >
+                                                    <Trash2 size={10} />
+                                                  </button>
+                                                )}
+                                              </div>
+                                            ))}
+
+                                            {assignedIds.filter(Boolean).length > 0 && (
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  const nextAssignments = { ...staffAssignments, [assignmentKey]: `${assignedId},` };
+                                                  setStaffAssignments(nextAssignments);
+                                                }}
+                                                className="w-full py-1 border border-dashed border-emerald-200 hover:border-[#059669] text-[#064E3B] hover:bg-emerald-50 rounded-lg text-[8px] font-black uppercase transition-all tracking-wider flex items-center justify-center gap-1 cursor-pointer"
+                                              >
+                                                <Plus size={8} /> Add Co-Teacher
+                                              </button>
+                                            )}
+                                          </>
+                                        );
+                                      })()}
+
+                                      {assignedId && (
+                                        <div className="flex items-center justify-between gap-1 px-2 py-1 bg-[#FEFCE8]/50 rounded-lg border border-[#FACC15]/20">
+                                          <span className="text-[8px] font-black text-[#064E3B]/40 uppercase tracking-tighter">Pds:</span>
+                                          <input 
+                                            type="number"
+                                            value={currentQuota?.total || 2}
+                                            onChange={(e) => {
+                                              const val = parseInt(e.target.value) || 0;
+                                              const nextQuotas = assignmentQuotas.map(q => 
+                                                (q.yearGroup === yg && q.subject === s) ? { ...q, total: val } : q
+                                              );
+                                              setAssignmentQuotas(nextQuotas);
+                                              saveTimetableDataToFirestore(teachers, staffAssignments, nextQuotas, timetableGrid);
+                                            }}
+                                            className="w-full bg-transparent text-[10px] font-black text-[#064E3B] outline-none text-right"
+                                          />
+                                        </div>
+                                      )}
                                     </div>
-                                  )}
-                                </div>
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Teacher Period Quotas Dashboard */}
@@ -3562,17 +6296,13 @@ export default function App() {
                    </div>
                    <button 
                     onClick={() => {
-                      const name = prompt("Teacher Name?");
-                      if(name) {
-                        const role = confirm("Is this a Head Coordinator?") ? "Coordinator" : "Teacher";
-                        setTeachers([...teachers, { 
-                          id: `t-${Date.now()}`, 
-                          name, 
-                          role, 
-                          subjects: [], 
-                          maxPeriods: 28 
-                        }]);
-                      }
+                      setNewTeacherForm({
+                        name: '',
+                        role: 'Teacher',
+                        maxPeriods: 28,
+                        workingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+                      });
+                      setAddTeacherModalOpen(true);
                     }}
                     className="bg-[#064E3B] text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-lg hover:bg-[#059669] transition-colors text-xs"
                   >
@@ -3584,14 +6314,17 @@ export default function App() {
                   {teachers.map(teacher => {
                     // Filter quotas specifically for subjects mapped to this teacher in the table
                     const mappedAssignments = Object.entries(staffAssignments)
-                      .filter(([key, val]) => val === teacher.id)
+                      .filter(([key, val]) => val ? val.split(',').filter(Boolean).includes(teacher.id) : false)
                       .map(([key]) => {
                         const [yg, sub] = key.split(/-(.+)/);
                         return { yg, sub };
                       });
 
-                    const teacherQuotas = assignmentQuotas.filter(q => q.teacherId === teacher.id);
-                    const totalAssignedPeriods = teacherQuotas.reduce((acc, q) => acc + q.total, 0);
+                    const teacherQuotas = assignmentQuotas.filter(q => q.teacherId ? q.teacherId.split(',').filter(Boolean).includes(teacher.id) : false);
+                    const totalAssignedPeriods = teacherQuotas.reduce((acc, q) => {
+                      const isAssemblyHomeroom = typeof q.subject === 'string' && (q.subject.toUpperCase().includes("ASSEMBLY") || q.subject.toUpperCase().includes("HOMEROOM") || q.subject.toUpperCase().includes("HOMERROM"));
+                      return acc + (isAssemblyHomeroom ? 1 : q.total);
+                    }, 0);
 
                     return (
                       <div key={teacher.id} className="bg-white rounded-[2rem] p-8 shadow-xl border-2 border-[#FEFCE8] hover:border-[#FACC15]/30 transition-all flex flex-col space-y-6">
@@ -3605,26 +6338,85 @@ export default function App() {
                             </div>
                             <div>
                               <p className="font-black text-lg text-[#064E3B]">{teacher.name}</p>
-                              <p className="text-[10px] font-black uppercase tracking-widest text-[#064E3B]/40">{teacher.role}</p>
+                              <div className="flex gap-2 items-center mt-1">
+                                <p className="text-[10px] font-black uppercase tracking-widest text-[#064E3B]/40">{teacher.role}</p>
+                                {teacher.locked && (
+                                  <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[8px] font-black uppercase rounded flex items-center gap-1">
+                                    <Lock size={8} /> Locked
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
                           <div className="flex gap-2">
-                            <button onClick={() => setEditingTeacher(teacher)} className="p-2 hover:bg-gray-50 rounded-xl text-blue-500 transition-colors"><Edit2 size={18} /></button>
-                            <button onClick={() => setTeachers(teachers.filter(t => t.id !== teacher.id))} className="p-2 hover:bg-red-50 rounded-xl text-red-500 transition-colors"><Trash2 size={18} /></button>
+                            <button 
+                              type="button"
+                              onClick={() => {
+                                updateTeachersAndSave(teachers.map(t => t.id === teacher.id ? { ...t, locked: !t.locked } : t));
+                              }}
+                              className={cn(
+                                "transition-all cursor-pointer p-2 rounded-xl border border-transparent hover:shadow-xs",
+                                teacher.locked 
+                                  ? "text-amber-500 hover:text-amber-600 bg-amber-50 border-amber-200" 
+                                  : "text-gray-400 hover:text-gray-650 bg-gray-50 hover:bg-gray-100"
+                              )}
+                              title={teacher.locked ? "Unlock Schedule" : "Lock Schedule"}
+                            >
+                              {teacher.locked ? <Lock size={15} /> : <Unlock size={15} />}
+                            </button>
+                            <button onClick={() => setEditingTeacher(teacher)} className="p-2 hover:bg-gray-100 rounded-xl text-blue-500 transition-colors"><Edit2 size={18} /></button>
+                            <button onClick={() => updateTeachersAndSave(teachers.filter(t => t.id !== teacher.id))} className="p-2 hover:bg-red-50 rounded-xl text-red-500 transition-colors"><Trash2 size={18} /></button>
                           </div>
                         </div>
 
                         <div className="space-y-3">
-                          <div className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-100">
-                             <p className="text-[10px] font-black uppercase text-[#064E3B]/40 tracking-widest">Total Periods</p>
-                             <div className="flex items-center gap-2">
-                               <span className={cn("text-lg font-black", totalAssignedPeriods > teacher.maxPeriods ? "text-red-500" : "text-[#064E3B]")}>{totalAssignedPeriods}</span>
-                               <span className="text-[10px] font-black text-gray-300">/</span>
-                               <span className="text-[10px] font-black text-gray-400">{teacher.maxPeriods}</span>
-                             </div>
+                          <div className="space-y-2 bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                            <div className="space-y-1">
+                              <div className="flex justify-between text-[8px] font-black uppercase tracking-widest text-[#064E3B]/40">
+                                <span>Quota Load:</span>
+                                <span className={cn((teacherPlannedLoads[teacher.id] || 0) > teacher.maxPeriods ? "text-red-500 font-bold font-black text-[10px]" : "text-[#064E3B] font-black text-[10px]")}>
+                                  {teacherPlannedLoads[teacher.id] || 0} / {teacher.maxPeriods} Pds
+                                </span>
+                              </div>
+                              <div className="w-full h-1 bg-gray-200/50 rounded-full overflow-hidden">
+                                <div 
+                                  className={cn("h-full transition-all", (teacherPlannedLoads[teacher.id] || 0) > teacher.maxPeriods ? "bg-red-500" : "bg-[#FACC15]")} 
+                                  style={{ width: `${Math.min(100, ((teacherPlannedLoads[teacher.id] || 0) / teacher.maxPeriods) * 100)}%` }}
+                                />
+                              </div>
+                            </div>
+
+                            <div className="space-y-1">
+                              <div className="flex justify-between text-[8px] font-black uppercase tracking-widest text-[#064E3B]/40">
+                                <span>Placed Grid:</span>
+                                <span className={cn((teacherLoads[teacher.id] || 0) > teacher.maxPeriods ? "text-red-500 font-bold font-black text-[10px]" : "text-[#064E3B] font-black text-[10px]")}>
+                                  {teacherLoads[teacher.id] || 0} / {teacher.maxPeriods} Pds
+                                </span>
+                              </div>
+                              <div className="w-full h-1 bg-gray-200/50 rounded-full overflow-hidden">
+                                <div 
+                                  className={cn("h-full transition-all", (teacherLoads[teacher.id] || 0) > teacher.maxPeriods ? "bg-red-500" : "bg-emerald-500")} 
+                                  style={{ width: `${Math.min(100, ((teacherLoads[teacher.id] || 0) / teacher.maxPeriods) * 100)}%` }}
+                                />
+                              </div>
+                            </div>
                           </div>
-                          <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                            <div className={cn("h-full transition-all", totalAssignedPeriods > teacher.maxPeriods ? "bg-red-500" : "bg-[#FACC15]")} style={{ width: `${Math.min(100, (totalAssignedPeriods/teacher.maxPeriods)*100)}%` }} />
+                          <div className="flex gap-1.5 flex-wrap items-center mt-1">
+                            <span className="text-[8px] font-black uppercase text-gray-400">Works On:</span>
+                            {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => {
+                              const isWorking = !teacher.workingDays || teacher.workingDays.includes(day);
+                              return (
+                                <span 
+                                  key={day} 
+                                  className={cn(
+                                    "text-[8px] font-extrabold px-1 py-0.5 rounded uppercase tracking-tight",
+                                    isWorking ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-gray-50 text-gray-300 line-through"
+                                  )}
+                                >
+                                  {day.substring(0,3)}
+                                </span>
+                              );
+                            })}
                           </div>
                         </div>
 
@@ -3649,9 +6441,10 @@ export default function App() {
                                          value={q?.total || 0}
                                          onChange={(e) => {
                                            const val = parseInt(e.target.value) || 0;
-                                           setAssignmentQuotas(prev => prev.map(qq => 
+                                           const nextQuotas = assignmentQuotas.map(qq => 
                                              (qq.teacherId === teacher.id && qq.subject === sub && qq.yearGroup === yg) ? { ...qq, total: val } : qq
-                                           ));
+                                           );
+                                           updateAssignmentQuotasAndSave(nextQuotas);
                                          }}
                                        />
                                        <span className="text-[10px] font-black text-gray-300">Pds</span>
@@ -3676,6 +6469,159 @@ export default function App() {
                       </div>
                     );
                   })}
+                </div>
+              </div>
+
+              {/* Combined Year Groups Setup Panel */}
+              <div className="bg-white rounded-[2.5rem] p-10 shadow-2xl space-y-8 border-t-8 border-[#059669]">
+                <div>
+                  <h4 className="text-2xl font-black text-[#064E3B] uppercase tracking-wider flex items-center gap-3">
+                    <span className="p-3 bg-emerald-50 rounded-2xl border border-emerald-100/50 text-[#059669]">
+                      <Users size={24} />
+                    </span>
+                    Combined Classes Config
+                  </h4>
+                  <p className="text-[#064E3B]/60 font-bold mt-2 text-sm leading-relaxed">
+                    Set up combined year groups for specific shared subjects (e.g., Year 7 and Year 8 physical education class, or Year 10 and 11 Wellbeing). The scheduler and generator will automatically sync their assignments.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                  {/* Left Column: Create New Combined Class Rule */}
+                  <div className="lg:col-span-5 bg-[#FDFBF7] rounded-[2rem] p-8 border-2 border-[#FEFCE8] space-y-6">
+                    <h5 className="text-sm font-black text-[#064E3B] uppercase tracking-wider">New Combined Group</h5>
+                    
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block font-mono">Shared Subject</label>
+                      <select
+                        value={newCombinedSubject}
+                        onChange={(e) => setNewCombinedSubject(e.target.value)}
+                        className="w-full p-4 bg-white rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold cursor-pointer"
+                      >
+                        {subjects.map(s => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block font-mono">Select Year Groups to Join</label>
+                      <div className="grid grid-cols-2 gap-2 max-h-[220px] overflow-y-auto p-1 custom-scrollbar">
+                        {yearGroups.map(yg => {
+                          const isSelected = newCombinedYgs.includes(yg);
+                          return (
+                            <button
+                              type="button"
+                              key={yg}
+                              onClick={() => {
+                                if (isSelected) {
+                                  setNewCombinedYgs(newCombinedYgs.filter(item => item !== yg));
+                                } else {
+                                  setNewCombinedYgs([...newCombinedYgs, yg]);
+                                }
+                              }}
+                              className={cn(
+                                "p-3 rounded-xl font-bold text-xs text-left border-2 transition-all flex items-center justify-between cursor-pointer",
+                                isSelected 
+                                  ? "bg-[#064E3B] border-[#064E3B] text-white shadow-md shadow-[#064E3B]/10" 
+                                  : "bg-white border-gray-100 text-gray-700 hover:border-[#FACC15]/30"
+                              )}
+                            >
+                              <span>{yg}</span>
+                              {isSelected && <span className="text-[10px] font-black">✓</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (newCombinedYgs.length < 2) {
+                          alert("Please select at least 2 year groups to combine.");
+                          return;
+                        }
+                        const exists = combinedClasses.some(rule => 
+                          rule.subject === newCombinedSubject &&
+                          rule.yearGroups.some(yg => newCombinedYgs.includes(yg))
+                        );
+                        if (exists) {
+                          if (!window.confirm("One of these year groups already has a combined rule for this subject. Do you still want to create this rule?")) {
+                            return;
+                          }
+                        }
+                        const nextRules = [
+                          ...combinedClasses,
+                          {
+                            id: `rule-${Date.now()}`,
+                            subject: newCombinedSubject,
+                            yearGroups: [...newCombinedYgs].sort()
+                          }
+                        ];
+                        updateCombinedClassesAndSave(nextRules);
+                        setNewCombinedYgs([]);
+                        alert("Combined class configuration created successfully!");
+                      }}
+                      className="w-full py-4 bg-[#064E3B] text-white rounded-2xl font-black uppercase tracking-wider hover:bg-[#059669] transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-[#064E3B]/15"
+                    >
+                      <Plus size={16} /> Combine Selected Classes
+                    </button>
+                  </div>
+
+                  {/* Right Column: Active Rules List */}
+                  <div className="lg:col-span-7 bg-white p-2 space-y-4">
+                    <h5 className="text-sm font-black text-[#064E3B] uppercase tracking-wider px-2">Active Combined Classes ({combinedClasses.length})</h5>
+                    
+                    {combinedClasses.length === 0 ? (
+                      <div className="rounded-[2rem] border-2 border-dashed border-gray-100 p-12 text-center text-gray-400">
+                        <Users size={32} className="mx-auto text-gray-200 mb-3" />
+                        <p className="text-sm font-black uppercase tracking-wider text-gray-300">No Combined Classes Configured</p>
+                        <p className="text-xs font-bold text-gray-400 mt-1">Configure combined options on the left to sync lessons automatically.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[450px] overflow-y-auto pr-1 custom-scrollbar">
+                        {combinedClasses.map(rule => (
+                          <div 
+                            key={rule.id}
+                            className="p-5 rounded-2xl bg-[#F0FDF4]/30 border-2 border-[#D1FAE5]/50 flex flex-col justify-between group relative shadow-sm"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm("Remove this combined class rule?")) {
+                                  const nextRules = combinedClasses.filter(r => r.id !== rule.id);
+                                  updateCombinedClassesAndSave(nextRules);
+                                }
+                              }}
+                              className="absolute top-4 right-4 p-1.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer shadow-sm"
+                              title="Delete combined class setting"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                            
+                            <div>
+                              <span className="px-2.5 py-1 text-[8px] font-black uppercase tracking-widest bg-emerald-100 text-emerald-800 rounded-full">
+                                {rule.subject}
+                              </span>
+                              
+                              <div className="flex flex-wrap gap-1.5 mt-4">
+                                {rule.yearGroups.map(yg => (
+                                  <span key={yg} className="text-[10px] font-extrabold text-[#064E3B] px-2 py-1 bg-white border border-[#D1FAE5] rounded-lg">
+                                    {yg}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+
+                            <p className="text-[9px] font-bold text-gray-400 mt-4 italic">
+                              Shared {rule.subject} Lesson
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -3785,7 +6731,7 @@ export default function App() {
                         {teachers.map(teacher => {
                           // Find all subjects this teacher is assigned to in staffAssignments
                           const assignments = Object.entries(staffAssignments)
-                            .filter(([_, tId]) => tId === teacher.id)
+                            .filter(([_, tId]) => tId ? tId.split(',').filter(Boolean).includes(teacher.id) : false)
                             .map(([key, _]) => {
                               const [yg, sub] = key.split('-');
                               return { yg, sub, key };
@@ -4083,26 +7029,45 @@ export default function App() {
 
           {adminTab === 'teachers' && (
             <div className="max-w-6xl mx-auto bg-white rounded-3xl p-10 shadow-2xl pb-20">
-              <div className="flex justify-between items-center mb-10">
-                <h3 className="text-3xl font-black text-[#064E3B]">Teacher Directory</h3>
-                <button 
-                  onClick={() => {
-                    const name = prompt("Teacher Name?");
-                    if(name) {
-                      const role = confirm("Is this a Head Coordinator?") ? "Coordinator" : "Teacher";
-                      setTeachers([...teachers, { 
-                        id: `t-${Date.now()}`, 
-                        name, 
-                        role, 
-                        subjects: [], 
-                        maxPeriods: 28 
-                      }]);
-                    }
-                  }}
-                  className="bg-[#064E3B] text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-lg"
-                >
-                  <Plus size={20} /> Add Staff
-                </button>
+              <div className="flex justify-between items-center mb-10 flex-wrap gap-4">
+                <div>
+                  <h3 className="text-3xl font-black text-[#064E3B]">Teacher Directory</h3>
+                  <p className="text-xs font-bold text-[#064E3B]/60 mt-1">Manage staff members, working days, and subject expertise catalog</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button 
+                    onClick={() => {
+                      const newSub = prompt("Enter custom subject name to add to the school curriculum:");
+                      if (newSub && newSub.trim()) {
+                        const formattedSub = newSub.trim().toUpperCase();
+                        if (subjects.includes(formattedSub)) {
+                          alert(`The subject "${formattedSub}" is already part of the curriculum.`);
+                        } else {
+                          const nextSubs = [...subjects, formattedSub];
+                          updateSubjectsAndSave(nextSubs);
+                          alert(`Added "${formattedSub}" to curriculum successfully.`);
+                        }
+                      }
+                    }}
+                    className="px-5 py-3 bg-emerald-50 text-[#059669] hover:bg-emerald-100 border border-emerald-200/50 rounded-2xl transition-all font-bold text-sm flex items-center gap-2 cursor-pointer"
+                  >
+                    <BookOpen size={18} /> Add Subject to Curriculum
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setNewTeacherForm({
+                        name: '',
+                        role: 'Teacher',
+                        maxPeriods: 28,
+                        workingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+                      });
+                      setAddTeacherModalOpen(true);
+                    }}
+                    className="bg-[#064E3B] text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-lg hover:bg-[#059669] transition-all cursor-pointer"
+                  >
+                    <Plus size={20} /> Add Staff
+                  </button>
+                </div>
               </div>
               
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -4116,30 +7081,67 @@ export default function App() {
                          <div>
                            <p className="font-black text-[#064E3B]">{teacher.name}</p>
                            <div className="flex flex-col gap-1 mt-1">
-                              <div className="flex gap-2">
+                              <div className="flex gap-2 flex-wrap">
                                 <p className="text-[9px] font-black bg-[#F0FDF4] px-1.5 py-0.5 rounded text-[#059669] uppercase tracking-widest">{teacher.role}</p>
                                 <p className="text-[9px] font-black bg-gray-100 px-1.5 py-0.5 rounded text-gray-500 uppercase tracking-widest">Max: {teacher.maxPeriods} Periods</p>
+                                {teacher.locked && (
+                                  <p className="text-[9px] font-black bg-amber-100 px-1.5 py-0.5 rounded text-amber-750 uppercase tracking-widest flex items-center gap-1">
+                                    <Lock size={10} /> Locked
+                                  </p>
+                                )}
                               </div>
-                              <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden mt-1">
-                                <div 
-                                  className={cn(
-                                    "h-full transition-all",
-                                    (teacherLoads[teacher.id] || 0) > teacher.maxPeriods ? "bg-red-500" : "bg-[#FACC15]"
-                                  )}
-                                  style={{ width: `${Math.min(100, ((teacherLoads[teacher.id] || 0) / teacher.maxPeriods) * 100)}%` }}
-                                />
+                              <div className="space-y-2 mt-2 pt-2 border-t border-gray-100/60 border-dashed">
+                                <div className="space-y-1">
+                                  <div className="flex justify-between text-[8px] font-black uppercase tracking-widest text-[#064E3B]/40">
+                                    <span>Quota Load:</span>
+                                    <span className={cn((teacherPlannedLoads[teacher.id] || 0) > teacher.maxPeriods ? "text-red-500 font-bold" : "text-[#064E3B]")}>
+                                      {teacherPlannedLoads[teacher.id] || 0} / {teacher.maxPeriods} Pds
+                                    </span>
+                                  </div>
+                                  <div className="w-full h-1 bg-gray-100 rounded-full overflow-hidden">
+                                    <div 
+                                      className={cn("h-full transition-all", (teacherPlannedLoads[teacher.id] || 0) > teacher.maxPeriods ? "bg-red-500" : "bg-[#FACC15]")} 
+                                      style={{ width: `${Math.min(100, ((teacherPlannedLoads[teacher.id] || 0) / teacher.maxPeriods) * 100)}%` }}
+                                    />
+                                  </div>
+                                </div>
                               </div>
-                              <p className={cn(
-                                "text-[8px] font-black uppercase tracking-widest",
-                                (teacherLoads[teacher.id] || 0) > teacher.maxPeriods ? "text-red-500" : "text-[#064E3B]/40"
-                              )}>
-                                Current: {teacherLoads[teacher.id] || 0} / {teacher.maxPeriods} Periods
-                                {(teacherLoads[teacher.id] || 0) > teacher.maxPeriods && " (OVERLOAD)"}
-                              </p>
+                              <div className="flex gap-1.5 flex-wrap items-center mt-1 pt-1.5 border-t border-gray-100 border-dashed">
+                                <span className="text-[8px] font-black uppercase text-gray-400">Works On:</span>
+                                {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => {
+                                  const isWorking = !teacher.workingDays || teacher.workingDays.includes(day);
+                                  return (
+                                    <span 
+                                      key={day} 
+                                      className={cn(
+                                        "text-[8px] font-extrabold px-1 py-0.5 rounded uppercase tracking-tight",
+                                        isWorking ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-gray-50 text-gray-300 line-through"
+                                      )}
+                                    >
+                                      {day.substring(0,3)}
+                                    </span>
+                                  );
+                                })}
+                              </div>
                             </div>
                           </div>
                         </div>
                         <div className="flex gap-2">
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              updateTeachersAndSave(teachers.map(t => t.id === teacher.id ? { ...t, locked: !t.locked } : t));
+                            }}
+                            className={cn(
+                              "transition-all cursor-pointer p-1 rounded-lg",
+                              teacher.locked 
+                                ? "text-amber-500 hover:text-amber-600 bg-amber-50" 
+                                : "text-gray-400 hover:text-gray-600 hover:bg-gray-50"
+                            )}
+                            title={teacher.locked ? "Unlock Schedule" : "Lock Schedule"}
+                          >
+                            {teacher.locked ? <Lock size={16} /> : <Unlock size={16} />}
+                          </button>
                           <button 
                             onClick={() => setEditingTeacher(teacher)}
                             className="text-blue-400 hover:text-blue-600 transition-all cursor-pointer p-1"
@@ -4151,7 +7153,7 @@ export default function App() {
                             onClick={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
-                              setTeachers(teachers.filter(t => String(t.id) !== String(teacher.id)));
+                              updateTeachersAndSave(teachers.filter(t => String(t.id) !== String(teacher.id)));
                             }} 
                             className="text-red-400 hover:text-red-600 transition-all cursor-pointer p-1"
                           >
@@ -4159,25 +7161,54 @@ export default function App() {
                           </button>
                         </div>
                       </div>
-                    <div className="flex flex-wrap gap-1">
-                      {subjects.map(s => (
-                        <button 
-                          key={s}
-                          onClick={() => {
-                            const newSubs = teacher.subjects.includes(s) 
-                              ? teacher.subjects.filter(ts => ts !== s)
-                              : [...teacher.subjects, s];
-                            setTeachers(teachers.map(t => t.id === teacher.id ? {...t, subjects: newSubs} : t));
-                          }}
-                          className={cn(
-                            "px-2 py-1 rounded-md text-[9px] font-black uppercase transition-all border",
-                            teacher.subjects.includes(s) ? "bg-[#064E3B] text-white border-[#064E3B]" : "bg-gray-50 text-[#064E3B]/40 border-gray-100 hover:border-[#FACC15]/30"
-                          )}
-                        >
-                          {s}
-                        </button>
-                      ))}
-                    </div>
+                    <p className="text-[10px] font-black uppercase text-[#064E3B]/30 mb-1.5 mt-3 flex items-center gap-1">
+                      <span>🏷️ Assigned Subjects:</span>
+                    </p>
+                    {(() => {
+                      const assignedSubjects: string[] = [];
+                      const seen = new Set<string>();
+                      Object.entries(staffAssignments || {}).forEach(([key, val]) => {
+                        if (!val) return;
+                        const ids = val.split(',').map(id => id.trim());
+                        if (ids.includes(teacher.id)) {
+                          const parts = key.split('-');
+                          if (parts.length >= 2) {
+                            const subName = parts.slice(1).join('-');
+                            if (!seen.has(subName)) {
+                              seen.add(subName);
+                              assignedSubjects.push(subName);
+                            }
+                          }
+                        }
+                      });
+
+                      if (assignedSubjects.length === 0) {
+                        return (
+                          <div className="text-[10px] font-extrabold text-amber-600 bg-amber-50 rounded-xl px-3 py-2 border border-amber-100/50">
+                            No subject assigned in Yearly Subject Mapping yet.
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {assignedSubjects.map(s => {
+                            const colorClass = getSubjectColorClass(s);
+                            return (
+                              <span 
+                                key={s}
+                                className={cn(
+                                  "px-2 py-1 rounded-md text-[9px] font-black uppercase border",
+                                  colorClass
+                                )}
+                              >
+                                {s}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
                   </div>
                 ))}
               </div>
@@ -4231,11 +7262,45 @@ export default function App() {
                           className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold"
                         />
                       </div>
+
+                      <div>
+                        <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-2">Working Days</label>
+                        <div className="flex flex-wrap gap-2">
+                          {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => {
+                            const isSelected = !editingTeacher.workingDays || editingTeacher.workingDays.includes(day);
+                            return (
+                              <button
+                                type="button"
+                                key={day}
+                                onClick={() => {
+                                  let currentDays = editingTeacher.workingDays || ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+                                  if (currentDays.includes(day)) {
+                                    if (currentDays.length > 1) {
+                                      currentDays = currentDays.filter(d => d !== day);
+                                    }
+                                  } else {
+                                    currentDays = [...currentDays, day];
+                                  }
+                                  setEditingTeacher({ ...editingTeacher, workingDays: currentDays });
+                                }}
+                                className={cn(
+                                  "px-3 py-2 rounded-xl text-xs font-black transition-all border cursor-pointer",
+                                  isSelected 
+                                    ? "bg-[#064E3B] text-white border-[#064E3B]" 
+                                    : "bg-gray-50 text-[#064E3B]/40 border-gray-100 hover:border-[#FACC15]/30"
+                                )}
+                              >
+                                {day.substring(0, 3)}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
 
                     <button 
                       onClick={() => {
-                        setTeachers(teachers.map(t => t.id === editingTeacher.id ? editingTeacher : t));
+                        updateTeachersAndSave(teachers.map(t => t.id === editingTeacher.id ? editingTeacher : t));
                         setEditingTeacher(null);
                       }}
                       className="w-full py-4 bg-[#064E3B] text-white rounded-2xl font-black uppercase tracking-widest hover:bg-[#059669] transition-all shadow-lg shadow-[#064E3B]/20"
@@ -4249,244 +7314,609 @@ export default function App() {
           )}
 
           {adminTab === 'timetable' && (
-            <div className="max-w-7xl mx-auto space-y-10 pb-20">
-              <div className="flex justify-between items-end">
-                <div>
-                  <h3 className="text-3xl font-black text-[#064E3B]">Interactive Scheduler</h3>
-                  <div className="flex items-center gap-3 mt-4">
+            <div className="max-w-7xl mx-auto space-y-6 pb-20">
+              <AnimatePresence>
+                {parallelDropConfirm && (
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4"
+                  >
+                    <motion.div 
+                      initial={{ scale: 0.95 }}
+                      animate={{ scale: 1 }}
+                      exit={{ scale: 0.95 }}
+                      className="bg-white rounded-3xl p-6 shadow-2xl border-2 border-amber-200 max-w-md w-full space-y-4"
+                    >
+                      <div className="flex justify-between items-start border-b pb-3 border-gray-100">
+                        <div>
+                          <span className="text-[9px] font-black uppercase text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-200 shadow-sm">
+                            Conflict Resolver
+                          </span>
+                          <h5 className="text-lg font-black text-[#064E3B] mt-1.5 leading-tight">
+                            Schedule Conflict / Split Option
+                          </h5>
+                          <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wide">
+                            {parallelDropConfirm.day} • Slot {parallelDropConfirm.sIdx + 1}
+                          </p>
+                        </div>
+                        <button 
+                          onClick={() => setParallelDropConfirm(null)}
+                          className="p-1.5 hover:bg-gray-100 rounded-full transition-all text-gray-400 hover:text-gray-600 cursor-pointer"
+                        >
+                          <X size={18} />
+                        </button>
+                      </div>
+
+                      <div className="bg-[#FEFCE8]/40 border border-[#FEFCE8] p-4 rounded-2xl text-xs text-gray-700 leading-relaxed font-semibold">
+                        You are dragging <span className="text-[#064E3B] font-black">{parallelDropConfirm.newAssignment.subject} (with {teachers.find(t => t.id === parallelDropConfirm.newAssignment.teacherId)?.name || 'Teacher'})</span> into a slot that already has:
+                        <ul className="list-disc pl-4 mt-2 font-bold text-gray-800 space-y-0.5">
+                          {parallelDropConfirm.existingAssignments.map((asg, index) => (
+                            <li key={index}>
+                              {asg.subject} (with {teachers.find(t => t.id === asg.teacherId)?.name || 'Teacher'})
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mt-2">Select an Option</p>
+                      
+                      <div className="space-y-2">
+                        <button
+                           type="button"
+                           onClick={() => {
+                             const nextGrid = { ...timetableGrid };
+                             const currentVal = nextGrid[schedulerYearGroup]?.[parallelDropConfirm.day]?.[parallelDropConfirm.sIdx];
+                             const arr = Array.isArray(currentVal) ? [...currentVal] : (currentVal ? [currentVal] : []);
+                             
+                             if (checkIsPE(parallelDropConfirm.newAssignment.subject)) {
+                               const peKey = `${schedulerYearGroup}-PHYSICAL EDUCATION`;
+                               const peTeacherIds = staffAssignments[peKey] ? staffAssignments[peKey].split(',') : [parallelDropConfirm.newAssignment.teacherId];
+                               peTeacherIds.forEach(tId => {
+                                 if (!arr.some((item: any) => item.teacherId === tId)) {
+                                   arr.push({ teacherId: tId, subject: parallelDropConfirm.newAssignment.subject });
+                                 }
+                               });
+                             } else {
+                               arr.push(parallelDropConfirm.newAssignment);
+                             }
+                             
+                             if (!nextGrid[schedulerYearGroup]) nextGrid[schedulerYearGroup] = {};
+                             if (!nextGrid[schedulerYearGroup][parallelDropConfirm.day]) nextGrid[schedulerYearGroup][parallelDropConfirm.day] = [];
+                             
+                             nextGrid[schedulerYearGroup][parallelDropConfirm.day][parallelDropConfirm.sIdx] = arr;
+                             
+                             setTimetableGrid(nextGrid);
+                             saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, nextGrid, teacherDuties);
+                             setParallelDropConfirm(null);
+                             setDraggedAssignment(null);
+                           }}
+                           className="w-full flex items-center justify-between p-3.5 rounded-2xl border-2 border-[#10B981] bg-emerald-50/50 hover:bg-emerald-50 transition-all text-left cursor-pointer group"
+                         >
+                           <div className="pr-4">
+                             <p className="text-xs font-black text-[#064E3B] uppercase tracking-wide leading-none">🏢 ADD PARALLEL SUBJECT (SPLIT-CLASS)</p>
+                             <p className="text-[10px] font-bold text-emerald-800/80 mt-1 lines-clamp-2">Schedule both subjects simultaneously for split lessons/electives.</p>
+                           </div>
+                           <div className="p-1 px-2.5 bg-[#10B981] text-white text-[9px] font-black uppercase rounded-lg tracking-wider whitespace-nowrap">
+                             RECOMMENDED
+                           </div>
+                         </button>
+
+                         <button
+                           type="button"
+                           onClick={() => {
+                             const nextGrid = { ...timetableGrid };
+                             
+                             if (!nextGrid[schedulerYearGroup]) nextGrid[schedulerYearGroup] = {};
+                             if (!nextGrid[schedulerYearGroup][parallelDropConfirm.day]) nextGrid[schedulerYearGroup][parallelDropConfirm.day] = [];
+                             
+                             const isNewAsgPE = checkIsPE(parallelDropConfirm.newAssignment.subject);
+                             if (isNewAsgPE) {
+                               const peKey = `${schedulerYearGroup}-PHYSICAL EDUCATION`;
+                               const peTeacherIds = staffAssignments[peKey] ? staffAssignments[peKey].split(',') : [parallelDropConfirm.newAssignment.teacherId];
+                               const peAssignments = peTeacherIds.map(tId => ({
+                                 teacherId: tId,
+                                 subject: parallelDropConfirm.newAssignment.subject
+                               }));
+                               nextGrid[schedulerYearGroup][parallelDropConfirm.day][2] = peAssignments;
+                               nextGrid[schedulerYearGroup][parallelDropConfirm.day][3] = peAssignments;
+                             } else {
+                               nextGrid[schedulerYearGroup][parallelDropConfirm.day][parallelDropConfirm.sIdx] = parallelDropConfirm.newAssignment;
+                             }
+
+                             setTimetableGrid(nextGrid);
+                             saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, nextGrid, teacherDuties);
+                             setParallelDropConfirm(null);
+                             setDraggedAssignment(null);
+                           }}
+                          className="w-full flex items-center justify-between p-3.5 rounded-2xl border-2 border-amber-300 bg-amber-50/25 hover:bg-amber-50/50 transition-all text-left cursor-pointer"
+                        >
+                          <div>
+                            <p className="text-xs font-black text-amber-950 uppercase tracking-wide leading-none">🔄 REPLACE EXISTING LESSON(S)</p>
+                            <p className="text-[10px] font-bold text-amber-800/80 mt-1">Overwrite and delete current assignment(s) in this slot.</p>
+                          </div>
+                        </button>
+                      </div>
+
+                      <div className="flex justify-end gap-2 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setParallelDropConfirm(null)}
+                          className="px-4 py-2 text-[10px] font-black uppercase tracking-wider bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-xl transition-all cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </motion.div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <div className="bg-white rounded-2xl p-5 border-2 border-[#FEFCE8] shadow-md space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-gray-100 pb-3">
+                  <div>
+                    <h3 className="text-2xl font-black text-[#064E3B]">Interactive Scheduler</h3>
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Design and manage your school&apos;s master timetable</p>
+                  </div>
+                  
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex bg-gray-100 p-1 rounded-xl">
+                      <button 
+                        onClick={() => setSchedulerViewMode('class')}
+                        className={cn(
+                          "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
+                          schedulerViewMode === 'class' ? "bg-[#064E3B] text-white shadow" : "text-[#064E3B]/60 hover:text-[#064E3B]"
+                        )}
+                      >
+                        Class View
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setSchedulerViewMode('teacher');
+                          if (!selectedTeacherSchedule && teachers.length > 0) {
+                            setSelectedTeacherSchedule(teachers[0].id);
+                          }
+                        }}
+                        className={cn(
+                          "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
+                          schedulerViewMode === 'teacher' ? "bg-[#064E3B] text-white shadow" : "text-[#064E3B]/60 hover:text-[#064E3B]"
+                        )}
+                      >
+                        Teacher View
+                      </button>
+                      <button 
+                        onClick={() => setSchedulerViewMode('master')}
+                        className={cn(
+                          "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all",
+                          schedulerViewMode === 'master' ? "bg-[#064E3B] text-white shadow" : "text-[#064E3B]/60 hover:text-[#064E3B]"
+                        )}
+                      >
+                        Master Spreadsheet
+                      </button>
+                    </div>
+
+                    <div className="flex flex-col">
+                      {schedulerViewMode === 'class' && (
+                        <select 
+                          className="bg-[#FEFCE8]/20 border-2 border-[#FEFCE8] px-3 py-1.5 rounded-lg text-xs font-black text-[#064E3B] outline-none shadow-sm min-w-[160px]"
+                          value={schedulerYearGroup}
+                          onChange={(e) => setSchedulerYearGroup(e.target.value)}
+                        >
+                          <optgroup label="PRIMARY SCHOOL">
+                            {primaryYearGroups.map(yg => <option key={yg} value={yg}>{yg}</option>)}
+                          </optgroup>
+                          <optgroup label="SECONDARY SCHOOL">
+                            {secondaryYearGroups.map(yg => <option key={yg} value={yg}>{yg}</option>)}
+                          </optgroup>
+                        </select>
+                      )}
+                      
+                      {schedulerViewMode === 'teacher' && (
+                        <div className="flex items-center gap-1.5">
+                          <select 
+                            className="bg-[#FEFCE8]/20 border-2 border-[#FEFCE8] px-3 py-1.5 rounded-lg text-xs font-black text-[#064E3B] outline-none shadow-sm min-w-[165px]"
+                            value={selectedTeacherSchedule}
+                            onChange={(e) => setSelectedTeacherSchedule(e.target.value)}
+                          >
+                            {teachers.map(t => (
+                              <option key={t.id} value={t.id}>
+                                {t.name} {t.locked ? '🔒' : ''}
+                              </option>
+                            ))}
+                          </select>
+                          {(() => {
+                            const selT = teachers.find(t => t.id === selectedTeacherSchedule);
+                            if (!selT) return null;
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateTeachersAndSave(teachers.map(t => t.id === selT.id ? { ...t, locked: !t.locked } : t));
+                                }}
+                                className={cn(
+                                  "p-1.5 rounded-lg border transition-all cursor-pointer flex items-center justify-center bg-white",
+                                  selT.locked 
+                                    ? "bg-amber-100 border-amber-300 text-amber-600 hover:bg-amber-200" 
+                                    : "border-gray-200 text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                                )}
+                                title={selT.locked ? "Unlock teacher's timetable" : "Lock teacher's timetable"}
+                              >
+                                {selT.locked ? <Lock size={12} /> : <Unlock size={12} />}
+                              </button>
+                            );
+                          })()}
+                        </div>
+                      )}
+
+                      {schedulerViewMode === 'master' && (
+                        <div className="flex items-center gap-2">
+                          <input 
+                            type="text"
+                            placeholder="Search teacher..."
+                            value={masterTeacherSearch}
+                            onChange={(e) => setMasterTeacherSearch(e.target.value)}
+                            className="bg-white border-2 border-[#FEFCE8] px-3 py-1.5 rounded-lg text-xs font-black text-[#064E3B] placeholder-gray-400 outline-none shadow-sm w-[150px]"
+                          />
+                          <input 
+                            type="text"
+                            placeholder="Filter subject..."
+                            value={masterSubjectSearch}
+                            onChange={(e) => setMasterSubjectSearch(e.target.value)}
+                            className="bg-white border-2 border-[#FEFCE8] px-3 py-1.5 rounded-lg text-xs font-black text-[#064E3B] placeholder-gray-400 outline-none shadow-sm w-[130px]"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-4 pt-1">
+                  {/* Left part of action bar */}
+                  <div className="flex flex-wrap items-center gap-2.5">
                     <button 
                       onClick={() => setAdminTab('assignments')}
-                      className="px-6 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm flex items-center gap-2 hover:bg-indigo-100"
+                      className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
                     >
-                      <UserPlus size={14} /> Staff Assignments
-                    </button>
-                    <button 
-                      onClick={() => setSchedulerViewMode('class')}
-                      className={cn(
-                        "px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm",
-                        schedulerViewMode === 'class' ? "bg-[#064E3B] text-white" : "bg-white text-[#064E3B] border-2 border-[#FEFCE8]"
-                      )}
-                    >
-                      Class View
-                    </button>
-                    <button 
-                      onClick={() => {
-                        setSchedulerViewMode('teacher');
-                        if (!selectedTeacherSchedule && teachers.length > 0) {
-                          setSelectedTeacherSchedule(teachers[0].id);
-                        }
-                      }}
-                      className={cn(
-                        "px-6 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm",
-                        schedulerViewMode === 'teacher' ? "bg-[#064E3B] text-white" : "bg-white text-[#064E3B] border-2 border-[#FEFCE8]"
-                      )}
-                    >
-                      Teacher View
-                    </button>
-                    <button 
-                      onClick={autoGenerateTimetable}
-                      className="px-6 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg hover:brightness-110 flex items-center gap-2"
-                    >
-                      <Zap size={14} className="fill-current" /> Auto-Generate
+                      <UserPlus size={12} /> Staff Assignments
                     </button>
 
-                    <div className="flex bg-gray-100/50 p-1 rounded-xl border border-gray-200/50 gap-1 ml-4">
+                    <button 
+                      onClick={autoGenerateTimetable}
+                      className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-md hover:brightness-110 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Zap size={12} className="fill-current" /> Auto-Generate
+                    </button>
+
+                    <div className="flex bg-gray-100 p-0.5 rounded-xl gap-0.5">
                       <button 
                         onClick={() => setTimetableOrientation('vertical')}
                         title="Days as columns, times as rows"
                         className={cn(
-                          "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5",
-                          timetableOrientation === 'vertical' ? "bg-[#064E3B] text-white shadow" : "text-[#064E3B]/60 hover:text-[#064E3B]"
+                          "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5",
+                          timetableOrientation === 'vertical' ? "bg-white text-[#064E3B] shadow-sm" : "text-[#064E3B]/60 hover:text-[#064E3B]"
                         )}
                       >
-                        <LayoutGrid size={12} /> Vertical View
+                        <LayoutGrid size={10} /> Vertical View
                       </button>
                       <button 
                         onClick={() => setTimetableOrientation('horizontal')}
                         title="Days as rows, times as columns"
                         className={cn(
-                          "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5",
-                          timetableOrientation === 'horizontal' ? "bg-[#064E3B] text-white shadow" : "text-[#064E3B]/60 hover:text-[#064E3B]"
+                          "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5",
+                          timetableOrientation === 'horizontal' ? "bg-white text-[#064E3B] shadow-sm" : "text-[#064E3B]/60 hover:text-[#064E3B]"
                         )}
                       >
-                        <Layout size={12} /> Horizontal View
+                        <Layout size={10} /> Horizontal View
                       </button>
                     </div>
                   </div>
+
+                  {/* Actions & Resets */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button 
+                      onClick={() => saveTimetableToFirebase(teachers, staffAssignments, assignmentQuotas, timetableGrid)}
+                      className="px-4 py-2 bg-[#064E3B] hover:bg-[#059669] text-white rounded-xl font-black uppercase text-[10px] tracking-wider shadow hover:scale-[1.01] active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Download size={12} /> Save to Cloud
+                    </button>
+                    
+                    <button 
+                      onClick={downloadTimetableExcel}
+                      disabled={isDownloading}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black uppercase text-[10px] tracking-wider shadow hover:scale-[1.01] active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      {isDownloading ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={12} />}
+                      Excel
+                    </button>
+
+                    <button 
+                      onClick={downloadTimetablePDF}
+                      disabled={isDownloading}
+                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-black uppercase text-[10px] tracking-wider shadow hover:scale-[1.01] active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      {isDownloading ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
+                      PDF
+                    </button>
+
+                    <button 
+                      onClick={downloadTimetableDocx}
+                      disabled={isDownloading}
+                      className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-black uppercase text-[10px] tracking-wider shadow hover:scale-[1.01] active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      {isDownloading ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
+                      Word
+                    </button>
+
+                    <button 
+                      onClick={() => {
+                        const newGrid = { ...timetableGrid };
+                        newGrid[schedulerYearGroup] = {};
+                        ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach(day => {
+                          newGrid[schedulerYearGroup][day] = Array(12).fill(null);
+                        });
+                        setTimetableGrid(newGrid);
+                      }}
+                      className="px-4 py-1.5 bg-red-50 hover:bg-red-500 hover:text-white text-red-600 rounded-xl font-black uppercase text-[10px] tracking-wider transition-colors"
+                    >
+                      Reset Grid
+                    </button>
+                  </div>
                 </div>
-                <div className="flex gap-4">
-                   <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-black uppercase text-[#064E3B]/40 ml-1">
-                        {schedulerViewMode === 'class' ? 'Select Year Group' : 'Select Teacher'}
-                      </label>
-                      {schedulerViewMode === 'class' ? (
-                        <select 
-                          className="bg-white border-2 border-[#FEFCE8] px-4 py-2.5 rounded-xl font-black text-[#064E3B] outline-none shadow-sm min-w-[200px]"
-                          value={schedulerYearGroup}
-                          onChange={(e) => setSchedulerYearGroup(e.target.value)}
-                        >
-                          {yearGroups.map(yg => <option key={yg} value={yg}>{yg}</option>)}
-                        </select>
-                      ) : (
-                        <select 
-                          className="bg-white border-2 border-[#FEFCE8] px-4 py-2.5 rounded-xl font-black text-[#064E3B] outline-none shadow-sm min-w-[200px]"
-                          value={selectedTeacherSchedule}
-                          onChange={(e) => setSelectedTeacherSchedule(e.target.value)}
-                        >
-                          {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                        </select>
+              </div>
+
+
+
+              {/* Schedule Protection Center / Quick Lock Panel */}
+              <div className="bg-white rounded-3xl p-6 border-2 border-amber-100/60 shadow-xl space-y-4">
+                <div className="flex justify-between items-center border-b border-gray-100 pb-3 flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center text-amber-600">
+                      <Lock size={16} />
+                    </div>
+                    <div>
+                      <h4 className="font-black text-sm text-[#064E3B] uppercase tracking-tight">Schedule Protection Center</h4>
+                      <p className="text-[10px] text-[#064E3B]/60 font-bold uppercase tracking-wider">Lock teachers who have a good timetable so Auto-Generate won&apos;t modify them</p>
+                    </div>
+                  </div>
+                  <div className="bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-black uppercase px-3 py-1 rounded-full flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                    {teachers.filter(t => t.locked).length} of {teachers.length} Saved &amp; Locked
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 max-h-[140px] overflow-y-auto p-1 custom-scrollbar">
+                  {teachers.map(t => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => {
+                        updateTeachersAndSave(teachers.map(teacher => teacher.id === t.id ? { ...teacher, locked: !teacher.locked } : teacher));
+                      }}
+                      className={cn(
+                        "px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 border cursor-pointer",
+                        t.locked 
+                          ? "bg-amber-100/70 border-amber-300 text-amber-800 hover:bg-amber-200" 
+                          : "bg-gray-50 border-gray-200 text-gray-500 hover:border-gray-300 hover:text-gray-700 hover:bg-gray-100"
                       )}
-                   </div>
-                   <button 
-                    onClick={() => saveTimetableToFirebase(teachers, staffAssignments, assignmentQuotas, timetableGrid)}
-                    className="self-end px-6 py-2 bg-emerald-600 text-white rounded-xl font-black uppercase text-xs tracking-widest shadow-md hover:bg-emerald-700 transition-colors flex items-center gap-2"
-                   >
-                     <Download size={14} /> Save to Cloud
-                   </button>
-                   <button 
-                    onClick={() => {
-                      const newGrid = { ...timetableGrid };
-                      newGrid[schedulerYearGroup] = {};
-                      ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach(day => {
-                        newGrid[schedulerYearGroup][day] = Array(12).fill(null);
-                      });
-                      setTimetableGrid(newGrid);
-                    }}
-                    className="self-end px-6 py-2 bg-red-50 text-red-600 rounded-xl font-black uppercase text-xs tracking-widest shadow-md hover:bg-red-500 hover:text-white transition-colors"
-                   >
-                     Reset Grid
-                   </button>
+                    >
+                      {t.locked ? <Lock size={12} className="text-amber-600" /> : <Unlock size={12} className="opacity-40" />}
+                      <span>{t.name}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
 
               {timetableOptions.length > 0 && (
                 <motion.div 
-                  initial={{ opacity: 0, y: -20 }}
+                  initial={{ opacity: 0, y: -25 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="sticky top-24 z-[40] bg-[#FEFCE8] border-2 border-[#FACC15]/20 p-6 rounded-[2rem] shadow-2xl space-y-4"
+                  className="bg-white border-4 border-indigo-600/20 p-6 rounded-[2.5rem] shadow-2xl space-y-6"
                 >
-                  <div className="flex justify-between items-center px-2">
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-gray-100 pb-4 gap-4">
                     <div>
-                      <div className="flex items-center gap-2">
-                        <Zap size={18} className="text-amber-600 fill-amber-600" />
-                        <h4 className="text-lg font-black text-[#854D0E] uppercase tracking-tight">AI Generated Variations</h4>
+                      <div className="flex items-center gap-2.5">
+                        <div className="bg-gradient-to-r from-purple-500 to-indigo-600 p-2 rounded-xl text-white shadow-md">
+                          <Zap size={18} className="fill-current" />
+                        </div>
+                        <div>
+                          <h4 className="text-xl font-black text-indigo-950 uppercase tracking-tight">AI Generated Variations Hub</h4>
+                          <p className="text-indigo-600/70 font-bold text-xs uppercase tracking-widest mt-0.5">
+                            12 active timetable pipelines ready. Compare, switch, and edit directly without confirmation!
+                          </p>
+                        </div>
                       </div>
-                      <p className="text-[#854D0E]/60 font-bold text-[10px] uppercase tracking-widest mt-0.5">Previewing Option {selectedTimetableOption !== null ? selectedTimetableOption + 1 : "?"} of {timetableOptions.length}</p>
                     </div>
-                    <div className="flex items-center gap-4">
-                      <div className="flex items-center gap-2 bg-white/50 p-1.5 rounded-xl border border-amber-200">
-                        <button 
-                          onClick={() => {
-                            const nextIdx = (selectedTimetableOption !== null ? (selectedTimetableOption - 1 + 5) % 5 : 0);
-                            setSelectedTimetableOption(nextIdx);
-                            setTimetableGrid(timetableOptions[nextIdx].grid);
-                          }}
-                          className="p-2 hover:bg-white rounded-lg transition-all text-[#854D0E]"
-                        >
-                          <ChevronLeft size={16} />
-                        </button>
-                        <span className="font-black text-xs text-[#854D0E] min-w-[70px] text-center">
-                          {selectedTimetableOption !== null ? selectedTimetableOption + 1 : 0} / 5
-                        </span>
-                        <button 
-                          onClick={() => {
-                            const nextIdx = (selectedTimetableOption !== null ? (selectedTimetableOption + 1) % 5 : 0);
-                            setSelectedTimetableOption(nextIdx);
-                            setTimetableGrid(timetableOptions[nextIdx].grid);
-                          }}
-                          className="p-2 hover:bg-white rounded-lg transition-all text-[#854D0E]"
-                        >
-                          <ChevronRight size={16} />
-                        </button>
-                      </div>
+                    
+                    <div className="flex items-center gap-3 w-full md:w-auto self-stretch md:self-auto shrink-0">
                       <button 
                         onClick={() => {
                           setTimetableOptions([]);
                           setSelectedTimetableOption(null);
                         }}
-                        className="p-2.5 bg-white text-[#854D0E] border-2 border-amber-200 rounded-xl hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all font-black"
-                        title="Cancel & Clear Options"
+                        className="px-5 py-2.5 bg-red-50 text-red-600 hover:bg-red-100 border border-red-200/50 rounded-xl transition-all font-black text-[10px] uppercase tracking-wider flex items-center gap-2 cursor-pointer w-full md:w-auto justify-center"
+                        title="Dismiss options panel and keep selected"
                       >
-                        <X size={18} />
+                        <X size={14} /> Clear AI Variations
                       </button>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-                    {timetableOptions.map((opt, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => {
-                          setSelectedTimetableOption(idx);
-                          setTimetableGrid(opt.grid);
-                        }}
-                        className={cn(
-                          "relative p-4 rounded-2xl border-2 transition-all flex flex-col items-start gap-2",
-                          selectedTimetableOption === idx 
-                            ? "bg-[#064E3B] border-[#064E3B] text-white shadow-lg overflow-hidden" 
-                            : "bg-white border-[#FACC15]/20 text-[#064E3B] hover:border-[#FACC15]"
-                        )}
-                      >
-                        {selectedTimetableOption === idx && (
-                          <motion.div 
-                            layoutId="active-opt"
-                            className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent pointer-events-none"
-                          />
-                        )}
-                        
-                        <div className="flex justify-between items-center w-full">
-                          <span className={cn(
-                            "font-black text-[10px] uppercase tracking-tighter",
-                            selectedTimetableOption === idx ? "text-white" : "text-[#854D0E]"
-                          )}>Option {idx + 1}</span>
-                          <span className={cn(
-                             "text-[9px] font-bold px-1.5 py-0.5 rounded-full",
-                             selectedTimetableOption === idx ? "bg-white/20 text-white" : "bg-emerald-50 text-emerald-600"
-                          )}>{opt.quality.toFixed(0)}% Fill</span>
-                        </div>
+                  {/* Side-by-Side Comparison Matrix */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+                    {timetableOptions.map((opt, idx) => {
+                      const isSelected = selectedTimetableOption === idx;
+                      return (
+                        <div
+                          key={idx}
+                          onClick={() => {
+                            setSelectedTimetableOption(idx);
+                            setTimetableGrid(opt.grid);
+                          }}
+                          className={cn(
+                            "relative rounded-[2rem] border-3 p-5 transition-all text-left flex flex-col gap-4 cursor-pointer hover:shadow-lg hover:-translate-y-0.5",
+                            isSelected 
+                              ? "bg-indigo-50/50 border-indigo-600 shadow-md ring-4 ring-indigo-600/10" 
+                              : "bg-gray-50/50 border-gray-200 text-gray-700 hover:border-indigo-300"
+                          )}
+                        >
+                          {isSelected && (
+                            <span className="absolute -top-3 left-6 px-3 py-1 bg-indigo-600 text-white rounded-full font-black uppercase text-[8px] tracking-widest shadow-sm">
+                              Currently Active
+                            </span>
+                          )}
 
-                        {/* Mini Timetable Visualization */}
-                        <div className="grid grid-cols-5 gap-0.5 w-full h-8 mt-1">
-                          {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => (
-                            <div key={day} className="flex flex-col gap-0.5 h-full opacity-60">
-                              {[0,1,2,3,4,5,6,7].map((sI) => (
-                                <div 
-                                  key={sI} 
-                                  className={cn(
-                                    "w-full h-px rounded-[0.5px]",
-                                    opt.grid[schedulerYearGroup]?.[day]?.[sI] 
-                                      ? (selectedTimetableOption === idx ? "bg-white" : "bg-[#064E3B]")
-                                      : (selectedTimetableOption === idx ? "bg-white/10" : "bg-gray-100")
-                                  )} 
-                                />
-                              ))}
+                          <div className="flex justify-between items-center w-full">
+                            <span className="font-extrabold text-sm text-indigo-950">Option {idx + 1}</span>
+                            <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-black">
+                              {opt.quality.toFixed(0)}% Fill
+                            </span>
+                          </div>
+
+                          {/* Stats checklist inside each option card */}
+                          <div className="grid grid-cols-2 gap-2 text-[9px] text-gray-500 font-bold border-b border-gray-100 pb-3">
+                            <div>
+                              <p className="text-gray-400 font-medium uppercase tracking-wider">Fill Slots</p>
+                              <p className="text-gray-800 text-xs font-black">{opt.filledSlots} Periods</p>
                             </div>
-                          ))}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
+                            <div>
+                              <p className="text-gray-400 font-medium uppercase tracking-wider">Conflicts</p>
+                              <span className="text-emerald-600 text-xs font-black flex items-center gap-1">✓ 0 Conflict</span>
+                            </div>
+                          </div>
 
-                  <div className="flex justify-center border-t border-[#FACC15]/20 pt-4 mt-2">
-                    <button
-                      onClick={() => {
-                        setTimetableOptions([]);
-                        setSelectedTimetableOption(null);
-                        alert("Timetable Variation Applied Successfully!");
-                      }}
-                      className="px-8 py-3 bg-[#064E3B] text-white rounded-xl font-black uppercase text-[10px] tracking-[0.2em] hover:bg-[#059669] transition-all shadow-xl flex items-center gap-3 active:scale-95"
-                    >
-                      <CheckCircle size={16} /> Confirm Selection
-                    </button>
+                          {/* Miniature timetable schedule visualization */}
+                          <div className="space-y-2">
+                            <div className="flex justify-between items-center">
+                              <p className="text-[9px] font-black uppercase text-[#064E3B]/60 tracking-wider">
+                                {schedulerViewMode === 'class' 
+                                  ? `Schedule (${schedulerYearGroup})` 
+                                  : `Schedule (${teachers.find(t => t.id === selectedTeacherSchedule)?.name || 'Teacher'})`}
+                              </p>
+                            </div>
+
+                            <div className="grid grid-cols-5 gap-1 bg-white p-2 rounded-2xl border border-gray-150">
+                              {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map((day) => {
+                                const slots = getSlots(day, schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7");
+                                return (
+                                  <div key={day} className="flex flex-col gap-1 text-center">
+                                    <span className="text-[8px] font-extrabold text-gray-400 block border-b pb-0.5 bg-gray-50 uppercase">{day.substring(0, 1)}</span>
+                                    <div className="flex flex-col gap-0.5">
+                                      {slots.map((slot, sIdx) => {
+                                        const isSpecial = slot.type !== "period" && slot.type !== "assembly" && slot.type !== "registration";
+                                        
+                                        let cellColor = "bg-gray-50 text-gray-300";
+                                        let cellText = "-";
+                                        let titleText = `P${sIdx+1}: Empty`;
+
+                                        if (schedulerViewMode === 'class') {
+                                          const assignment = opt.grid[schedulerYearGroup]?.[day]?.[sIdx];
+                                          if (isSpecial) {
+                                            cellColor = "bg-amber-50 text-amber-500";
+                                            cellText = "★";
+                                            titleText = slot.type;
+                                          } else if (slot.type === "assembly") {
+                                            cellColor = "bg-indigo-50 text-indigo-500";
+                                            cellText = "ASM";
+                                            titleText = "Assembly";
+                                          } else if (slot.type === "registration") {
+                                            cellColor = "bg-emerald-50 text-emerald-600";
+                                            cellText = "REG";
+                                            titleText = "Registration";
+                                          } else if (assignment) {
+                                            cellColor = getSubjectColorClass(assignment.subject);
+                                            cellText = getSubjectAbbreviation(assignment.subject);
+                                            const teacherName = teachers.find(t => t.id === assignment.teacherId)?.name || 'Teacher';
+                                            titleText = `${assignment.subject} (${teacherName})`;
+                                          }
+                                        } else {
+                                          // Teacher view
+                                          let assignedSubject = "";
+                                          let assignedYg = "";
+                                          Object.entries(opt.grid).forEach(([yg, days]) => {
+                                            const slotData = days[day]?.[sIdx];
+                                            if (slotData && slotData.teacherId === selectedTeacherSchedule) {
+                                              assignedSubject = slotData.subject;
+                                              assignedYg = yg;
+                                            }
+                                          });
+
+                                          if (isSpecial) {
+                                            cellColor = "bg-amber-50 text-amber-500";
+                                            cellText = "★";
+                                            titleText = slot.type;
+                                          } else if (slot.type === "assembly") {
+                                            cellColor = "bg-indigo-50 text-indigo-500";
+                                            cellText = "ASM";
+                                            titleText = "Assembly";
+                                          } else if (slot.type === "registration") {
+                                            const homeroomTeacherId = staffAssignments[`${schedulerYearGroup}-ASSEMBLY/ HOMEROOM`];
+                                            const isSelectedHomeroom = homeroomTeacherId === selectedTeacherSchedule;
+
+                                            cellColor = isSelectedHomeroom ? "bg-emerald-50 text-emerald-600" : "bg-gray-50 text-gray-300";
+                                            cellText = isSelectedHomeroom ? "REG" : "-";
+                                            titleText = isSelectedHomeroom ? "Homeroom Duty" : "Free";
+                                          } else if (assignedSubject) {
+                                            cellColor = getSubjectColorClass(assignedSubject);
+                                            cellText = assignedYg.replace("Year ", "Y");
+                                            titleText = `${assignedSubject} with ${assignedYg}`;
+                                          }
+                                        }
+
+                                        return (
+                                          <div 
+                                            key={sIdx} 
+                                            title={titleText}
+                                            className={cn(
+                                              "h-4 rounded-[4px] flex items-center justify-center text-[7px] font-black tracking-tighter truncate transition-all",
+                                              cellColor
+                                            )}
+                                          >
+                                            {cellText}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="mt-1">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedTimetableOption(idx);
+                                setTimetableGrid(opt.grid);
+                              }}
+                              className={cn(
+                                "w-full py-2 rounded-xl font-black text-[9px] uppercase tracking-wider transition-all shadow-sm",
+                                isSelected 
+                                  ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow" 
+                                  : "bg-white border border-gray-200 hover:bg-gray-50 text-gray-700"
+                              )}
+                            >
+                              {isSelected ? "✓ Active & Selected" : "Compare & View"}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </motion.div>
               )}
 
-              <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-start">
+              {schedulerViewMode === 'master' ? (
+                /* Master spreadsheet view container */
+                <div className="bg-white rounded-3xl p-6 shadow-xl border-2 border-gray-100 relative animate-fade-in space-y-6">
+                  {renderMasterSpreadsheet()}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                 {/* Assignments Sidebar */}
-                <div className="lg:col-span-1 bg-white rounded-3xl p-6 shadow-xl border-2 border-[#FEFCE8] space-y-6 max-h-[800px] overflow-y-auto custom-scrollbar">
-                  <h4 className="font-black text-[#064E3B] uppercase text-xs tracking-widest border-b pb-2 mb-4">Available Periods ({schedulerYearGroup})</h4>
-                  <div className="space-y-3">
+                <div className="lg:col-span-3 bg-white rounded-2xl p-4 shadow-lg border-2 border-[#FEFCE8] space-y-4 max-h-[800px] overflow-y-auto custom-scrollbar">
+                  <h4 className="font-black text-[#064E3B] uppercase text-[10px] tracking-wider border-b pb-2 mb-2">Available Periods ({schedulerYearGroup})</h4>
+                  <div className="space-y-2">
                     {assignmentQuotas.filter(q => q.yearGroup === schedulerYearGroup).map((quota) => {
                       const remaining = getRemainingPeriods(quota.teacherId, quota.subject, schedulerYearGroup);
                       const teacher = teachers.find(t => t.id === quota.teacherId);
@@ -4496,48 +7926,50 @@ export default function App() {
                           draggable={remaining > 0}
                           onDragStart={() => setDraggedAssignment(quota)}
                           className={cn(
-                            "p-3 rounded-2xl border-2 transition-all cursor-move group",
+                            "p-2.5 rounded-xl border-2 transition-all cursor-move group",
                             remaining > 0 
-                              ? "bg-[#FEFCE8]/30 border-[#FACC15]/20 hover:border-[#FACC15] hover:shadow-md" 
+                              ? `${getSubjectColorClass(quota.subject)} hover:shadow-md` 
                               : "bg-gray-50 border-gray-100 opacity-50 cursor-not-allowed"
                           )}
                         >
                           <div className="flex justify-between items-start">
-                            <p className="text-[10px] font-black uppercase text-[#064E3B]/60">{quota.subject}</p>
-                            <div className="flex items-center gap-2">
+                            <p className="text-[9px] font-black uppercase opacity-75">{quota.subject}</p>
+                            <div className="flex items-center gap-1.5">
                               <span className={cn(
-                                "text-[10px] font-black px-2 py-0.5 rounded-full",
-                                remaining > 0 ? "bg-[#FACC15] text-[#064E3B]" : "bg-gray-200 text-gray-400"
+                                "text-[9px] font-black px-1.5 py-0.5 rounded-full bg-black/5",
+                                remaining > 0 ? "opacity-100" : "opacity-40"
                               )}>{remaining} Left</span>
                               <button 
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   setAssignmentQuotas(assignmentQuotas.filter(q => !(q.teacherId === quota.teacherId && q.subject === quota.subject)));
                                 }}
-                                className="text-red-400 hover:text-red-600 transition-colors p-1"
+                                className="text-red-600 hover:text-red-700 hover:scale-105 transition-all p-0.5"
                               >
-                                <Trash2 size={12} />
+                                <Trash2 size={10} />
                               </button>
                             </div>
                           </div>
-                          <p className="text-sm font-black text-[#064E3B] mt-1 mb-2">{teacher?.name || 'Unknown'}</p>
-                          <div className="flex items-center gap-2 pt-2 border-t border-[#FACC15]/10">
+                          <p className="text-xs font-black opacity-100 mt-0.5 mb-1.5">
+                            {quota.teacherId ? quota.teacherId.split(',').map(id => teachers.find(t => t.id === id)?.name || 'Unknown').join(' & ') : 'No Teacher'}
+                          </p>
+                          <div className="flex items-center gap-1.5 pt-1.5 border-t border-black/5">
                             <input 
                               type="number"
-                              className="w-12 p-1 text-[10px] font-black border-2 border-[#FACC15]/20 rounded-lg bg-white outline-none focus:border-[#FACC15]"
+                              className="w-10 p-0.5 text-[9px] font-black border-2 border-[#FACC15]/20 rounded bg-white outline-none focus:border-[#FACC15]"
                               value={quota.total}
                               onClick={(e) => e.stopPropagation()}
                               onChange={(e) => {
-                                const val = parseInt(e.target.value) || 0;
-                                // Sync total periods across all year groups for this teacher/subject
-                                setAssignmentQuotas(assignmentQuotas.map(q => 
-                                  (q.teacherId === quota.teacherId && q.subject === quota.subject) 
-                                  ? { ...q, total: val } 
-                                  : q
-                                ));
+                                  const val = parseInt(e.target.value) || 0;
+                                  // Sync total periods across all year groups for this teacher/subject
+                                  setAssignmentQuotas(assignmentQuotas.map(q => 
+                                    (q.teacherId === quota.teacherId && q.subject === quota.subject) 
+                                    ? { ...q, total: val } 
+                                    : q
+                                  ));
                               }}
                             />
-                            <span className="text-[9px] font-black uppercase text-[#064E3B]/30 tracking-tight">Total Periods (Global)</span>
+                            <span className="text-[8px] font-black uppercase text-[#064E3B]/40 tracking-tight">Global Total</span>
                           </div>
                         </div>
                       );
@@ -4545,14 +7977,14 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="lg:col-span-3 bg-white rounded-[3rem] p-10 shadow-2xl overflow-x-auto border-8 border-white ring-1 ring-black/5 animate-fade-in">
+                <div ref={timetableRef} data-ref-id="timetable-capture-container" className="lg:col-span-9 bg-white rounded-2xl p-4 sm:p-6 shadow-xl overflow-x-auto border-2 border-gray-100 animate-fade-in">
                   {timetableOrientation === 'vertical' ? (
-                    <div className="grid grid-cols-6 gap-4 min-w-[900px]">
-                      <div className="h-16" /> {/* Corner Spacer */}
+                    <div className="grid grid-cols-6 gap-2 w-full min-w-0">
+                      <div className="h-12" /> {/* Corner Spacer */}
                       {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => (
-                        <div key={day} className="h-16 flex flex-col items-center justify-center bg-[#FEFCE8]/50 rounded-2xl border-2 border-[#FACC15]/20">
-                          <p className="font-black text-[#064E3B] uppercase tracking-widest text-sm">{day}</p>
-                          <p className="text-[10px] font-bold text-[#064E3B]/60 font-mono tracking-tight">{day === "Friday" ? "1:10pm" : "3:00pm"}</p>
+                        <div key={day} className="h-12 flex flex-col items-center justify-center bg-[#FEFCE8]/30 rounded-xl border border-[#FACC15]/20">
+                          <p className="font-extrabold text-[#064E3B] uppercase tracking-wider text-xs">{day}</p>
+                          <p className="text-[8px] font-bold text-[#064E3B]/60 font-mono tracking-tight">{getDayFinishTime(day)}</p>
                         </div>
                       ))}
 
@@ -4560,18 +7992,18 @@ export default function App() {
                       {getSlots("Monday", schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7").map((slot, sIdx) => {
                         return (
                           <React.Fragment key={sIdx}>
-                            <div className="flex flex-col items-end justify-center pr-6 py-2 border-r-2 border-[#FEFCE8]/50">
+                            <div className="flex flex-col items-end justify-center pr-3 py-1.5 border-r border-[#FEFCE8]/50">
                               {slot.type === "period" ? (
-                                <p className="text-[10px] font-black text-[#064E3B] opacity-40 uppercase tracking-widest leading-none mb-1">P{sIdx + 1}</p>
+                                <p className="text-[9px] font-black text-[#064E3B] opacity-45 uppercase tracking-wider leading-none mb-0.5">P{sIdx + 1}</p>
                               ) : (
-                                <p className="text-[10px] font-black text-amber-600 opacity-60 uppercase tracking-widest leading-none mb-1">{slot.type.replace('_', ' ')}</p>
+                                <p className="text-[9px] font-black text-amber-600 opacity-70 uppercase tracking-wider leading-none mb-0.5">{slot.type.replace('_', ' ')}</p>
                               )}
-                              <p className="text-sm font-black text-[#064E3B] whitespace-nowrap">{slot.start}</p>
-                              <p className="text-[10px] font-bold text-[#064E3B]/40 leading-none mt-1">{slot.end}</p>
+                              <p className="text-xs font-black text-[#064E3B] whitespace-nowrap">{slot.start}</p>
+                              <p className="text-[9px] font-extrabold text-[#064E3B]/40 leading-none mt-0.5">{slot.end}</p>
                             </div>
                             {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => {
                               return (
-                                <div key={day} className="flex items-center justify-center w-full">
+                                <div key={day} className="flex items-center justify-center w-full min-w-0">
                                   {renderCellContent(day, sIdx)}
                                 </div>
                               );
@@ -4583,37 +8015,37 @@ export default function App() {
                   ) : (
                     /* Horizontal View (days as rows, times as columns) */
                     <div 
-                      className="grid gap-4 min-w-[1000px]"
+                      className="grid gap-2 overflow-x-auto custom-scrollbar w-full"
                       style={{ 
-                        gridTemplateColumns: `repeat(${1 + getSlots("Monday", schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7").length}, minmax(130px, 1fr))` 
+                        gridTemplateColumns: `repeat(${1 + getSlots("Monday", schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7").length}, minmax(75px, 1fr))` 
                       }}
                     >
                       {/* Corner Spacer Header */}
-                      <div className="h-16 flex flex-col items-center justify-center bg-gray-50 rounded-2xl border-2 border-gray-200/50">
-                        <p className="font-black text-[#064E3B] uppercase tracking-widest text-[9px]">DAY \ SLOT</p>
+                      <div className="h-12 flex flex-col items-center justify-center bg-gray-50 rounded-xl border border-gray-100">
+                        <p className="font-black text-[#064E3B] uppercase tracking-wider text-[8px]">DAY \ SLOT</p>
                       </div>
 
                       {/* Timeslots Column Headers */}
                       {getSlots("Monday", schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7").map((slot, sIdx) => (
-                        <div key={sIdx} className="h-16 flex flex-col items-center justify-center bg-[#FEFCE8]/50 rounded-2xl border-2 border-[#FACC15]/20 px-2 text-center">
-                          <p className="font-black text-[#064E3B] uppercase tracking-widest text-[11px] leading-tight">
+                        <div key={sIdx} className="h-12 flex flex-col items-center justify-center bg-[#FEFCE8]/30 rounded-xl border border-[#FACC15]/10 px-1 text-center">
+                          <p className="font-extrabold text-[#064E3B] uppercase tracking-wider text-[10px] leading-tight">
                             {slot.type === "period" ? `P${sIdx + 1}` : slot.type.replace('_', ' ')}
                           </p>
-                          <p className="text-[9px] font-bold text-[#064E3B]/60 font-mono tracking-tight mt-0.5">{slot.start} - {slot.end}</p>
+                          <p className="text-[8px] font-bold text-[#064E3B]/60 font-mono tracking-tight mt-0.5">{slot.start} - {slot.end}</p>
                         </div>
                       ))}
 
                       {/* Rows corresponding to each Day */}
                       {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => (
                         <React.Fragment key={day}>
-                          <div className="flex flex-col items-center justify-center bg-gradient-to-br from-[#FEFCE8]/30 to-white rounded-2xl border-2 border-[#FACC15]/20 p-4 shadow-sm min-h-[90px]">
-                            <p className="font-black text-[#064E3B] uppercase tracking-wider text-xs">{day}</p>
-                            <p className="text-[9px] font-bold text-[#064E3B]/40 leading-none mt-1">
-                              {day === "Friday" ? "1:10pm" : "3:00pm"}
+                          <div className="flex flex-col items-center justify-center bg-gradient-to-br from-[#FEFCE8]/10 to-white rounded-xl border border-gray-100 p-2 text-center min-h-[70px]">
+                            <p className="font-black text-[#064E3B] uppercase tracking-wider text-[11px]">{day.substring(0, 3)}</p>
+                            <p className="text-[8px] font-bold text-[#064E3B]/40 leading-none mt-0.5">
+                              {getDayFinishTime(day)}
                             </p>
                           </div>
                           {getSlots(day, schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7").map((slot, sIdx) => (
-                            <div key={sIdx} className="flex items-center justify-center w-full">
+                            <div key={sIdx} className="flex items-center justify-center w-full min-w-0">
                               {renderCellContent(day, sIdx)}
                             </div>
                           ))}
@@ -4621,6 +8053,151 @@ export default function App() {
                       ))}
                     </div>
                   )}
+                </div>
+              </div>
+            )}
+
+            {/* Parallel/Simultaneous Subjects Setup Panel */}
+              <div id="parallel-subjects-config-panel" className="bg-white rounded-[2.5rem] p-10 shadow-2xl space-y-8 border-t-8 border-blue-600">
+                <div>
+                  <h4 className="text-2xl font-black text-blue-900 uppercase tracking-wider flex items-center gap-3">
+                    <span className="p-3 bg-blue-50 rounded-2xl border border-blue-100/50 text-[#3B82F6]">
+                      <Shuffle size={24} />
+                    </span>
+                    Parallel / Simultaneous Subjects Config
+                  </h4>
+                  <p className="text-blue-900/60 font-bold mt-2 text-sm leading-relaxed">
+                    Configure different subjects to happen at the same time, in the same period for a year group, taught by different teachers (e.g., student language elects: Mandarin, Chinese Second Language, Malay Foreign). Drag-and-drop and the auto-scheduler will align them automatically.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                  {/* Left Column: Create New Parallel Rule */}
+                  <div className="lg:col-span-5 bg-[#FDFBF7] rounded-[2rem] p-8 border-2 border-[#FEFCE8] space-y-6">
+                    <h5 className="text-sm font-black text-[#064E3B] uppercase tracking-wider">New Parallel Group</h5>
+                    
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block font-mono">For Year Group</label>
+                      <select
+                        value={newParallelYg}
+                        onChange={(e) => setNewParallelYg(e.target.value)}
+                        className="w-full p-4 bg-white rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold cursor-pointer"
+                      >
+                        {yearGroups.map(yg => (
+                          <option key={yg} value={yg}>{yg}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block font-mono">Select Subjects (Min 2)</label>
+                      <div className="grid grid-cols-2 gap-2 max-h-[220px] overflow-y-auto p-1 custom-scrollbar">
+                        {subjects.map(sh => {
+                          const isSelected = newParallelSubjects.includes(sh);
+                          return (
+                            <button
+                              type="button"
+                              key={sh}
+                              onClick={() => {
+                                if (isSelected) {
+                                  setNewParallelSubjects(newParallelSubjects.filter(item => item !== sh));
+                                } else {
+                                  setNewParallelSubjects([...newParallelSubjects, sh]);
+                                }
+                              }}
+                              className={cn(
+                                "p-3 rounded-xl font-bold text-xs text-left border-2 transition-all flex items-center justify-between cursor-pointer",
+                                isSelected 
+                                  ? "bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-600/10" 
+                                  : "bg-white border-gray-100 text-gray-700 hover:border-[#FACC15]/30"
+                              )}
+                            >
+                              <span className="truncate">{sh}</span>
+                              {isSelected && <span className="text-[10px] font-black shrink-0 ml-1">✓</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (newParallelSubjects.length < 2) {
+                          alert("Please select at least 2 subjects to configure as parallel.");
+                          return;
+                        }
+                        const nextRules = [
+                          ...parallelRules,
+                          {
+                            id: `prule-${Date.now()}`,
+                            yearGroup: newParallelYg,
+                            subjects: [...newParallelSubjects].sort()
+                          }
+                        ];
+                        updateParallelRulesAndSave(nextRules);
+                        setNewParallelSubjects([]);
+                        alert("Parallel subjects configuration created successfully!");
+                      }}
+                      className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-wider hover:bg-blue-700 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-blue-600/15"
+                    >
+                      <Plus size={16} /> Save Parallel Group
+                    </button>
+                  </div>
+
+                  {/* Right Column: Active Rules List */}
+                  <div className="lg:col-span-7 bg-white p-2 space-y-4">
+                    <h5 className="text-sm font-black text-blue-900 uppercase tracking-wider px-2">Active Rules ({parallelRules.length})</h5>
+                    
+                    {parallelRules.length === 0 ? (
+                      <div className="rounded-[2rem] border-2 border-dashed border-gray-100 p-12 text-center text-gray-400">
+                        <Shuffle size={32} className="mx-auto text-gray-200 mb-3" />
+                        <p className="text-sm font-black uppercase tracking-wider text-gray-300">No Parallel Subjects Configured</p>
+                        <p className="text-xs font-bold text-gray-400 mt-1">Configure parallel subjects on the left to schedule different subjects simultaneously.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[450px] overflow-y-auto pr-1 custom-scrollbar">
+                        {parallelRules.map(rule => (
+                          <div 
+                            key={rule.id}
+                            className="p-5 rounded-2xl bg-blue-50/30 border-2 border-blue-100/50 flex flex-col justify-between group relative shadow-sm"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm("Remove this parallel subjects rule?")) {
+                                  const nextRules = parallelRules.filter(r => r.id !== rule.id);
+                                  updateParallelRulesAndSave(nextRules);
+                                }
+                              }}
+                              className="absolute top-4 right-4 p-1.5 bg-red-50 text-red-500 rounded-lg hover:bg-red-100 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer shadow-sm"
+                              title="Delete parallel rule"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                            
+                            <div>
+                              <span className="px-2.5 py-1 text-[8px] font-black uppercase tracking-widest bg-blue-100 text-blue-800 rounded-full">
+                                {rule.yearGroup}
+                              </span>
+                              
+                              <div className="flex flex-wrap gap-1.5 mt-4">
+                                {rule.subjects.map(s => (
+                                  <span key={s} className="text-[10px] font-extrabold text-[#064E3B] px-2 py-1 bg-white border border-blue-100 rounded-lg">
+                                    {s}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+
+                            <p className="text-[9px] font-bold text-blue-400 mt-4 italic">
+                              Simultaneous Subjects (Same Slot)
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -4727,6 +8304,349 @@ export default function App() {
             </div>
           )}
 
+          {adminTab === 'cover' && (
+            <div className="max-w-7xl mx-auto space-y-8 pb-20 animate-fade-in">
+              {/* Header card */}
+              <div className="bg-white rounded-[3rem] p-10 shadow-xl border border-[#D1FAE5]/10">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <div>
+                    <div className="flex items-center gap-4">
+                      <div className="p-4 bg-[#F0FDF4] text-[#059669] rounded-2xl border-2 border-[#D1FAE5]">
+                        <Shuffle size={24} />
+                      </div>
+                      <div>
+                        <h3 className="text-3xl font-black text-[#064E3B] tracking-tight">Substitution Relief Planner</h3>
+                        <p className="text-xs font-bold text-[#064E3B]/60 mt-0.5 uppercase tracking-wider">Automated Relief Duties & Fair Burden Load Balancer</p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Selected School Week */}
+                  <div className="flex items-center gap-3 bg-[#F0FDF4] px-6 py-3.5 rounded-3xl border-2 border-[#D1FAE5] shadow-sm">
+                    <span className="text-[10px] font-black uppercase text-[#064E3B] tracking-wider">Academic Week:</span>
+                    <select
+                      value={selectedCoverWeek}
+                      onChange={(e) => setSelectedCoverWeek(parseInt(e.target.value) || 1)}
+                      className="bg-white px-4 py-2 border-2 border-[#D1FAE5]/40 rounded-xl font-black text-[#064E3B] outline-none shadow-sm cursor-pointer"
+                    >
+                      {Array.from({ length: 12 }, (_, i) => i + 1).map(wk => (
+                        <option key={wk} value={wk}>Week {wk}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                
+                {/* Left Panel: Inputs & Generation wizard */}
+                <div className="lg:col-span-5 space-y-8">
+                  {/* Setup card */}
+                  <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-gray-100/50 space-y-6">
+                    <div>
+                      <h4 className="text-lg font-black text-[#064E3B] uppercase tracking-wider">1. Create Absence Report</h4>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">Report absent teacher and affected dates</p>
+                    </div>
+
+                    {/* Absent Teacher Selection */}
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase text-[#064E3B]/50 tracking-wider">Absent Teacher</label>
+                      <select
+                        value={coverAbsentTeacherId}
+                        onChange={(e) => setCoverAbsentTeacherId(e.target.value)}
+                        className="w-full bg-[#F0FDF4] p-4 border-2 border-[#D1FAE5] rounded-2xl font-black text-[#064E3B] outline-none shadow-sm focus:border-[#059669] transition-all"
+                      >
+                        <option value="">-- Select Absent Teacher --</option>
+                        {teachers.map(t => (
+                          <option key={t.id} value={t.id}>{t.name} ({t.role})</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Day Selector */}
+                    <div className="space-y-3">
+                      <label className="text-[10px] font-black uppercase text-[#064E3B]/50 tracking-wider block">Absence Days</label>
+                      <div className="grid grid-cols-5 gap-2">
+                        {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => {
+                          const isChecked = coverAbsenceDays.includes(day);
+                          return (
+                            <button
+                              key={day}
+                              type="button"
+                              onClick={() => {
+                                if (isChecked) {
+                                  if (coverAbsenceDays.length > 1) {
+                                    setCoverAbsenceDays(coverAbsenceDays.filter(d => d !== day));
+                                  }
+                                } else {
+                                  setCoverAbsenceDays([...coverAbsenceDays, day]);
+                                }
+                              }}
+                              className={cn(
+                                "py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border-2 flex flex-col items-center justify-center gap-1",
+                                isChecked 
+                                  ? "bg-[#064E3B] text-white border-[#064E3B] shadow-md shadow-[#064E3B]/10" 
+                                  : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"
+                              )}
+                            >
+                              <span>{day.substring(0, 3)}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Generate Relief Duty Button */}
+                    <div className="pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!coverAbsentTeacherId) {
+                            alert("Please select a teacher that is absent.");
+                            return;
+                          }
+                          const didGen = generateCoversForDays(coverAbsentTeacherId, coverAbsenceDays, selectedCoverWeek);
+                          if (didGen) {
+                            alert(`Successfully processed and allocated fair cover substitutes for week ${selectedCoverWeek}!`);
+                          } else {
+                            alert(`No timetabled duties or homeroom assignments found for this teacher on these day(s). No covers generated.`);
+                          }
+                        }}
+                        className="w-full py-4 bg-[#064E3B] text-white rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-[#059669] transition-all shadow-lg shadow-[#064E3B]/20 flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <Zap size={16} className="fill-current" /> Auto-Allocate Fair Covers
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Fairness Tracker Dashboard */}
+                  <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-gray-100/50 space-y-6">
+                    <div>
+                      <h4 className="text-lg font-black text-[#064E3B] uppercase tracking-wider">Burden Share & Load Balance</h4>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">substitution duties assigned in week {selectedCoverWeek}</p>
+                    </div>
+
+                    <div className="space-y-4 max-h-[350px] overflow-y-auto pr-1">
+                      {teachers.map(teacher => {
+                        const coversAssigned = getWeeklyCoverCount(teacher.id, selectedCoverWeek, coverRecords);
+                        
+                        let monLoad = getDailyLoad(teacher.id, "Monday");
+                        let tueLoad = getDailyLoad(teacher.id, "Tuesday");
+                        let wedLoad = getDailyLoad(teacher.id, "Wednesday");
+                        let thuLoad = getDailyLoad(teacher.id, "Thursday");
+                        let friLoad = getDailyLoad(teacher.id, "Friday");
+                        const totalRegularPeriods = monLoad + tueLoad + wedLoad + thuLoad + friLoad;
+
+                        return (
+                          <div key={teacher.id} className="p-4 rounded-2xl bg-gray-50/50 border border-gray-100 flex items-center justify-between gap-4 hover:bg-gray-55 transition-all">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-black text-sm text-[#064E3B] truncate leading-none">{teacher.name}</span>
+                                <span className="text-[9px] font-black bg-gray-200 px-1.5 py-0.5 rounded text-gray-500 uppercase tracking-tight">{teacher.role}</span>
+                              </div>
+                              <div className="flex gap-4 text-[10px] font-bold text-gray-400 mt-2">
+                                <p>Load: <span className="text-gray-655 font-extrabold">{totalRegularPeriods} Periods/Wk</span></p>
+                              </div>
+                              
+                              {/* Fairness progress bar */}
+                              <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden mt-3">
+                                <div 
+                                  className={cn(
+                                    "h-full rounded-full transition-all duration-500",
+                                    coversAssigned === 0 ? "bg-emerald-400" :
+                                    coversAssigned === 1 ? "bg-amber-400" :
+                                    coversAssigned === 2 ? "bg-orange-400" : "bg-red-500"
+                                  )}
+                                  style={{ width: `${Math.min(100, (coversAssigned / 4) * 100)}%` }}
+                                />
+                              </div>
+                            </div>
+
+                            <div className="text-center">
+                              <div className={cn(
+                                "w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm shadow-sm",
+                                coversAssigned === 0 ? "bg-emerald-50 text-emerald-600 border border-emerald-100" :
+                                coversAssigned === 1 ? "bg-amber-50 text-amber-600 border border-amber-100" :
+                                "bg-red-50 text-red-600 border border-red-100 animate-pulse"
+                              )}>
+                                {coversAssigned}
+                              </div>
+                              <p className="text-[8px] font-black uppercase text-gray-400 tracking-wider mt-1">Covers</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="p-4 bg-[#FEFCE8] border border-amber-200/50 rounded-2xl flex items-start gap-3">
+                      <Info className="text-amber-600 shrink-0 mt-0.5" size={16} />
+                      <p className="text-[10px] font-medium leading-relaxed text-amber-800">
+                        The auto-allocation algorithm selects teachers **who are free** during the absent period, excluding teachers whose **daily lessons exceed 4**. To ensure absolute **fairness**, teachers with the lowest cumulative covers this week are selected first.
+                      </p>
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* Right Panel: Cover substitution lists */}
+                <div className="lg:col-span-7 space-y-8">
+                  <div className="bg-white rounded-[3rem] p-8 shadow-xl border border-gray-100/50 space-y-6">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h4 className="text-lg font-black text-[#064E3B] uppercase tracking-wider">Relief Cover Ledger</h4>
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">relief cover assignments for week {selectedCoverWeek}</p>
+                      </div>
+                      
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (confirm("Are you sure you want to clear all cover records for this week?")) {
+                            const cleared = coverRecords.filter(r => r.weekId !== selectedCoverWeek);
+                            setCoverRecords(cleared);
+                            saveCoversToFirestore(cleared);
+                          }
+                        }}
+                        className="px-4 py-2 bg-red-50 text-red-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all border border-red-100"
+                      >
+                        Clear Week
+                      </button>
+                    </div>
+
+                    {/* Lists */}
+                    {coverRecords.filter(r => r.weekId === selectedCoverWeek).length === 0 ? (
+                      <div className="p-16 text-center space-y-4 bg-[#F0FDF4]/20 rounded-[2.5rem] border-4 border-dashed border-[#D1FAE5]">
+                        <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center mx-auto shadow-md">
+                          <CheckCircle size={28} className="text-emerald-500" />
+                        </div>
+                        <div>
+                          <p className="font-black text-[#064E3B] text-lg">Perfect Attendance</p>
+                          <p className="text-[10px] font-black text-[#064E3B]/40 uppercase tracking-wider mt-1">No substitute cover duties needed or recorded for week {selectedCoverWeek}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4 max-h-[600px] overflow-y-auto pr-1">
+                        {coverRecords
+                          .filter(r => r.weekId === selectedCoverWeek)
+                          .sort((a,b) => {
+                            const daysOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+                            const dayDiff = daysOrder.indexOf(a.day) - daysOrder.indexOf(b.day);
+                            if (dayDiff !== 0) return dayDiff;
+                            return a.periodIdx - b.periodIdx;
+                          })
+                          .map(rec => {
+                            const otherCandidates = teachers.filter(t => {
+                              const worksThisDay = !t.workingDays || t.workingDays.includes(rec.day);
+                              return ((t.id !== rec.absentTeacherId && t.role !== 'Coordinator' && worksThisDay) || t.id === rec.coverTeacherId);
+                            }).map(t => {
+                              const isBusy = isTeacherBusyAtPeriod(t.id, rec.day, rec.periodIdx);
+                              const totalCovers = getWeeklyCoverCount(t.id, selectedCoverWeek, coverRecords);
+                              const dailyLoad = getDailyLoad(t.id, rec.day);
+                              return {
+                                teacher: t,
+                                isBusy,
+                                totalCovers,
+                                dailyLoad
+                              };
+                            }).filter(c => !c.isBusy || c.teacher.id === rec.coverTeacherId);
+
+                            return (
+                              <div key={rec.id} className="p-6 rounded-[2rem] bg-gradient-to-r from-[#F0FDF4]/40 to-white hover:from-[#F0FDF4]/80 transition-all border-2 border-[#D1FAE5]/45 space-y-4 shadow-sm">
+                                <div className="flex flex-wrap items-start justify-between gap-4">
+                                  <div className="flex gap-2 items-center">
+                                    <div className="px-3 py-1 bg-[#064E3B] text-white rounded-xl text-[10px] font-black uppercase tracking-wider">
+                                      {rec.day}
+                                    </div>
+                                    <div className="px-3 py-1 bg-[#FEFCE8] text-amber-700 rounded-xl text-[10px] font-black uppercase border border-amber-200">
+                                      {rec.periodLabel} ({rec.start} - {rec.end})
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (confirm("Delete this substitute duty assignment?")) {
+                                          const filtered = coverRecords.filter(r => r.id !== rec.id);
+                                          setCoverRecords(filtered);
+                                          saveCoversToFirestore(filtered);
+                                        }
+                                      }}
+                                      className="p-2 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all border border-red-100"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-dashed border-gray-150">
+                                  <div className="space-y-1">
+                                    <p className="text-[9px] font-black uppercase text-red-500 tracking-wider">Absent Teacher & Class</p>
+                                    <div className="text-left">
+                                      <p className="text-sm font-black text-[#064E3B]">{rec.absentTeacherName}</p>
+                                      <p className="text-xs font-bold text-gray-500">
+                                        {rec.yearGroup} • <span className="text-[#059669] font-black">{rec.subject}</span>
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <p className="text-[9px] font-black uppercase text-emerald-600 tracking-wider">Relief Designee (Fair Choice)</p>
+                                    <div className="flex items-center gap-2">
+                                      <select
+                                        value={rec.coverTeacherId}
+                                        onChange={(e) => {
+                                          const newTeacherId = e.target.value;
+                                          const targetTeacher = teachers.find(t => t.id === newTeacherId);
+                                          if (targetTeacher) {
+                                            const updated = coverRecords.map(r => r.id === rec.id ? {
+                                              ...r,
+                                              coverTeacherId: targetTeacher.id,
+                                              coverTeacherName: targetTeacher.name
+                                            } : r);
+                                            setCoverRecords(updated);
+                                            saveCoversToFirestore(updated);
+                                          }
+                                        }}
+                                        className="w-full text-xs font-black text-[#064E3B] bg-white border border-[#D1FAE5] rounded-xl p-2 outline-none shadow-sm cursor-pointer"
+                                      >
+                                        {otherCandidates.map(cand => (
+                                          <option key={cand.teacher.id} value={cand.teacher.id}>
+                                            {cand.teacher.name} (Load: {cand.dailyLoad} Pds/Day, Covers: {cand.totalCovers})
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Custom notes */}
+                                <div className="flex items-center gap-2 pt-2 border-t border-dashed border-gray-100 bg-[#F0FDF4]/20 p-2 rounded-xl">
+                                  <Edit2 size={11} className="text-gray-400" />
+                                  <input
+                                    type="text"
+                                    placeholder="Enter reason or comments (e.g., medical leave)..."
+                                    value={rec.comment || ""}
+                                    onChange={(e) => {
+                                      const text = e.target.value;
+                                      const updated = coverRecords.map(r => r.id === rec.id ? { ...r, comment: text } : r);
+                                      setCoverRecords(updated);
+                                      saveCoversToFirestore(updated);
+                                    }}
+                                    className="w-full bg-transparent text-xs font-semibold text-gray-650 outline-none hover:border-b hover:border-gray-200 focus:border-[#059669] focus:border-b"
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          )}
+
         </main>
       </div>
     );
@@ -4740,7 +8660,17 @@ export default function App() {
           <div className="w-10 h-10 bg-[#059669] rounded-xl flex items-center justify-center text-white">
             <BookOpen size={24} />
           </div>
-          <h1 className="text-xl font-black text-[#064E3B] uppercase tracking-tight">EduMagic Suite</h1>
+          <h1 className="text-xl font-black text-[#064E3B] uppercase tracking-tight flex items-center gap-2">
+            EduMagic Suite
+            <span className={cn(
+              "text-[9px] font-black uppercase px-2.5 py-1 rounded-full border tracking-wide transition-all",
+              isOnline 
+                ? "bg-emerald-50 text-emerald-700 border-emerald-200" 
+                : "bg-amber-50 text-amber-700 border-amber-200"
+            )}>
+              {isOnline ? "● Cloud Sync" : "● Offline Cache"}
+            </span>
+          </h1>
         </div>
         <div className="flex items-center gap-6">
           <div className="hidden md:flex items-center gap-3 bg-[#F0FDF4] px-4 py-2 rounded-xl border border-[#D1FAE5]">
@@ -4826,7 +8756,17 @@ export default function App() {
               <ChevronLeft size={24} />
             </button>
             <div>
-              <h2 className="text-3xl font-black text-white leading-none">Educator Studio</h2>
+              <div className="flex items-center gap-3">
+                <h2 className="text-3xl font-black text-white leading-none">Educator Studio</h2>
+                <span className={cn(
+                  "text-[9px] font-black uppercase px-2.5 py-1 rounded-full border tracking-wide transition-all shrink-0",
+                  isOnline 
+                    ? "bg-emerald-800 text-emerald-200 border-emerald-700" 
+                    : "bg-amber-800 text-amber-200 border-amber-700"
+                )}>
+                  {isOnline ? "● Cloud Sync" : "● Offline Cache"}
+                </span>
+              </div>
               <p className="text-[#FACC15] text-[10px] font-black uppercase tracking-[0.3em] mt-2">Smart Curriculum Design</p>
             </div>
           </div>
@@ -7548,6 +11488,7 @@ export default function App() {
                 <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Prepared By</label>
                 <input 
                   type="text" 
+                  list="teachers-datalist-sidebar"
                   value={content?.lessonPlan?.preparedBy || lpPreparedBy} 
                   onChange={(e) => {
                     setLpPreparedBy(e.target.value);
@@ -7555,6 +11496,11 @@ export default function App() {
                   }} 
                   className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold" 
                 />
+                <datalist id="teachers-datalist-sidebar">
+                  {teachers.map(t => (
+                    <option key={t.id} value={t.name} />
+                  ))}
+                </datalist>
               </div>
               <div className="space-y-1">
                 <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Checked By</label>
@@ -7801,7 +11747,7 @@ export default function App() {
                </div>
 
                <div className="grid grid-cols-6 border-x-2 border-b-2 border-black divide-x-2 divide-black text-[10px] font-black uppercase">
-                  <div className="col-span-3 p-3 italic opacity-60">Prepared By: <input type="text" value={content.lessonPlan.preparedBy || ""} onChange={(e) => updateLessonPlanMetadata('preparedBy', e.target.value)} className="bg-transparent font-bold ml-1 outline-none border-b border-transparent hover:border-black/10 focus:border-black/30 w-full" /></div>
+                  <div className="col-span-3 p-3 italic opacity-60">Prepared By: <input type="text" list="teachers-datalist-table" value={content.lessonPlan.preparedBy || ""} onChange={(e) => updateLessonPlanMetadata('preparedBy', e.target.value)} className="bg-transparent font-bold ml-1 outline-none border-b border-transparent hover:border-black/10 focus:border-black/30 w-full" /><datalist id="teachers-datalist-table">{teachers.map(t => <option key={t.id} value={t.name} />)}</datalist></div>
                   <div className="col-span-3 p-3 italic opacity-60">Checked By: <input type="text" value={content.lessonPlan.checkedBy || ""} onChange={(e) => updateLessonPlanMetadata('checkedBy', e.target.value)} className="bg-transparent font-bold ml-1 outline-none border-b border-transparent hover:border-black/10 focus:border-black/30 w-full" /></div>
                </div>
 
@@ -8588,12 +12534,11 @@ export default function App() {
 
   return (
     <div className="w-full h-screen bg-[#059669] flex flex-col font-sans overflow-hidden text-[#2D3436]">
+      {/* Subtle Offline-First Status Indicator */}
       {!isOnline && (
-        <div className="bg-[#EF4444] text-white py-2 px-4 text-center text-xs font-black uppercase tracking-widest flex items-center justify-center gap-3 z-[2000] shadow-lg">
-           <div className="p-1 bg-white/20 rounded-lg animate-pulse"><Loader2 size={14} className="animate-spin" /></div>
-           <span>Firestore Connectivity Issue: Reconnecting...</span>
-           {firestoreError && <span className="opacity-70 font-medium lowercase hidden md:inline ml-2">[{firestoreError}]</span>}
-           <button onClick={() => window.location.reload()} className="ml-4 px-3 py-1 bg-white text-[#EF4444] rounded-lg hover:bg-white/90 transition-all font-black">Refresh App</button>
+        <div className="fixed bottom-4 right-4 bg-amber-500 text-white font-black uppercase text-[10px] tracking-widest px-4 py-2.5 rounded-2xl shadow-2xl z-[9999] flex items-center gap-2.5 border border-amber-400">
+           <span className="w-2.5 h-2.5 rounded-full bg-white animate-pulse" />
+           <span>Operating in Offline Mode (Cached)</span>
         </div>
       )}
 
@@ -8807,6 +12752,121 @@ export default function App() {
               </div>
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {addTeacherModalOpen && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl space-y-6"
+            >
+              <div className="flex justify-between items-center">
+                <h4 className="text-2xl font-black text-[#064E3B]">Add New Staff</h4>
+                <button 
+                  onClick={() => setAddTeacherModalOpen(false)} 
+                  className="p-2 hover:bg-gray-100 rounded-full transition-all text-gray-400 hover:text-gray-600 cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Full Name</label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. MR JOHN DOE"
+                    value={newTeacherForm.name}
+                    onChange={(e) => setNewTeacherForm({...newTeacherForm, name: e.target.value})}
+                    className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Position / Role</label>
+                  <select 
+                    value={newTeacherForm.role}
+                    onChange={(e) => setNewTeacherForm({...newTeacherForm, role: e.target.value})}
+                    className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold cursor-pointer"
+                  >
+                    <option value="Teacher">Teacher</option>
+                    <option value="Coordinator">Coordinator</option>
+                    <option value="Principal">Principal</option>
+                    <option value="Admin">Admin Staff</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Max Periods per Week</label>
+                  <input 
+                    type="number" 
+                    value={newTeacherForm.maxPeriods}
+                    onChange={(e) => setNewTeacherForm({...newTeacherForm, maxPeriods: parseInt(e.target.value) || 0})}
+                    className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-2">Working Days</label>
+                  <div className="flex flex-wrap gap-2">
+                    {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => {
+                      const isSelected = newTeacherForm.workingDays.includes(day);
+                      return (
+                        <button
+                          type="button"
+                          key={day}
+                          onClick={() => {
+                            let currentDays = [...newTeacherForm.workingDays];
+                            if (currentDays.includes(day)) {
+                              if (currentDays.length > 1) {
+                                currentDays = currentDays.filter(d => d !== day);
+                              }
+                            } else {
+                              currentDays = [...currentDays, day];
+                            }
+                            setNewTeacherForm({ ...newTeacherForm, workingDays: currentDays });
+                          }}
+                          className={cn(
+                            "px-3 py-2 rounded-xl text-xs font-black transition-all border cursor-pointer",
+                            isSelected 
+                              ? "bg-[#064E3B] text-white border-[#064E3B]" 
+                              : "bg-gray-50 text-[#064E3B]/40 border-gray-100 hover:border-[#FACC15]/30"
+                          )}
+                        >
+                          {day.substring(0, 3)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              <button 
+                onClick={() => {
+                  if (!newTeacherForm.name.trim()) {
+                    alert("Please enter a teacher name.");
+                    return;
+                  }
+                  updateTeachersAndSave([...teachers, { 
+                    id: `t-${Date.now()}`, 
+                    name: newTeacherForm.name.trim().toUpperCase(), 
+                    role: newTeacherForm.role, 
+                    subjects: [], 
+                    maxPeriods: newTeacherForm.maxPeriods || 28,
+                    workingDays: newTeacherForm.workingDays
+                  }]);
+                  setAddTeacherModalOpen(false);
+                }}
+                className="w-full py-4 bg-[#064E3B] text-white rounded-2xl font-black uppercase tracking-widest hover:bg-[#059669] transition-all shadow-lg shadow-[#064E3B]/20 cursor-pointer"
+              >
+                Add Staff Member
+              </button>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 

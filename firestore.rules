@@ -80,6 +80,12 @@ service cloud.firestore {
              data.updatedAt is number;
     }
 
+    function isValidCovers(data) {
+      return data.keys().hasAll(['records', 'updatedAt']) &&
+             data.records is list &&
+             data.updatedAt is number;
+    }
+
     // --- Matches ---
 
     match /users/{userId} {
@@ -126,6 +132,11 @@ service cloud.firestore {
     match /school_config/timetable {
       allow read: if isSignedIn();
       allow write: if isAdmin() && isValidTimetable(incoming());
+    }
+
+    match /school_config/covers {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() && isValidCovers(incoming());
     }
 
     match /system/connection_test {

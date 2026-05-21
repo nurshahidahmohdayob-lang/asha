@@ -54,6 +54,16 @@
         "updatedAt": { "type": "number" }
       },
       "required": ["staffAssignments", "assignmentQuotas", "timetableGrid", "updatedAt"]
+    },
+    "Covers": {
+      "title": "Covers",
+      "description": "School cover records/substitutions",
+      "type": "object",
+      "properties": {
+        "records": { "type": "array" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["records", "updatedAt"]
     }
   },
   "firestore": {
@@ -78,6 +88,10 @@
     "/school_config/timetable": {
       "schema": "Timetable",
       "description": "Global school timetable data"
+    },
+    "/school_config/covers": {
+      "schema": "Covers",
+      "description": "Global school cover and substitution records"
     }
   }
 }
