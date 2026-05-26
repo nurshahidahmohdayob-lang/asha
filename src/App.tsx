@@ -4799,7 +4799,7 @@ export default function App() {
         const yg = schedulerYearGroup;
 
         const dataRows: any[][] = [];
-        dataRows.push(["class_name", "class_id", "day", "from", "to", "venue", "weeks", "no_attendance", "period_id"]);
+        dataRows.push(["class_name", "class_id", "day", "from", "to", "venue", "weeks", "no_attenda", "period_id"]);
 
         const formatSubjectCode = (sub: string): string => {
           if (!sub) return "";
@@ -4870,46 +4870,6 @@ export default function App() {
           return `classroom ${digit}-1`;
         };
 
-        const getCommunTimeForSlot = (dayName: string, sIdx: number, slotType: string): { start: string, end: string } | null => {
-          if (slotType === "registration") {
-            return { start: "08:20", end: "08:30" };
-          }
-          if (slotType !== "period") {
-            return null;
-          }
-          
-          if (dayName === "Friday") {
-            if (sIdx === 1) return { start: "08:30", end: "09:05" };
-            if (sIdx === 2) return { start: "09:05", end: "09:40" };
-            if (sIdx === 3) return { start: "10:10", end: "10:45" };
-            if (sIdx === 5) return { start: "10:45", end: "11:20" };
-            if (sIdx === 6) return { start: "11:20", end: "12:30" };
-            return null;
-          } else if (dayName === "Monday") {
-            if (sIdx === 1) return { start: "08:30", end: "09:05" };
-            if (sIdx === 2) return { start: "09:05", end: "09:40" };
-            if (sIdx === 3) return { start: "10:10", end: "10:45" };
-            if (sIdx === 6) return { start: "10:45", end: "11:20" };
-            if (sIdx === 7) return { start: "11:20", end: "11:55" };
-            if (sIdx === 9) return { start: "11:55", end: "12:30" };
-            if (sIdx === 10) return { start: "13:10", end: "13:45" };
-            if (sIdx === 11) return { start: "13:45", end: "14:20" };
-            return null;
-          } else {
-            // Tuesday, Wednesday, Thursday
-            if (sIdx === 1) return { start: "08:30", end: "09:05" };
-            if (sIdx === 2) return { start: "09:05", end: "09:40" };
-            if (sIdx === 3) return { start: "10:10", end: "10:45" };
-            if (sIdx === 5) return { start: "10:45", end: "11:20" };
-            if (sIdx === 6) return { start: "11:20", end: "11:55" };
-            if (sIdx === 7) return { start: "11:55", end: "12:30" };
-            if (sIdx === 9) return { start: "13:10", end: "13:45" };
-            if (sIdx === 10) return { start: "13:45", end: "14:20" };
-            if (sIdx === 11) return { start: "14:20", end: "14:55" };
-            return null;
-          }
-        };
-
         days.forEach(day => {
           const slots = getSlots(day, yg);
           const rawLessons: any[] = [];
@@ -4917,61 +4877,72 @@ export default function App() {
           // Collect lessons
           slots.forEach((slot, sIdx) => {
             if (slot.type === "registration") {
-              const communTime = getCommunTimeForSlot(day, sIdx, "registration");
-              if (communTime) {
-                rawLessons.push({
-                  key: "Registration",
-                  label: `Registration ${yg}`,
-                  noAttendance: "Yes",
-                  start: communTime.start,
-                  end: communTime.end,
-                  sortKey: communTime.start
-                });
-              }
-            } else if (slot.type === "assembly") {
-              // Assembly is not exported in Commun timetable template
-            } else if (slot.type === "period") {
+              rawLessons.push({
+                key: "Registration",
+                label: `Registration ${yg}`,
+                noAttendance: "Yes",
+                start: slot.start,
+                end: slot.end,
+                sortKey: slot.start
+              });
+            } else {
               const assignment = timetableGrid[yg]?.[day]?.[sIdx];
               if (assignment) {
                 const items = Array.isArray(assignment) ? assignment : [assignment];
                 items.forEach((item: any) => {
                   if (item && item.subject) {
                     const cleanSub = formatSubjectCode(item.subject);
-                    const communTime = getCommunTimeForSlot(day, sIdx, "period");
-                    if (communTime) {
-                      rawLessons.push({
-                        key: cleanSub,
-                        label: `${cleanSub} ${yg}`,
-                        noAttendance: "No",
-                        start: communTime.start,
-                        end: communTime.end,
-                        sortKey: communTime.start
-                      });
-                    }
+                    rawLessons.push({
+                      key: cleanSub,
+                      label: `${cleanSub} ${yg}`,
+                      noAttendance: "No",
+                      start: slot.start,
+                      end: slot.end,
+                      sortKey: slot.start
+                    });
                   }
                 });
               }
             }
           });
 
-          // Sort rawLessons by start/sortKey time
-          rawLessons.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
-
-          // Merge consecutive lessons of the exact same subject
-          const mergedLessons: any[] = [];
+          // Combine all lessons of the exact same subject within the day so that there's only 1 row per subject per day
+          const lessonsBySubject: Record<string, any[]> = {};
           rawLessons.forEach(lesson => {
-            if (mergedLessons.length === 0) {
-              mergedLessons.push({ ...lesson });
-            } else {
-              const lastMerged = mergedLessons[mergedLessons.length - 1];
-              // Check if they are the same subject and end time of last matches start time of current
-              if (lastMerged.key === lesson.key && lastMerged.end === lesson.start) {
-                lastMerged.end = lesson.end;
-              } else {
-                mergedLessons.push({ ...lesson });
-              }
+            if (!lessonsBySubject[lesson.key]) {
+              lessonsBySubject[lesson.key] = [];
             }
+            lessonsBySubject[lesson.key].push(lesson);
           });
+
+          const mergedLessons: any[] = [];
+          Object.keys(lessonsBySubject).forEach(subKey => {
+            const list = lessonsBySubject[subKey];
+            if (list.length === 0) return;
+            
+            // Find earliest start time and latest end time across the whole day for this subject
+            let earliest = list[0];
+            list.forEach(item => {
+              if (item.start < earliest.start) {
+                earliest = item;
+              }
+            });
+            
+            let latest = list[0];
+            list.forEach(item => {
+              if (item.end > latest.end) {
+                latest = item;
+              }
+            });
+            
+            mergedLessons.push({
+              ...earliest,
+              end: latest.end
+            });
+          });
+
+          // Sort merged lessons chronologically by start time
+          mergedLessons.sort((a, b) => a.start.localeCompare(b.start));
 
           // Push merged lessons into dataRows
           mergedLessons.forEach(evt => {
@@ -4986,7 +4957,7 @@ export default function App() {
               evt.end,
               getVenue(evt.key, yg),
               "",
-              evt.noAttendance,
+              "", // Let the attendance part be empty as requested
               periodId
             ]);
           });
@@ -6798,6 +6769,11 @@ export default function App() {
         return u.includes("PHYSICAL EDUCATION") || u === "PE" || u.includes("P.E.");
       };
 
+      const isEvenQuotaSubject = (yg: string, subjectName: string) => {
+        const qObj = assignmentQuotas.find(q => q.yearGroup === yg && q.subject === subjectName);
+        return qObj ? (qObj.total % 2 === 0) : false;
+      };
+
       // 1. Reset the grid completely, but preserve locked schedules
       const newGrid: Record<string, Record<string, (null | {teacherId: string, subject: string} | {teacherId: string, subject: string}[])[]>> = {};
       yearGroups.forEach(yg => {
@@ -6991,15 +6967,15 @@ export default function App() {
             const asmKey = `${mainAsg.yearGroup}-${sub}`;
             const tIdStr = staffAssignments[asmKey];
             if (tIdStr) {
-              const tIds = tIdStr.split(',').filter(Boolean).map(id => id.trim());
-              tIds.forEach(tId => {
-                const quotaObj = assignmentQuotas.find(q => q.yearGroup === mainAsg.yearGroup && q.subject === sub && q.teacherId === tId);
-                const quotaTotal = quotaObj ? quotaObj.total : 0;
-                const currentScheduled = countAssignedPeriods(mainAsg.yearGroup, sub, tId);
-                if (currentScheduled < quotaTotal) {
-                  list.push({ teacherId: tId, subject: sub, targetQuota: quotaTotal });
-                }
-              });
+               const tIds = tIdStr.split(',').filter(Boolean).map(id => id.trim());
+               tIds.forEach(tId => {
+                 const quotaObj = assignmentQuotas.find(q => q.yearGroup === mainAsg.yearGroup && q.subject === sub && q.teacherId === tId);
+                 const quotaTotal = quotaObj ? quotaObj.total : 0;
+                 const currentScheduled = countAssignedPeriods(mainAsg.yearGroup, sub, tId);
+                 if (currentScheduled < quotaTotal) {
+                   list.push({ teacherId: tId, subject: sub, targetQuota: quotaTotal });
+                 }
+               });
             }
           });
         } else {
@@ -7026,7 +7002,9 @@ export default function App() {
 
         let blocks: number[] = [];
         const tot = assignment.total;
-        if (tot === 7) blocks = [2, 2, 2, 1];
+        if (checkIsPE(assignment.subject)) {
+          blocks = [2]; // Make sure PE is strictly scheduled as a single block of Two periods
+        } else if (tot === 7) blocks = [2, 2, 2, 1];
         else if (tot === 6) blocks = [2, 2, 2];
         else if (tot === 5) blocks = [2, 2, 1];
         else if (tot === 4) blocks = [2, 2];
@@ -7166,8 +7144,8 @@ export default function App() {
             }
 
             if (!blockPlaced) {
-              if (assignment.total === 2) {
-                // Strictly do not split for subjects with only 2 periods total per week.
+              if (assignment.total % 2 === 0) {
+                // Strictly do not split for subjects with even total periods.
               } else {
                 // Fallback: split failed double period into two single periods
                 blocks.push(1);
@@ -7176,6 +7154,12 @@ export default function App() {
             }
           } else {
             // blockSize === 1
+            // Physical Education must NOT be scheduled as single periods
+            if (checkIsPE(assignment.subject)) {
+              blockIndex++;
+              continue;
+            }
+
             // Try to place on a day not scheduled yet (if possible, else any day)
             let shuffledDays = [...days].sort(() => Math.random() - 0.5);
             shuffledDays.sort((d1, d2) => {
@@ -7200,11 +7184,6 @@ export default function App() {
               for (let sIdx = 0; sIdx < slots.length; sIdx++) {
                 if (slots[sIdx].type !== 'period') continue;
                 if (newGrid[assignment.yearGroup][day][sIdx] !== null) continue;
-
-                // Physical Education can only be scheduled at 9.10-10.20 a.m. (Slot index 2 or 3)
-                if (checkIsPE(assignment.subject)) {
-                  if (sIdx !== 2 && sIdx !== 3) continue;
-                }
 
                 let teacherBusy = false;
                 for (const item of activeSimultaneous) {
@@ -7287,6 +7266,7 @@ export default function App() {
             const availableOptions: { subject: string; teacherId: string }[] = [];
             subjects.forEach(sub => {
               if (sub === "ASSEMBLY/ HOMEROOM" || sub === "SILENT READING" || checkIsPE(sub)) return;
+              if (isEvenQuotaSubject(yg, sub)) return; // Exclude even replica subjects from single gaps filling
               const tId = staffAssignments[`${yg}-${sub}`];
               if (tId) {
                 availableOptions.push({ subject: sub, teacherId: tId });
@@ -7385,9 +7365,9 @@ export default function App() {
               }
               if (teacherIsBusy) continue;
 
-              // Pick the year group's subjects, defaulting to REVISION (excluding PE)
+              // Pick the year group's subjects, defaulting to REVISION (excluding PE and even quota subjects)
               let chosenSubject = "REVISION";
-              const ygSubjects = subjects.filter(s => s !== "ASSEMBLY/ HOMEROOM" && s !== "SILENT READING" && !checkIsPE(s)).sort(() => Math.random() - 0.5);
+              const ygSubjects = subjects.filter(s => s !== "ASSEMBLY/ HOMEROOM" && s !== "SILENT READING" && !checkIsPE(s) && !isEvenQuotaSubject(yg, s)).sort(() => Math.random() - 0.5);
               if (ygSubjects.length > 0) {
                 chosenSubject = ygSubjects[sIdx % ygSubjects.length];
               }
@@ -7444,7 +7424,7 @@ export default function App() {
               if (teacherIsBusy) continue;
 
               let chosenSubject = "REVISION";
-              const ygSubjects = subjects.filter(s => s !== "ASSEMBLY/ HOMEROOM" && s !== "SILENT READING" && !checkIsPE(s)).sort(() => Math.random() - 0.5);
+              const ygSubjects = subjects.filter(s => s !== "ASSEMBLY/ HOMEROOM" && s !== "SILENT READING" && !checkIsPE(s) && !isEvenQuotaSubject(yg, s)).sort(() => Math.random() - 0.5);
               if (ygSubjects.length > 0) {
                 chosenSubject = ygSubjects[sIdx % ygSubjects.length];
               }
@@ -7453,11 +7433,53 @@ export default function App() {
                 teacherId: t.id,
                 subject: chosenSubject
               };
-              assigned = true;
-              break;
+
+              // Prefer teachers that don't violate daily load/consecutive limits
+              if (checkTeacherDayValidity(newGrid, t.id, day)) {
+                assigned = true;
+                break;
+              } else {
+                newGrid[yg][day][sIdx] = null; // Revert
+              }
             }
 
-            // Desperate fallback if all other teachers are busy (excluding PE)
+            // Absolute last resort if still unassigned (excluding PE and even quota subjects)
+            if (!assigned) {
+              for (const t of shuffledTeachersList) {
+                if (t.locked) continue;
+                if (t.workingDays && !t.workingDays.includes(day)) {
+                  continue;
+                }
+
+                let teacherIsBusy = false;
+                for (const otherYg of yearGroups) {
+                  const otherSlot = newGrid[otherYg]?.[day]?.[sIdx];
+                  if (otherSlot) {
+                    const items = Array.isArray(otherSlot) ? otherSlot : [otherSlot];
+                    if (items.some((item: any) => item.teacherId === t.id)) {
+                      teacherIsBusy = true;
+                      break;
+                    }
+                  }
+                }
+                if (teacherIsBusy) continue;
+
+                let chosenSubject = "REVISION";
+                const ygSubjects = subjects.filter(s => s !== "ASSEMBLY/ HOMEROOM" && s !== "SILENT READING" && !checkIsPE(s) && !isEvenQuotaSubject(yg, s)).sort(() => Math.random() - 0.5);
+                if (ygSubjects.length > 0) {
+                  chosenSubject = ygSubjects[sIdx % ygSubjects.length];
+                }
+
+                newGrid[yg][day][sIdx] = {
+                  teacherId: t.id,
+                  subject: chosenSubject
+                };
+                assigned = true;
+                break;
+              }
+            }
+
+            // Desperate last fallback if still unassigned (including standard revisions)
             if (!assigned) {
               const fallbackTeacherObj = [...teachers].filter(t => !t.locked).sort(() => Math.random() - 0.5)[0] || teachers[0];
               if (fallbackTeacherObj) {
@@ -7495,9 +7517,47 @@ export default function App() {
         });
       });
       
+      // Calculate quota fulfillment percentage
+      let totalTarget = 0;
+      let totalPlaced = 0;
+
+      assignmentQuotas.forEach(q => {
+        if (q.teacherId) {
+          totalTarget += q.total;
+          const yg = q.yearGroup;
+          const subject = q.subject;
+          const teacherId = q.teacherId;
+
+          let placedCount = 0;
+          ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach(day => {
+            const daySlots = grid[yg]?.[day];
+            if (daySlots) {
+              daySlots.forEach(slot => {
+                if (slot) {
+                  const items = Array.isArray(slot) ? slot : [slot];
+                  items.forEach((item: any) => {
+                    if (item && item.subject === subject && item.teacherId === teacherId) {
+                      placedCount++;
+                    }
+                  });
+                }
+              });
+            }
+          });
+          totalPlaced += Math.min(placedCount, q.total);
+        }
+      });
+
+      const quotaQuality = totalTarget > 0 ? (totalPlaced / totalTarget) * 100 : 100;
+      const fillQuality = totalSlots > 0 ? (filled / totalSlots) * 100 : 0;
+
+      // Composite quality: prioritize quota matches heavily
+      const compositeQuality = (quotaQuality * 10) + fillQuality;
+
       return {
+        percentage: compositeQuality,
         filled,
-        percentage: totalSlots > 0 ? (filled / totalSlots) * 100 : 0
+        quotaPercentage: quotaQuality
       };
     };
 
@@ -7668,13 +7728,18 @@ export default function App() {
       const options = [];
       for (let i = 0; i < 12; i++) {
         const grid = runAutoGeneration();
-        const { percentage, filled } = calculateOptionQuality(grid);
+        const { percentage, filled, quotaPercentage } = calculateOptionQuality(grid);
         options.push({
           grid,
           quality: percentage,
-          filledSlots: filled
+          filledSlots: filled,
+          quotaPercentage
         });
       }
+      
+      // Sort so that the option with BOTH highest quota fulfillment and highest slot fill is first
+      options.sort((a, b) => b.quality - a.quality);
+
       setTimetableOptions(options);
       setSelectedTimetableOption(0); // Select first option by default
       setTimetableGrid(options[0].grid);
@@ -7832,100 +7897,78 @@ export default function App() {
         return `classroom ${digit}-1`;
       };
 
-      const getCommunTimeForSlot = (dayName: string, sIdx: number, slotType: string): { start: string, end: string } | null => {
-        if (slotType === "registration") {
-          return { start: "08:20", end: "08:30" };
-        }
-        if (slotType !== "period") {
-          return null;
-        }
-        if (dayName === "Friday") {
-          if (sIdx === 1) return { start: "08:30", end: "09:05" };
-          if (sIdx === 2) return { start: "09:05", end: "09:40" };
-          if (sIdx === 3) return { start: "10:10", end: "10:45" };
-          if (sIdx === 5) return { start: "10:45", end: "11:20" };
-          if (sIdx === 6) return { start: "11:20", end: "12:30" };
-          return null;
-        } else if (dayName === "Monday") {
-          if (sIdx === 1) return { start: "08:30", end: "09:05" };
-          if (sIdx === 2) return { start: "09:05", end: "09:40" };
-          if (sIdx === 3) return { start: "10:10", end: "10:45" };
-          if (sIdx === 6) return { start: "10:45", end: "11:20" };
-          if (sIdx === 7) return { start: "11:20", end: "11:55" };
-          if (sIdx === 9) return { start: "11:55", end: "12:30" };
-          if (sIdx === 10) return { start: "13:10", end: "13:45" };
-          if (sIdx === 11) return { start: "13:45", end: "14:20" };
-          return null;
-        } else {
-          if (sIdx === 1) return { start: "08:30", end: "09:05" };
-          if (sIdx === 2) return { start: "09:05", end: "09:40" };
-          if (sIdx === 3) return { start: "10:10", end: "10:45" };
-          if (sIdx === 5) return { start: "10:45", end: "11:20" };
-          if (sIdx === 6) return { start: "11:20", end: "11:55" };
-          if (sIdx === 7) return { start: "11:55", end: "12:30" };
-          if (sIdx === 9) return { start: "13:10", end: "13:45" };
-          if (sIdx === 10) return { start: "13:45", end: "14:20" };
-          if (sIdx === 11) return { start: "14:20", end: "14:55" };
-          return null;
-        }
-      };
-
       days.forEach(day => {
         const slots = getSlots(day, yg);
         const rawLessons: any[] = [];
 
         slots.forEach((slot, sIdx) => {
           if (slot.type === "registration") {
-            const communTime = getCommunTimeForSlot(day, sIdx, "registration");
-            if (communTime) {
-              rawLessons.push({
-                key: "Registration",
-                label: `Registration ${yg}`,
-                noAttendance: "Yes",
-                start: communTime.start,
-                end: communTime.end,
-                sortKey: communTime.start
-              });
-            }
-          } else if (slot.type === "period") {
+            rawLessons.push({
+              key: "Registration",
+              label: `Registration ${yg}`,
+              noAttendance: "Yes",
+              start: slot.start,
+              end: slot.end,
+              sortKey: slot.start
+            });
+          } else {
             const assignment = timetableGrid[yg]?.[day]?.[sIdx];
             if (assignment) {
               const items = Array.isArray(assignment) ? assignment : [assignment];
               items.forEach((item: any) => {
                 if (item && item.subject) {
                   const cleanSub = formatSubjectCode(item.subject);
-                  const communTime = getCommunTimeForSlot(day, sIdx, "period");
-                  if (communTime) {
-                    rawLessons.push({
-                      key: cleanSub,
-                      label: `${cleanSub} ${yg}`,
-                      noAttendance: "No",
-                      start: communTime.start,
-                      end: communTime.end,
-                      sortKey: communTime.start
-                    });
-                  }
+                  rawLessons.push({
+                    key: cleanSub,
+                    label: `${cleanSub} ${yg}`,
+                    noAttendance: "No",
+                    start: slot.start,
+                    end: slot.end,
+                    sortKey: slot.start
+                  });
                 }
               });
             }
           }
         });
 
-        rawLessons.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+        // Combine all lessons of the exact same subject within the day so that there's only 1 row per subject per day
+        const lessonsBySubject: Record<string, any[]> = {};
+        rawLessons.forEach(lesson => {
+          if (!lessonsBySubject[lesson.key]) {
+            lessonsBySubject[lesson.key] = [];
+          }
+          lessonsBySubject[lesson.key].push(lesson);
+        });
 
         const mergedLessons: any[] = [];
-        rawLessons.forEach(lesson => {
-          if (mergedLessons.length === 0) {
-            mergedLessons.push({ ...lesson });
-          } else {
-            const lastMerged = mergedLessons[mergedLessons.length - 1];
-            if (lastMerged.key === lesson.key && lastMerged.end === lesson.start) {
-              lastMerged.end = lesson.end;
-            } else {
-              mergedLessons.push({ ...lesson });
+        Object.keys(lessonsBySubject).forEach(subKey => {
+          const list = lessonsBySubject[subKey];
+          if (list.length === 0) return;
+          
+          // Find earliest start time and latest end time across the whole day for this subject
+          let earliest = list[0];
+          list.forEach(item => {
+            if (item.start < earliest.start) {
+              earliest = item;
             }
-          }
+          });
+          
+          let latest = list[0];
+          list.forEach(item => {
+            if (item.end > latest.end) {
+              latest = item;
+            }
+          });
+          
+          mergedLessons.push({
+            ...earliest,
+            end: latest.end
+          });
         });
+
+        // Sort merged lessons chronologically by start time
+        mergedLessons.sort((a, b) => a.start.localeCompare(b.start));
 
         mergedLessons.forEach(evt => {
           previewList.push({
@@ -7935,7 +7978,7 @@ export default function App() {
             start: evt.start,
             end: evt.end,
             venue: getVenue(evt.key, yg),
-            noAttendance: evt.noAttendance
+            noAttendance: "" // Let the attendance part be empty as requested
           });
         });
       });
@@ -11317,12 +11360,16 @@ export default function App() {
                               <td className="py-3 px-4 text-gray-500 font-mono">{item.start} - {item.end}</td>
                               <td className="py-3 px-4 text-gray-500">{item.venue}</td>
                               <td className="py-3 px-4">
-                                <span className={cn(
-                                  "px-2 py-0.5 rounded text-[9px] font-black uppercase inline-block",
-                                  item.noAttendance === "Yes" ? "bg-amber-50 text-amber-700 border border-amber-250" : "bg-emerald-50 text-[#064E3B] border border-emerald-200"
-                                )}>
-                                  {item.noAttendance === "Yes" ? "Attendance: Yes" : "Attendance: No"}
-                                </span>
+                                {item.noAttendance ? (
+                                  <span className={cn(
+                                    "px-2 py-0.5 rounded text-[9px] font-black uppercase inline-block",
+                                    item.noAttendance === "Yes" ? "bg-amber-50 text-amber-700 border border-amber-250" : "bg-emerald-50 text-[#064E3B] border border-emerald-200"
+                                  )}>
+                                    {item.noAttendance === "Yes" ? "Attendance: Yes" : "Attendance: No"}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-400 font-medium italic">Empty</span>
+                                )}
                               </td>
                               <td className="py-2 px-3">
                                 <input
