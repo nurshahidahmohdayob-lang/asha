@@ -1776,7 +1776,8 @@ export default function App() {
     e.preventDefault();
     setAuthError('');
     setResetEmailSent(false);
-    setResetMessage('Please contact your administrator to reset your password or create a new one.');
+    setResetMessage('Contact your administrator.');
+    alert("Contact your administrator.");
   };
 
   const handlePasswordAuth = async (e: React.FormEvent) => {
@@ -1797,28 +1798,16 @@ export default function App() {
           throw new Error("Display Name is required for registration.");
         }
 
-        // Validate admin registration permissions securely using server-side check-registration
+        // Validate admin registration permissions securely checking if they are already registered in the Firebase Firestore users collection
         let rolesToSave = [...registerRoles];
         if (rolesToSave.includes('admin')) {
-          let isAuthorized = ADMIN_EMAILS.includes(cleanEmail.toLowerCase());
-          if (!isAuthorized) {
-            try {
-              const resValidation = await fetch('/api/auth/check-registration', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: cleanEmail })
-              });
-              if (resValidation.ok) {
-                const valData = await resValidation.json();
-                isAuthorized = valData.success && (valData.role === 'admin');
-              }
-            } catch (ttErr) {
-              console.error("Failed to validate admin role on registration server-side:", ttErr);
-            }
-          }
+          const { query, collection, where, getDocs } = await import('firebase/firestore');
+          const usersRef = collection(db, 'users');
+          const q = query(usersRef, where('email', '==', cleanEmail.toLowerCase()));
+          const querySnapshot = await getDocs(q);
 
-          if (!isAuthorized) {
-            throw new Error("You are not authorized to register with the Admin role. Only Administrators, Coordinators, and Admin Staff listed in the school roster can register as Admin.");
+          if (querySnapshot.empty) {
+            throw new Error("Only users who are already registered in Firebase can register as Admin. Other than that you can register as Educator only.");
           }
         }
 
@@ -4094,6 +4083,93 @@ export default function App() {
   const [selectedTeacherSchedule, setSelectedTeacherSchedule] = useState<string>('');
   const [schedulerYearGroup, setSchedulerYearGroup] = useState("Year 1");
 
+  const [isCommunExportModalOpen, setIsCommunExportModalOpen] = useState(false);
+  const [communClassIdMappings, setCommunClassIdMappings] = useState<Record<string, Record<string, string>>>(() => {
+    try {
+      const saved = localStorage.getItem("communClassIdMappings");
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error(e);
+    }
+    return {
+      "Year 1": {
+        "Registration": "1484",
+        "Mathematics": "1431",
+        "Malay": "1425",
+        "English": "1419",
+        "Digital Literacy": "1460",
+        "Mandarin/Chinese": "1409",
+        "Wellbeing": "1478",
+        "Art & Design": "1453",
+        "Music": "1433",
+        "Global Perspectives": "1444",
+        "Science": "1473",
+        "Physical Education": "1465"
+      }
+    };
+  });
+
+  const [communPeriodIdMappings, setCommunPeriodIdMappings] = useState<Record<string, Record<string, string>>>(() => {
+    try {
+      const saved = localStorage.getItem("communPeriodIdMappings");
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error(e);
+    }
+    return {
+      "Year 1": {
+        "Monday_Registration": "1161",
+        "Monday_Mathematics": "1168",
+        "Monday_Malay": "1166",
+        "Monday_English": "1156",
+        "Monday_Digital Literacy": "1154",
+        "Monday_Mandarin/Chinese": "1152",
+        "Monday_Wellbeing": "1175",
+        "Tuesday_Registration": "1163",
+        "Tuesday_Mathematics": "1170",
+        "Tuesday_English": "1157",
+        "Tuesday_Malay": "1165",
+        "Tuesday_Art & Design": "1151",
+        "Wednesday_Registration": "1164",
+        "Wednesday_Music": "1171",
+        "Wednesday_English": "1158",
+        "Wednesday_Mathematics": "1169",
+        "Thursday_Registration": "1162",
+        "Thursday_Global Perspectives": "1159",
+        "Thursday_Science": "1174",
+        "Thursday_Mandarin/Chinese": "1153",
+        "Friday_Registration": "1160",
+        "Friday_Physical Education": "1172",
+        "Friday_English": "1155",
+        "Friday_Mathematics": "1167",
+        "Friday_Science": "1173"
+      }
+    };
+  });
+
+  const updateClassId = (year: string, subject: string, val: string) => {
+    setCommunClassIdMappings(prev => {
+      const next = { ...prev };
+      if (!next[year]) next[year] = {};
+      next[year][subject] = val;
+      localStorage.setItem("communClassIdMappings", JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const updatePeriodId = (year: string, day: string, subject: string, val: string) => {
+    setCommunPeriodIdMappings(prev => {
+      const next = { ...prev };
+      if (!next[year]) next[year] = {};
+      const pKey = `${day}_${subject}`;
+      next[year][pKey] = val;
+      localStorage.setItem("communPeriodIdMappings", JSON.stringify(next));
+      return next;
+    });
+  };
+
+// getCommunLessonsPreview moved to renderAdmin to keep in-scope access to getSlots
+
   const isTeacherActive = (teacher: any) => {
     if (!teacher || !teacher.id) return false;
 
@@ -4794,6 +4870,46 @@ export default function App() {
           return `classroom ${digit}-1`;
         };
 
+        const getCommunTimeForSlot = (dayName: string, sIdx: number, slotType: string): { start: string, end: string } | null => {
+          if (slotType === "registration") {
+            return { start: "08:20", end: "08:30" };
+          }
+          if (slotType !== "period") {
+            return null;
+          }
+          
+          if (dayName === "Friday") {
+            if (sIdx === 1) return { start: "08:30", end: "09:05" };
+            if (sIdx === 2) return { start: "09:05", end: "09:40" };
+            if (sIdx === 3) return { start: "10:10", end: "10:45" };
+            if (sIdx === 5) return { start: "10:45", end: "11:20" };
+            if (sIdx === 6) return { start: "11:20", end: "12:30" };
+            return null;
+          } else if (dayName === "Monday") {
+            if (sIdx === 1) return { start: "08:30", end: "09:05" };
+            if (sIdx === 2) return { start: "09:05", end: "09:40" };
+            if (sIdx === 3) return { start: "10:10", end: "10:45" };
+            if (sIdx === 6) return { start: "10:45", end: "11:20" };
+            if (sIdx === 7) return { start: "11:20", end: "11:55" };
+            if (sIdx === 9) return { start: "11:55", end: "12:30" };
+            if (sIdx === 10) return { start: "13:10", end: "13:45" };
+            if (sIdx === 11) return { start: "13:45", end: "14:20" };
+            return null;
+          } else {
+            // Tuesday, Wednesday, Thursday
+            if (sIdx === 1) return { start: "08:30", end: "09:05" };
+            if (sIdx === 2) return { start: "09:05", end: "09:40" };
+            if (sIdx === 3) return { start: "10:10", end: "10:45" };
+            if (sIdx === 5) return { start: "10:45", end: "11:20" };
+            if (sIdx === 6) return { start: "11:20", end: "11:55" };
+            if (sIdx === 7) return { start: "11:55", end: "12:30" };
+            if (sIdx === 9) return { start: "13:10", end: "13:45" };
+            if (sIdx === 10) return { start: "13:45", end: "14:20" };
+            if (sIdx === 11) return { start: "14:20", end: "14:55" };
+            return null;
+          }
+        };
+
         days.forEach(day => {
           const slots = getSlots(day, yg);
           const rawLessons: any[] = [];
@@ -4801,23 +4917,19 @@ export default function App() {
           // Collect lessons
           slots.forEach((slot, sIdx) => {
             if (slot.type === "registration") {
-              rawLessons.push({
-                key: "Registration",
-                label: `Registration ${yg}`,
-                noAttendance: "Yes",
-                start: slot.start,
-                end: slot.end,
-                sortKey: slot.start
-              });
+              const communTime = getCommunTimeForSlot(day, sIdx, "registration");
+              if (communTime) {
+                rawLessons.push({
+                  key: "Registration",
+                  label: `Registration ${yg}`,
+                  noAttendance: "Yes",
+                  start: communTime.start,
+                  end: communTime.end,
+                  sortKey: communTime.start
+                });
+              }
             } else if (slot.type === "assembly") {
-              rawLessons.push({
-                key: "Assembly",
-                label: `Assembly ${yg}`,
-                noAttendance: "No",
-                start: slot.start,
-                end: slot.end,
-                sortKey: slot.start
-              });
+              // Assembly is not exported in Commun timetable template
             } else if (slot.type === "period") {
               const assignment = timetableGrid[yg]?.[day]?.[sIdx];
               if (assignment) {
@@ -4825,14 +4937,17 @@ export default function App() {
                 items.forEach((item: any) => {
                   if (item && item.subject) {
                     const cleanSub = formatSubjectCode(item.subject);
-                    rawLessons.push({
-                      key: cleanSub,
-                      label: `${cleanSub} ${yg}`,
-                      noAttendance: "No",
-                      start: slot.start,
-                      end: slot.end,
-                      sortKey: slot.start
-                    });
+                    const communTime = getCommunTimeForSlot(day, sIdx, "period");
+                    if (communTime) {
+                      rawLessons.push({
+                        key: cleanSub,
+                        label: `${cleanSub} ${yg}`,
+                        noAttendance: "No",
+                        start: communTime.start,
+                        end: communTime.end,
+                        sortKey: communTime.start
+                      });
+                    }
                   }
                 });
               }
@@ -4860,16 +4975,19 @@ export default function App() {
 
           // Push merged lessons into dataRows
           mergedLessons.forEach(evt => {
+            const classId = (communClassIdMappings[yg] && communClassIdMappings[yg][evt.key]) || "";
+            const pKey = `${day}_${evt.key}`;
+            const periodId = (communPeriodIdMappings[yg] && communPeriodIdMappings[yg][pKey]) || "";
             dataRows.push([
               evt.label,
-              "",
+              classId,
               day,
               evt.start,
               evt.end,
               getVenue(evt.key, yg),
               "",
               evt.noAttendance,
-              ""
+              periodId
             ]);
           });
         });
@@ -7640,6 +7758,191 @@ export default function App() {
       return planned;
     };
     
+    const getCommunLessonsPreview = (yg: string) => {
+      const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+      const previewList: {
+        day: string;
+        subjectKey: string;
+        label: string;
+        start: string;
+        end: string;
+        venue: string;
+        noAttendance: string;
+      }[] = [];
+
+      const formatSubjectCode = (sub: string): string => {
+        if (!sub) return "";
+        const upper = sub.trim().toUpperCase();
+        if (upper.includes("REGISTRATION")) return "Registration";
+        if (upper.includes("MATHEMATICS") || upper.includes("MATH")) return "Mathematics";
+        if (upper.includes("MALAY")) return "Malay";
+        if (upper.includes("ENGLISH") || upper.includes("ESL")) return "English";
+        if (upper.includes("DIGITAL LITERACY") || upper.includes("ICT") || upper.includes("COMPUTER")) {
+          return "Digital Literacy";
+        }
+        if (upper.includes("MANDARIN") || upper.includes("CHINESE")) return "Mandarin/Chinese";
+        if (upper.includes("WELLBEING") || upper.includes("WELLNESS")) return "Wellbeing";
+        if (upper.includes("MUSIC")) return "Music";
+        if (upper.includes("ART & DESIGN") || upper.includes("ART")) return "Art & Design";
+        if (upper.includes("GLOBAL PERSPECTIVES")) return "Global Perspectives";
+        if (upper.includes("SCIENCE") || upper.includes("BIOLOGY") || upper.includes("CHEMISTRY") || upper.includes("PHYSICS")) {
+          return "Science";
+        }
+        if (upper.includes("PHYSICAL EDUCATION") || upper.includes("P.E.") || upper === "PE") {
+          return "Physical Education";
+        }
+        if (upper.includes("ASSEMBLY")) return "Assembly";
+        if (upper.includes("LIBRARY")) return "Library";
+        if (upper.includes("SEJARAH") || upper.includes("HISTORY")) return "History";
+        if (upper.includes("BUSINESS") || upper.includes("ECONOMICS") || upper.includes("ACCOUNTING")) return "Business Studies";
+        return sub.trim().toLowerCase().split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      };
+
+      const getVenue = (subject: string, ygName: string): string => {
+        const cleanSub = subject ? subject.toUpperCase().trim() : "";
+        if (classroomSubjectMappings && classroomSubjectMappings[cleanSub]) {
+          return classroomSubjectMappings[cleanSub];
+        }
+        if (cleanSub.includes("SCIENCE") || cleanSub.includes("BIOLOGY") || cleanSub.includes("CHEMISTRY") || cleanSub.includes("PHYSICS")) {
+          return "Science Lab";
+        }
+        if (cleanSub.includes("ART") || cleanSub.includes("DESIGN")) {
+          return "Art Room 2-4";
+        }
+        if (cleanSub.includes("MUSIC")) {
+          return "Music Room 1";
+        }
+        if (cleanSub.includes("PHYSICAL EDUCATION") || cleanSub.includes("PE") || cleanSub.includes("P.E.")) {
+          return "Hall";
+        }
+        if (cleanSub.includes("LIBRARY") || cleanSub.includes("SILENT READING")) {
+          return "Library";
+        }
+        if (cleanSub.includes("BREAKFAST") || cleanSub.includes("LUNCH") || cleanSub.includes("RECESS")) {
+          return "Canteen";
+        }
+        if (cleanSub.includes("ASSEMBLY")) {
+          return "Hall";
+        }
+        if (classroomClassMappings && classroomClassMappings[ygName]) {
+          return classroomClassMappings[ygName];
+        }
+        const matchDigit = ygName.match(/\d+/);
+        const digit = matchDigit ? matchDigit[0] : "1";
+        return `classroom ${digit}-1`;
+      };
+
+      const getCommunTimeForSlot = (dayName: string, sIdx: number, slotType: string): { start: string, end: string } | null => {
+        if (slotType === "registration") {
+          return { start: "08:20", end: "08:30" };
+        }
+        if (slotType !== "period") {
+          return null;
+        }
+        if (dayName === "Friday") {
+          if (sIdx === 1) return { start: "08:30", end: "09:05" };
+          if (sIdx === 2) return { start: "09:05", end: "09:40" };
+          if (sIdx === 3) return { start: "10:10", end: "10:45" };
+          if (sIdx === 5) return { start: "10:45", end: "11:20" };
+          if (sIdx === 6) return { start: "11:20", end: "12:30" };
+          return null;
+        } else if (dayName === "Monday") {
+          if (sIdx === 1) return { start: "08:30", end: "09:05" };
+          if (sIdx === 2) return { start: "09:05", end: "09:40" };
+          if (sIdx === 3) return { start: "10:10", end: "10:45" };
+          if (sIdx === 6) return { start: "10:45", end: "11:20" };
+          if (sIdx === 7) return { start: "11:20", end: "11:55" };
+          if (sIdx === 9) return { start: "11:55", end: "12:30" };
+          if (sIdx === 10) return { start: "13:10", end: "13:45" };
+          if (sIdx === 11) return { start: "13:45", end: "14:20" };
+          return null;
+        } else {
+          if (sIdx === 1) return { start: "08:30", end: "09:05" };
+          if (sIdx === 2) return { start: "09:05", end: "09:40" };
+          if (sIdx === 3) return { start: "10:10", end: "10:45" };
+          if (sIdx === 5) return { start: "10:45", end: "11:20" };
+          if (sIdx === 6) return { start: "11:20", end: "11:55" };
+          if (sIdx === 7) return { start: "11:55", end: "12:30" };
+          if (sIdx === 9) return { start: "13:10", end: "13:45" };
+          if (sIdx === 10) return { start: "13:45", end: "14:20" };
+          if (sIdx === 11) return { start: "14:20", end: "14:55" };
+          return null;
+        }
+      };
+
+      days.forEach(day => {
+        const slots = getSlots(day, yg);
+        const rawLessons: any[] = [];
+
+        slots.forEach((slot, sIdx) => {
+          if (slot.type === "registration") {
+            const communTime = getCommunTimeForSlot(day, sIdx, "registration");
+            if (communTime) {
+              rawLessons.push({
+                key: "Registration",
+                label: `Registration ${yg}`,
+                noAttendance: "Yes",
+                start: communTime.start,
+                end: communTime.end,
+                sortKey: communTime.start
+              });
+            }
+          } else if (slot.type === "period") {
+            const assignment = timetableGrid[yg]?.[day]?.[sIdx];
+            if (assignment) {
+              const items = Array.isArray(assignment) ? assignment : [assignment];
+              items.forEach((item: any) => {
+                if (item && item.subject) {
+                  const cleanSub = formatSubjectCode(item.subject);
+                  const communTime = getCommunTimeForSlot(day, sIdx, "period");
+                  if (communTime) {
+                    rawLessons.push({
+                      key: cleanSub,
+                      label: `${cleanSub} ${yg}`,
+                      noAttendance: "No",
+                      start: communTime.start,
+                      end: communTime.end,
+                      sortKey: communTime.start
+                    });
+                  }
+                }
+              });
+            }
+          }
+        });
+
+        rawLessons.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
+        const mergedLessons: any[] = [];
+        rawLessons.forEach(lesson => {
+          if (mergedLessons.length === 0) {
+            mergedLessons.push({ ...lesson });
+          } else {
+            const lastMerged = mergedLessons[mergedLessons.length - 1];
+            if (lastMerged.key === lesson.key && lastMerged.end === lesson.start) {
+              lastMerged.end = lesson.end;
+            } else {
+              mergedLessons.push({ ...lesson });
+            }
+          }
+        });
+
+        mergedLessons.forEach(evt => {
+          previewList.push({
+            day,
+            subjectKey: evt.key,
+            label: evt.label,
+            start: evt.start,
+            end: evt.end,
+            venue: getVenue(evt.key, yg),
+            noAttendance: evt.noAttendance
+          });
+        });
+      });
+
+      return previewList;
+    };
+
     const teacherLoads = calculateAllLoads();
     const teacherPlannedLoads = calculateAllPlannedLoads();
 
@@ -9935,7 +10238,7 @@ export default function App() {
                     </button>
 
                     <button 
-                      onClick={downloadCommunTimetable}
+                      onClick={() => setIsCommunExportModalOpen(true)}
                       disabled={isDownloading}
                       className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-black uppercase text-[10px] tracking-wider shadow hover:scale-[1.01] active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
                     >
@@ -10953,6 +11256,140 @@ export default function App() {
           )}
 
         </main>
+
+        <AnimatePresence>
+          {isCommunExportModalOpen && (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                className="bg-white rounded-3xl p-6 shadow-2xl border-2 border-purple-200/50 max-w-4xl w-full flex flex-col max-h-[90vh] space-y-4 text-gray-800"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Header */}
+                <div className="flex justify-between items-start border-b pb-4 border-gray-150">
+                  <div>
+                    <span className="text-[9px] font-black uppercase text-purple-700 bg-purple-50 px-2.5 py-1 rounded-full border border-purple-200 shadow-sm">
+                      Commun Export Manager
+                    </span>
+                    <h3 className="text-xl font-black text-gray-900 mt-1.5 leading-tight">
+                      Commun Timetable Export
+                    </h3>
+                    <p className="text-xs text-gray-500 font-semibold mt-1">
+                      Review and configure Class IDs &amp; Period IDs for <span className="text-purple-600 font-bold">{schedulerYearGroup}</span> before downloading.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsCommunExportModalOpen(false)}
+                    className="p-1.5 hover:bg-gray-100 rounded-full transition-all text-gray-400 hover:text-gray-600 cursor-pointer"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                {/* Body (Scrollable Table) */}
+                <div className="flex-1 overflow-y-auto min-h-0 py-2">
+                  <div className="border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-100 text-[10px] font-black uppercase tracking-wider text-gray-500">
+                          <th className="py-3 px-4">Day</th>
+                          <th className="py-3 px-4">Class Name</th>
+                          <th className="py-3 px-4">Time Block</th>
+                          <th className="py-3 px-4">Venue</th>
+                          <th className="py-3 px-4">Attendance</th>
+                          <th className="py-3 px-4 w-[140px]">Class ID</th>
+                          <th className="py-3 px-4 w-[145px]">Period ID</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50 text-[11px] font-bold text-gray-700 bg-white">
+                        {getCommunLessonsPreview(schedulerYearGroup).map((item, idx) => {
+                          const classIdVal = (communClassIdMappings[schedulerYearGroup] && communClassIdMappings[schedulerYearGroup][item.subjectKey]) || "";
+                          const pKey = `${item.day}_${item.subjectKey}`;
+                          const periodIdVal = (communPeriodIdMappings[schedulerYearGroup] && communPeriodIdMappings[schedulerYearGroup][pKey]) || "";
+
+                          return (
+                            <tr key={`${item.day}_${item.subjectKey}_${idx}`} className="hover:bg-gray-50/50 transition-colors">
+                              <td className="py-3 px-4 text-gray-955 font-extrabold">{item.day}</td>
+                              <td className="py-3 px-4 font-extrabold text-[#064E3B]">{item.label}</td>
+                              <td className="py-3 px-4 text-gray-500 font-mono">{item.start} - {item.end}</td>
+                              <td className="py-3 px-4 text-gray-500">{item.venue}</td>
+                              <td className="py-3 px-4">
+                                <span className={cn(
+                                  "px-2 py-0.5 rounded text-[9px] font-black uppercase inline-block",
+                                  item.noAttendance === "Yes" ? "bg-amber-50 text-amber-700 border border-amber-250" : "bg-emerald-50 text-[#064E3B] border border-emerald-200"
+                                )}>
+                                  {item.noAttendance === "Yes" ? "Attendance: Yes" : "Attendance: No"}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3">
+                                <input
+                                  type="text"
+                                  value={classIdVal}
+                                  onChange={(e) => updateClassId(schedulerYearGroup, item.subjectKey, e.target.value)}
+                                  placeholder="e.g. 1431"
+                                  className="w-full px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-purple-500 font-mono text-center bg-white"
+                                />
+                              </td>
+                              <td className="py-2 px-3">
+                                <input
+                                  type="text"
+                                  value={periodIdVal}
+                                  onChange={(e) => updatePeriodId(schedulerYearGroup, item.day, item.subjectKey, e.target.value)}
+                                  placeholder="e.g. 1168"
+                                  className="w-full px-2 py-1 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-purple-500 font-mono text-center bg-white"
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {getCommunLessonsPreview(schedulerYearGroup).length === 0 && (
+                          <tr>
+                            <td colSpan={7} className="py-10 text-center text-xs text-gray-400 font-medium">
+                              No lessons found on timetable for {schedulerYearGroup}. Make sure lessons are assigned!
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="mt-4 p-3 bg-purple-50 border border-purple-100 rounded-2xl text-purple-950 flex gap-2.5 items-start">
+                    <Info size={16} className="text-purple-600 shrink-0 mt-0.5" />
+                    <p className="text-[10.5px] leading-relaxed font-semibold">
+                      The Class ID and Period ID mappings are saved automatically in your browser's local storage and will be persisted across page reloads. The defaults for <span className="font-extrabold text-purple-800">Year 1</span> match your reference sheet exactly.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="flex gap-3 pt-3 border-t border-gray-150">
+                  <button
+                    type="button"
+                    onClick={() => setIsCommunExportModalOpen(false)}
+                    className="px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-2xl font-black text-xs uppercase tracking-wider transition-colors cursor-pointer w-[120px]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      downloadCommunTimetable();
+                      setIsCommunExportModalOpen(false);
+                    }}
+                    disabled={isDownloading}
+                    className="flex-1 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg hover:shadow-purple-205 cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    {isDownloading ? <Loader2 size={16} className="animate-spin" /> : <FileSpreadsheet size={16} />}
+                    Download Commun Excel File
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </div>
     );
   };
