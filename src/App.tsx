@@ -38,6 +38,7 @@ import {
   Target,
   Star,
   FileSpreadsheet,
+  FileCode,
   Type as FontIcon,
   Bold,
   Italic,
@@ -275,6 +276,7 @@ import {
   createUserWithEmailAndPassword, 
   signOut, 
   updateProfile,
+  sendPasswordResetEmail,
   User as FirebaseUser
 } from 'firebase/auth';
 import { 
@@ -701,6 +703,42 @@ export default function App() {
   const [registerRoles, setRegisterRoles] = useState<string[]>(['educator']);
   const [userRoles, setUserRoles] = useState<string[]>(['educator']);
   const [authError, setAuthError] = useState('');
+  
+  // Helper to check if an email is authorized as Admin (ADMIN_EMAILS list, Admin Staff, or Coordinator)
+  const checkIsAuthorizedAdmin = (emailToCheck: string) => {
+    const cleanEmail = emailToCheck.trim().toLowerCase();
+    if (!cleanEmail) return false;
+    if (ADMIN_EMAILS.includes(cleanEmail)) {
+      return true;
+    }
+    // Check in local teachers list if loaded
+    if (Array.isArray(teachers)) {
+      return teachers.some((t: any) => {
+        if (!t || !t.email) return false;
+        const tEmail = String(t.email).trim().toLowerCase();
+        if (tEmail !== cleanEmail) return false;
+        const tRole = String(t.role || '').trim().toLowerCase();
+        const isActive = t.status !== 'inactive';
+        return (tRole === 'admin staff' || tRole === 'coordinator') && isActive;
+      });
+    }
+    return false;
+  };
+  
+  // Login Method Toggle: Standard Password vs Passwordless Magic Code
+  const [loginMethod, setLoginMethod] = useState<'password' | 'otp'>('password');
+  const [resetEmailSent, setResetEmailSent] = useState(false);
+  const [resetMessage, setResetMessage] = useState('');
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
+  
+  // Passwordless Email OTP Login Authentication states
+  const [otpCode, setOtpCode] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [legacyPassword, setLegacyPassword] = useState('');
+  const [showLegacyPasswordField, setShowLegacyPasswordField] = useState(false);
+
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [firestoreError, setFirestoreError] = useState<string | null>(null);
 
@@ -976,6 +1014,8 @@ export default function App() {
         setTeacherDuties(data.teacherDuties || {});
         setCombinedClasses(data.combinedClasses || []);
         if (data.parallelRules) setParallelRules(data.parallelRules);
+        if (data.classroomClassMappings) setClassroomClassMappings(data.classroomClassMappings);
+        if (data.classroomSubjectMappings) setClassroomSubjectMappings(data.classroomSubjectMappings);
         if (data.subjects) {
           const loaded: string[] = data.subjects || [];
           const required = [
@@ -1035,6 +1075,276 @@ export default function App() {
     }
   };
 
+  const deduplicateTeachersData = (
+    rawTeachers: any[],
+    rawAssignments: Record<string, string>,
+    rawQuotas: any[],
+    rawGrid: any,
+    rawDuties: any
+  ) => {
+    if (!rawTeachers || rawTeachers.length === 0) {
+      return {
+        teachers: rawTeachers || [],
+        assignments: rawAssignments,
+        quotas: rawQuotas,
+        grid: rawGrid,
+        duties: rawDuties,
+        hasChanges: false
+      };
+    }
+
+    // Strip out MR/MS/MRS prefixes from name, preferredName, and nricName
+    const stripPrefix = (str: string) => {
+      if (!str) return str;
+      return str.replace(/^(MR|MS|MRS|MR\.|MS\.|MRS\.)\s+/i, '').trim();
+    };
+
+    const normalizedRaw = rawTeachers.map(t => {
+      if (!t || !t.name) return t;
+      return {
+        ...t,
+        name: stripPrefix(t.name),
+        preferredName: t.preferredName ? stripPrefix(t.preferredName) : t.preferredName,
+        nricName: t.nricName ? stripPrefix(t.nricName) : t.nricName
+      };
+    });
+
+    const anyNameChanged = normalizedRaw.some((t, idx) => {
+      const raw = rawTeachers[idx];
+      return !raw || t.name !== raw.name || t.preferredName !== raw.preferredName || t.nricName !== raw.nricName;
+    });
+
+    const groupedByName: Record<string, any[]> = {};
+    normalizedRaw.forEach(t => {
+      if (!t || !t.name) return;
+      const key = t.name.trim().toUpperCase();
+      if (!groupedByName[key]) {
+        groupedByName[key] = [];
+      }
+      groupedByName[key].push(t);
+    });
+
+    let cleanedTeachers: any[] = [];
+    const idReplacementMap: Record<string, string> = {};
+
+    Object.entries(groupedByName).forEach(([nameKey, list]) => {
+      if (list.length === 1) {
+        cleanedTeachers.push(list[0]);
+      } else {
+        // We have duplicates! Let's choose the "best" primary teacher
+        const sorted = [...list].sort((a, b) => {
+          const aIsStaff = String(a.id).startsWith('staff-') ? 1 : 0;
+          const bIsStaff = String(b.id).startsWith('staff-') ? 1 : 0;
+          if (aIsStaff !== bIsStaff) return bIsStaff - aIsStaff;
+
+          const aIsActive = (a.status !== 'inactive') ? 1 : 0;
+          const bIsActive = (b.status !== 'inactive') ? 1 : 0;
+          if (aIsActive !== bIsActive) return bIsActive - aIsActive;
+
+          const aInfoScore = (a.email ? 1 : 0) + (a.phone ? 1 : 0) + ((a.subjects && a.subjects.length > 0) ? 1 : 0);
+          const bInfoScore = (b.email ? 1 : 0) + (b.phone ? 1 : 0) + ((b.subjects && b.subjects.length > 0) ? 1 : 0);
+          return bInfoScore - aInfoScore;
+        });
+
+        const primary = sorted[0];
+        cleanedTeachers.push(primary);
+
+        // Map other duplicate IDs to the primary ID
+        for (let i = 1; i < sorted.length; i++) {
+          idReplacementMap[sorted[i].id] = primary.id;
+        }
+      }
+    });
+
+    // In-place deduplicate cleanedTeachers by ID to make absolutely sure they are unique by ID
+    const uniqueCleanedTeachers: any[] = [];
+    const seenTeacherIds = new Set<string>();
+    cleanedTeachers.forEach(t => {
+      if (!t || !t.id) return;
+      const tid = String(t.id).trim();
+      if (!seenTeacherIds.has(tid)) {
+        seenTeacherIds.add(tid);
+        uniqueCleanedTeachers.push(t);
+      }
+    });
+    cleanedTeachers = uniqueCleanedTeachers;
+
+    const alignSubjectsForTeachers = (teachersList: any[], assignmentsRecord: Record<string, string>) => {
+      const mappedSubjectsByTeacher: Record<string, Set<string>> = {};
+      Object.entries(assignmentsRecord || {}).forEach(([key, val]) => {
+        if (!val) return;
+        const ids = val.split(',').map(id => id.trim()).filter(Boolean);
+        let subject = '';
+        for (const yg of yearGroups) {
+          if (key.startsWith(`${yg}-`)) {
+            subject = key.substring(yg.length + 1).trim();
+            break;
+          }
+        }
+        if (!subject) {
+          const parts = key.split('-');
+          if (parts.length >= 2) {
+            subject = parts.slice(1).join('-').trim();
+          }
+        }
+        if (subject) {
+          ids.forEach(id => {
+            const finalId = idReplacementMap[id] || id;
+            if (!mappedSubjectsByTeacher[finalId]) {
+              mappedSubjectsByTeacher[finalId] = new Set<string>();
+            }
+            mappedSubjectsByTeacher[finalId].add(subject);
+          });
+        }
+      });
+
+      let alignedAny = false;
+      const alignedList = teachersList.map(teacher => {
+        const mappedSet = mappedSubjectsByTeacher[teacher.id] || new Set<string>();
+        const existingSubjects = teacher.subjects || [];
+
+        const combined = Array.from(new Set([...existingSubjects, ...mappedSet]));
+
+        const arraysEqual = (a: string[], b: string[]) => {
+          if (a.length !== b.length) return false;
+          const sortedA = [...a].sort();
+          const sortedB = [...b].sort();
+          return sortedA.every((v, i) => v === sortedB[i]);
+        };
+
+        if (!arraysEqual(existingSubjects, combined)) {
+          alignedAny = true;
+          return {
+            ...teacher,
+            subjects: combined
+          };
+        }
+        return teacher;
+      });
+
+      return { list: alignedList, alignedAny };
+    };
+
+    if (Object.keys(idReplacementMap).length === 0) {
+      const alignmentResult = alignSubjectsForTeachers(cleanedTeachers, rawAssignments);
+      return {
+        teachers: alignmentResult.list,
+        assignments: rawAssignments,
+        quotas: rawQuotas,
+        grid: rawGrid,
+        duties: rawDuties,
+        hasChanges: anyNameChanged || cleanedTeachers.length !== rawTeachers.length || alignmentResult.alignedAny
+      };
+    }
+
+    // Rewrite ID references in staffAssignments
+    const cleanedAssignments: Record<string, string> = {};
+    if (rawAssignments) {
+      Object.entries(rawAssignments).forEach(([key, val]) => {
+        if (typeof val === 'string') {
+          const parts = val.split(',').map(v => v.trim()).filter(Boolean);
+          const replacedParts = parts.map(id => idReplacementMap[id] || id);
+          const uniqueParts = Array.from(new Set(replacedParts));
+          cleanedAssignments[key] = uniqueParts.join(',');
+        } else {
+          cleanedAssignments[key] = val;
+        }
+      });
+    }
+
+    // Rewrite ID references in assignmentQuotas
+    const cleanedQuotas = Array.isArray(rawQuotas) ? rawQuotas.map(q => {
+      if (q && q.teacherId && idReplacementMap[q.teacherId]) {
+        return { ...q, teacherId: idReplacementMap[q.teacherId] };
+      }
+      return q;
+    }) : rawQuotas;
+
+    // Rewrite ID references in timetableGrid
+    const cleanedGrid: any = {};
+    if (rawGrid) {
+      Object.entries(rawGrid).forEach(([yg, daysRecord]: [string, any]) => {
+        cleanedGrid[yg] = {};
+        if (daysRecord) {
+          Object.entries(daysRecord).forEach(([day, slotsList]: [string, any]) => {
+            if (Array.isArray(slotsList)) {
+              cleanedGrid[yg][day] = slotsList.map(slot => {
+                if (!slot) return null;
+                if (Array.isArray(slot)) {
+                  return slot.map(sItem => {
+                    if (sItem && sItem.teacherId && idReplacementMap[sItem.teacherId]) {
+                      return { ...sItem, teacherId: idReplacementMap[sItem.teacherId] };
+                    }
+                    return sItem;
+                  });
+                } else if (slot.teacherId && idReplacementMap[slot.teacherId]) {
+                  return { ...slot, teacherId: idReplacementMap[slot.teacherId] };
+                }
+                return slot;
+              });
+            } else {
+              cleanedGrid[yg][day] = slotsList;
+            }
+          });
+        }
+      });
+    }
+
+    // Rewrite ID references in teacherDuties
+    const cleanedDuties: any = rawDuties ? { ...rawDuties } : {};
+    Object.entries(idReplacementMap).forEach(([oldId, newId]) => {
+      if (cleanedDuties[oldId]) {
+        if (!cleanedDuties[newId]) {
+          cleanedDuties[newId] = {};
+        }
+        Object.entries(cleanedDuties[oldId]).forEach(([day, dayDuties]: [string, any]) => {
+          if (!cleanedDuties[newId][day]) {
+            cleanedDuties[newId][day] = {};
+          }
+          if (dayDuties) {
+            Object.entries(dayDuties).forEach(([key, val]) => {
+              cleanedDuties[newId][day][key] = val;
+            });
+          }
+        });
+        delete cleanedDuties[oldId];
+      }
+    });
+
+    const alignmentResult = alignSubjectsForTeachers(cleanedTeachers, cleanedAssignments);
+
+    return {
+      teachers: alignmentResult.list,
+      assignments: cleanedAssignments,
+      quotas: cleanedQuotas,
+      grid: cleanedGrid,
+      duties: cleanedDuties,
+      hasChanges: true
+    };
+  };
+
+  // Utility to convert any undefined values into null so Firestore does not fail with "Unsupported field value: undefined"
+  const sanitizeFirestore = (val: any): any => {
+    if (val === undefined) return null;
+    if (val === null) return null;
+    if (Array.isArray(val)) {
+      return val.map(v => sanitizeFirestore(v));
+    }
+    if (typeof val === 'object') {
+      const result: any = {};
+      for (const key in val) {
+        if (Object.prototype.hasOwnProperty.call(val, key)) {
+          const v = val[key];
+          if (v !== undefined) {
+            result[key] = sanitizeFirestore(v);
+          }
+        }
+      }
+      return result;
+    }
+    return val;
+  };
+
   // Helper to save current state variables to Firestore silently
   const saveTimetableDataToFirestore = async (
     newTeachers = teachers,
@@ -1044,21 +1354,50 @@ export default function App() {
     newDuties = teacherDuties,
     newCombined = combinedClasses,
     newSubjects = subjects,
-    newParallelRules = parallelRules
+    newParallelRules = parallelRules,
+    forceDeduplicate = true
   ) => {
     if (!user || !userRoles.includes('admin')) return;
     try {
-      await setDoc(doc(db, 'school_config', 'timetable'), {
-        teachers: newTeachers,
-        staffAssignments: newAssignments,
-        assignmentQuotas: newQuotas,
-        timetableGrid: newGrid,
-        teacherDuties: newDuties,
+      let finalTeachers = newTeachers;
+      let finalAssignments = newAssignments;
+      let finalQuotas = newQuotas;
+      let finalGrid = newGrid;
+      let finalDuties = newDuties;
+
+      if (forceDeduplicate) {
+        const cleaned = deduplicateTeachersData(newTeachers, newAssignments, newQuotas, newGrid, newDuties);
+        if (cleaned.hasChanges) {
+          finalTeachers = cleaned.teachers;
+          finalAssignments = cleaned.assignments;
+          finalQuotas = cleaned.quotas;
+          finalGrid = cleaned.grid;
+          finalDuties = cleaned.duties;
+
+          // Sync React states so standard rendering is immediate
+          setTeachers(cleaned.teachers);
+          setStaffAssignments(cleaned.assignments);
+          setAssignmentQuotas(cleaned.quotas);
+          setTimetableGrid(cleaned.grid);
+          setTeacherDuties(cleaned.duties);
+        }
+      }
+
+      const payload = sanitizeFirestore({
+        teachers: finalTeachers,
+        staffAssignments: finalAssignments,
+        assignmentQuotas: finalQuotas,
+        timetableGrid: finalGrid,
+        teacherDuties: finalDuties,
         combinedClasses: newCombined,
         subjects: newSubjects,
         parallelRules: newParallelRules,
+        classroomClassMappings: classroomClassMappings,
+        classroomSubjectMappings: classroomSubjectMappings,
         updatedAt: Date.now()
       });
+
+      await setDoc(doc(db, 'school_config', 'timetable'), payload);
     } catch (err) {
       console.error("Failed to sync timetable config with cloud:", err);
     }
@@ -1107,17 +1446,36 @@ export default function App() {
   const saveTimetableToFirebase = async (newTeachers: any, newAssignments: any, newQuotas: any, newGrid: any) => {
     if (!user || !userRoles.includes('admin')) return;
     try {
-      await setDoc(doc(db, 'school_config', 'timetable'), {
-        teachers: newTeachers,
-        staffAssignments: newAssignments,
-        assignmentQuotas: newQuotas,
-        timetableGrid: newGrid,
-        teacherDuties: teacherDuties,
+      const cleaned = deduplicateTeachersData(newTeachers, newAssignments, newQuotas, newGrid, teacherDuties);
+      const finalTeachers = cleaned.teachers;
+      const finalAssignments = cleaned.assignments;
+      const finalQuotas = cleaned.quotas;
+      const finalGrid = cleaned.grid;
+      const finalDuties = cleaned.duties;
+
+      if (cleaned.hasChanges) {
+        setTeachers(cleaned.teachers);
+        setStaffAssignments(cleaned.assignments);
+        setAssignmentQuotas(cleaned.quotas);
+        setTimetableGrid(cleaned.grid);
+        setTeacherDuties(cleaned.duties);
+      }
+
+      const payload = sanitizeFirestore({
+        teachers: finalTeachers,
+        staffAssignments: finalAssignments,
+        assignmentQuotas: finalQuotas,
+        timetableGrid: finalGrid,
+        teacherDuties: finalDuties,
         combinedClasses: combinedClasses,
         parallelRules: parallelRules,
         subjects: subjects,
+        classroomClassMappings: classroomClassMappings,
+        classroomSubjectMappings: classroomSubjectMappings,
         updatedAt: Date.now()
       });
+
+      await setDoc(doc(db, 'school_config', 'timetable'), payload);
       alert("Timetable configuration saved to cloud successfully!");
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'school_config/timetable');
@@ -1271,47 +1629,240 @@ export default function App() {
     setHistoryIndex(prev => Math.min(prev + 1, 49));
   };
 
-  // Auth Handler
-   const handleAuth = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Auth Handler (Passwordless OTP based)
+  const handleRequestOtp = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setAuthError('');
+    setShowLegacyPasswordField(false);
+    
     const cleanEmail = email.trim();
-    if (!cleanEmail || !password) {
-      setAuthError('Email and password are required.');
+    if (!cleanEmail) {
+      setAuthError('Email address is required.');
       return;
     }
 
+    setIsSendingOtp(true);
     try {
-      if (authMode === 'register') {
-        const res = await createUserWithEmailAndPassword(auth, cleanEmail, password);
-        await updateProfile(res.user, { displayName: registerName });
-        // Set teacher name immediately for UI
-        setTeacherName(registerName);
-        // Create user profile in Firestore
-        try {
-          await setDoc(doc(db, 'users', res.user.uid), {
-            uid: res.user.uid,
-            email: res.user.email || cleanEmail,
-            teacherName: registerName,
-            roles: registerRoles,
-            createdAt: new Date().toISOString()
-          });
-          setUserRoles(registerRoles);
-        } catch (fsErr) {
-          handleFirestoreError(fsErr, OperationType.WRITE, `users/${res.user.uid}`);
-        }
-      } else {
-        const res = await signInWithEmailAndPassword(auth, cleanEmail, password);
-        // Set name from profile immediately if available
+      const res = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          email: cleanEmail,
+          customBaseUrl: apiSyncBaseUrl,
+          customToken: apiSyncToken
+        })
+      });
+      
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to send OTP verification code.');
+      }
+
+      setOtpSent(true);
+    } catch (err: any) {
+      setAuthError(err.message || 'An error occurred while sending the code.');
+      console.error("OTP send error:", err);
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setIsVerifyingOtp(true);
+
+    const cleanEmail = email.trim();
+    
+    // If legacy password update is triggered
+    if (showLegacyPasswordField) {
+      if (!legacyPassword) {
+        setAuthError('Please enter your existing password to convert your account.');
+        setIsVerifyingOtp(false);
+        return;
+      }
+      try {
+        const res = await signInWithEmailAndPassword(auth, cleanEmail, legacyPassword);
+        const { updatePassword } = await import('firebase/auth');
+        await updatePassword(res.user, cleanEmail + "_EduMagicOTPSecret!");
+        
         if (res.user.displayName) {
           setTeacherName(res.user.displayName);
         } else if (res.user.email) {
           setTeacherName(res.user.email.split('@')[0]);
         }
+        
+        setOtpSent(false);
+        setOtpCode('');
+        setShowLegacyPasswordField(false);
+        setLegacyPassword('');
+      } catch (pwErr: any) {
+        setAuthError(getFriendlyAuthError(pwErr));
+        console.error("Legacy conversion error:", pwErr);
+      } finally {
+        setIsVerifyingOtp(false);
+      }
+      return;
+    }
+
+    if (!otpCode || otpCode.trim().length !== 6) {
+      setAuthError('Please enter a valid 6-digit verification code.');
+      setIsVerifyingOtp(false);
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail, code: otpCode.trim() })
+      });
+
+      const resData = await response.json();
+      if (!response.ok) {
+        throw new Error(resData.error || 'Failed to verify OTP code.');
+      }
+
+      const securePassword = cleanEmail + "_EduMagicOTPSecret!";
+      try {
+        const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, securePassword);
+        
+        if (userCredential.user.displayName) {
+          setTeacherName(userCredential.user.displayName);
+        } else if (userCredential.user.email) {
+          setTeacherName(userCredential.user.email.split('@')[0]);
+        }
+        
+        setOtpSent(false);
+        setOtpCode('');
+      } catch (authErr: any) {
+        if (authErr.code === 'auth/user-not-found' || authErr.message?.includes('user-not-found')) {
+          const userCredential = await createUserWithEmailAndPassword(auth, cleanEmail, securePassword);
+          await updateProfile(userCredential.user, { displayName: resData.name });
+          setTeacherName(resData.name);
+
+          const rolesToSave = resData.role === 'admin' ? ['admin', 'educator'] : ['educator'];
+          try {
+            await setDoc(doc(db, 'users', userCredential.user.uid), {
+              uid: userCredential.user.uid,
+              email: cleanEmail,
+              teacherName: resData.name,
+              roles: rolesToSave,
+              createdAt: new Date().toISOString()
+            });
+            setUserRoles(rolesToSave);
+          } catch (fsErr) {
+            handleFirestoreError(fsErr, OperationType.WRITE, `users/${userCredential.user.uid}`);
+          }
+
+          setOtpSent(false);
+          setOtpCode('');
+        } else if (authErr.code === 'auth/wrong-password' || authErr.message?.includes('wrong-password')) {
+          setShowLegacyPasswordField(true);
+          setAuthError("This account was created under the legacy system. Please enter your existing password once to convert it to secure passwordless log in.");
+        } else {
+          throw authErr;
+        }
+      }
+    } catch (err: any) {
+      setAuthError(err.message || 'Verification failed. Please check your code and try again.');
+      console.error("OTP Verification Error:", err);
+    } finally {
+      setIsVerifyingOtp(false);
+    }
+  };
+
+  const handleResetPassword = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setResetEmailSent(false);
+    setResetMessage('Please contact your administrator to reset your password or create a new one.');
+  };
+
+  const handlePasswordAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setIsVerifyingOtp(true); // Re-use loading state to disable submission button
+    
+    const cleanEmail = email.trim();
+    if (!cleanEmail || !password) {
+      setAuthError('Email and password are required.');
+      setIsVerifyingOtp(false);
+      return;
+    }
+
+    try {
+      if (authMode === 'register') {
+        if (!registerName) {
+          throw new Error("Display Name is required for registration.");
+        }
+
+        // Validate admin registration permissions securely using server-side check-registration
+        let rolesToSave = [...registerRoles];
+        if (rolesToSave.includes('admin')) {
+          let isAuthorized = ADMIN_EMAILS.includes(cleanEmail.toLowerCase());
+          if (!isAuthorized) {
+            try {
+              const resValidation = await fetch('/api/auth/check-registration', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: cleanEmail })
+              });
+              if (resValidation.ok) {
+                const valData = await resValidation.json();
+                isAuthorized = valData.success && (valData.role === 'admin');
+              }
+            } catch (ttErr) {
+              console.error("Failed to validate admin role on registration server-side:", ttErr);
+            }
+          }
+
+          if (!isAuthorized) {
+            throw new Error("You are not authorized to register with the Admin role. Only Administrators, Coordinators, and Admin Staff listed in the school roster can register as Admin.");
+          }
+        }
+
+        const res = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+        await updateProfile(res.user, { displayName: registerName });
+        setTeacherName(registerName);
+        
+        try {
+          await setDoc(doc(db, 'users', res.user.uid), {
+            uid: res.user.uid,
+            email: cleanEmail,
+            teacherName: registerName,
+            roles: rolesToSave,
+            createdAt: new Date().toISOString()
+          });
+          setUserRoles(rolesToSave);
+        } catch (fsErr) {
+          handleFirestoreError(fsErr, OperationType.WRITE, `users/${res.user.uid}`);
+        }
+      } else {
+        const res = await signInWithEmailAndPassword(auth, cleanEmail, password);
+        const fallbackName = res.user.displayName || res.user.email?.split('@')[0] || "Educator";
+        setTeacherName(fallbackName);
+        
+        try {
+          const docSnap = await getDoc(doc(db, 'users', res.user.uid));
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            if (data?.teacherName) {
+              setTeacherName(data.teacherName);
+            }
+            if (data?.roles) {
+              setUserRoles(data.roles);
+            }
+          }
+        } catch (fsErr) {
+          console.error("Failed to load user profile roles:", fsErr);
+        }
       }
     } catch (err: any) {
       setAuthError(getFriendlyAuthError(err));
-      console.error("Auth Error:", err);
+      console.error("Standard Auth Error:", err);
+    } finally {
+      setIsVerifyingOtp(false);
     }
   };
 
@@ -1335,24 +1886,58 @@ export default function App() {
         // Fetch teacher name from Firestore profile
         try {
           const userDoc = await getDoc(doc(db, 'users', fbUser.uid));
+          
+          let isAuthorizedObj = ADMIN_EMAILS.includes(fbUser.email?.toLowerCase() || '');
+          if (!isAuthorizedObj && fbUser.email) {
+            try {
+              const resValidation = await fetch('/api/auth/check-registration', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: fbUser.email })
+              });
+              if (resValidation.ok) {
+                const valData = await resValidation.json();
+                isAuthorizedObj = valData.success && (valData.role === 'admin');
+              }
+            } catch (ttErr) {
+              console.error("Failed to validate admin role on registration check server-side:", ttErr);
+            }
+          }
+
           if (userDoc.exists()) {
             const data = userDoc.data();
             if (data.teacherName) {
               setTeacherName(data.teacherName);
             }
-            if (data.roles) {
-              // Bootstrap admin check
-              const consolidatedRoles = [...data.roles];
-              if (ADMIN_EMAILS.includes(fbUser.email?.toLowerCase() || '') && !consolidatedRoles.includes('admin')) {
+            
+            let consolidatedRoles = data.roles ? [...data.roles] : ['educator'];
+            if (isAuthorizedObj) {
+              if (!consolidatedRoles.includes('admin')) {
                 consolidatedRoles.push('admin');
               }
-              setUserRoles(consolidatedRoles);
-            } else if (ADMIN_EMAILS.includes(fbUser.email?.toLowerCase() || '')) {
-              setUserRoles(['admin', 'educator']);
+            } else {
+              consolidatedRoles = consolidatedRoles.filter(r => r !== 'admin');
             }
-          } else if (ADMIN_EMAILS.includes(fbUser.email?.toLowerCase() || '')) {
-            // Case where document doesn't exist yet but user is an admin
-            setUserRoles(['admin', 'educator']);
+            
+            if (consolidatedRoles.length === 0) {
+              consolidatedRoles = ['educator'];
+            }
+
+            // Sync back to firestore if roles have changed
+            const rolesHaveChanged = JSON.stringify(consolidatedRoles.sort()) !== JSON.stringify((data.roles || []).sort());
+            if (rolesHaveChanged) {
+              try {
+                await setDoc(doc(db, 'users', fbUser.uid), { roles: consolidatedRoles }, { merge: true });
+              } catch (setErr) {
+                console.error("Failed to update corrected roles in db:", setErr);
+              }
+            }
+
+            setUserRoles(consolidatedRoles);
+          } else {
+            // Case where document doesn't exist yet but let's check auth
+            const consolidatedRoles = isAuthorizedObj ? ['admin', 'educator'] : ['educator'];
+            setUserRoles(consolidatedRoles);
           }
         } catch (err: any) {
           if (err.message?.includes('offline')) {
@@ -1363,6 +1948,8 @@ export default function App() {
           
           if (ADMIN_EMAILS.includes(fbUser.email?.toLowerCase() || '')) {
             setUserRoles(['admin', 'educator']);
+          } else {
+            setUserRoles(['educator']);
           }
         }
       } else {
@@ -1732,9 +2319,9 @@ export default function App() {
       <motion.div 
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-white rounded-[3rem] p-8 md:p-12 shadow-2xl w-full max-w-md border-8 border-white/20"
+        className="bg-white rounded-[3rem] p-8 md:p-12 shadow-2xl w-full max-w-md border-8 border-white/20 overflow-y-auto max-h-[95vh]"
       >
-        <div className="flex flex-col items-center gap-6 mb-8">
+        <div className="flex flex-col items-center gap-6 mb-6">
           <div className="w-20 h-20 bg-[#059669] rounded-2xl flex items-center justify-center transform rotate-12 shadow-lg">
             <BookOpen className="text-white" size={40} />
           </div>
@@ -1746,7 +2333,10 @@ export default function App() {
           </div>
         </div>
 
-        <form onSubmit={handleAuth} className="space-y-4">
+        <form 
+          onSubmit={handlePasswordAuth} 
+          className="space-y-4"
+        >
           {authMode === 'register' && (
             <>
               <div className="space-y-1">
@@ -1777,7 +2367,7 @@ export default function App() {
                       }
                     }}
                     className={cn(
-                      "flex-1 py-2 px-3 rounded-xl border-2 font-bold text-xs transition-all flex items-center justify-center gap-2",
+                      "flex-1 py-3 px-3 rounded-xl border-2 font-bold text-xs transition-all flex items-center justify-center gap-2",
                       registerRoles.includes('educator') ? "bg-[#059669] border-[#059669] text-white shadow-md" : "bg-white border-[#D1FAE5] text-[#059669]/50 hover:bg-[#F0FDF4]"
                     )}
                   >
@@ -1793,19 +2383,22 @@ export default function App() {
                       }
                     }}
                     className={cn(
-                      "flex-1 py-2 px-3 rounded-xl border-2 font-bold text-xs transition-all flex items-center justify-center gap-2",
+                      "flex-1 py-3 px-3 rounded-xl border-2 font-bold text-xs transition-all flex items-center justify-center gap-2",
                       registerRoles.includes('admin') ? "bg-[#059669] border-[#059669] text-white shadow-md" : "bg-white border-[#D1FAE5] text-[#059669]/50 hover:bg-[#F0FDF4]"
                     )}
                   >
                     <LayoutGrid size={14} /> Admin
                   </button>
                 </div>
-                <p className="text-[10px] text-[#059669]/60 font-medium px-4">You can select either or both portals to access.</p>
+                <p className="text-[10px] text-[#059669]/60 font-medium px-4">
+                  Only users with pre-authorised emails listed in the school roster can register as Admin. Any other email can register as Educator only.
+                </p>
               </div>
             </>
           )}
+          
           <div className="space-y-1">
-            <label className="text-xs font-bold text-[#059669] uppercase ml-4">Email Address</label>
+            <label className="text-[#059669] text-xs font-bold uppercase ml-4">Email Address</label>
             <div className="relative">
               <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-[#059669]/50" size={18} />
               <input 
@@ -1818,8 +2411,20 @@ export default function App() {
               />
             </div>
           </div>
+
           <div className="space-y-1">
-            <label className="text-xs font-bold text-[#059669] uppercase ml-4">Password</label>
+            <div className="flex justify-between items-center ml-4 mr-2">
+              <label className="text-[#059669] text-xs font-bold uppercase">Password</label>
+              {authMode === 'login' && (
+                <button
+                  type="button"
+                  onClick={handleResetPassword}
+                  className="text-[#059669] text-xs font-bold hover:underline focus:outline-none"
+                >
+                  Forgot password?
+                </button>
+              )}
+            </div>
             <div className="relative">
               <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-[#059669]/50" size={18} />
               <input 
@@ -1833,6 +2438,12 @@ export default function App() {
             </div>
           </div>
 
+          {resetMessage && (
+            <p className="text-amber-800 text-sm font-bold text-center px-4 bg-amber-50 py-3 rounded-xl border border-amber-200">
+              {resetMessage}
+            </p>
+          )}
+
           {authError && (
             <p className="text-red-500 text-sm font-bold text-center px-4 bg-red-50 py-2 rounded-xl border border-red-100">
               {authError}
@@ -1841,20 +2452,30 @@ export default function App() {
 
           <button 
             type="submit" 
-            className="w-full h-16 bg-[#059669] hover:bg-[#047857] text-white rounded-2xl font-black text-xl shadow-[0_8px_0_#064E3B] active:shadow-none active:translate-y-2 transition-all flex items-center justify-center gap-3 uppercase tracking-wider"
+            disabled={isVerifyingOtp}
+            className="w-full h-16 bg-[#059669] hover:bg-[#047857] disabled:bg-[#a7f3d0] text-white rounded-2xl font-black text-lg shadow-[0_8px_0_#064E3B] active:shadow-none active:translate-y-2 transition-all flex items-center justify-center gap-3 uppercase tracking-wider disabled:active:translate-y-0 disabled:shadow-[0_8px_0_#064E3B]"
           >
-            {authMode === 'login' ? <LogIn size={24} /> : <UserPlus size={24} />}
-            {authMode === 'login' ? 'Sign In' : 'Sign Up'}
+            {isVerifyingOtp ? (
+              <span className="animate-pulse">{authMode === 'register' ? 'Registering...' : 'Signing In...'}</span>
+            ) : (
+              <>
+                <LogIn size={22} />
+                <span>{authMode === 'register' ? 'Register Account' : 'Sign In'}</span>
+              </>
+            )}
           </button>
         </form>
 
-        <div className="mt-8 text-center">
+        <div className="mt-6 text-center">
           <button 
             onClick={() => {
               setAuthMode(authMode === 'login' ? 'register' : 'login');
               setAuthError('');
+              setOtpSent(false);
+              setResetEmailSent(false);
+              setResetMessage('');
             }}
-            className="text-[#059669] font-bold hover:underline"
+            className="text-[#059669] font-bold text-sm hover:underline"
           >
             {authMode === 'login' ? "Don't have an account? Register here" : "Already have an account? Sign In"}
           </button>
@@ -3059,7 +3680,7 @@ export default function App() {
   const [editingImageUrl, setEditingImageUrl] = useState<string | null>(null);
   const [imageEditorCallback, setImageEditorCallback] = useState<{ cb: (settings: any) => void }>({ cb: () => {} });
   const [currentView, setCurrentView] = useState<'home' | 'educator-suite' | 'lesson-plan' | 'slides' | 'worksheet' | 'notes' | 'admin'>('home');
-  const [adminTab, setAdminTab] = useState<'overview' | 'timetable' | 'teachers' | 'assignments' | 'plans' | 'members' | 'cover'>('overview');
+  const [adminTab, setAdminTab] = useState<'overview' | 'timetable' | 'teachers' | 'assignments' | 'plans' | 'members' | 'cover' | 'classrooms'>('overview');
   const [allMembers, setAllMembers] = useState<any[]>([]);
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
   
@@ -3133,23 +3754,37 @@ export default function App() {
     }
   };
 
-  const [teachers, setTeachers] = useState<{id: string, name: string, role: string, subjects: string[], maxPeriods: number, locked?: boolean, workingDays?: string[]}[]>(
+  const [teachers, setTeachers] = useState<{
+    id: string;
+    name: string;
+    role: string;
+    subjects: string[];
+    maxPeriods: number;
+    locked?: boolean;
+    workingDays?: string[];
+    email?: string;
+    phone?: string;
+    jobType?: string;
+    nricName?: string;
+    preferredName?: string;
+    status?: string;
+  }[]>(
     [
-      { id: 'c-1', name: 'MS KANIMOZHI', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 'c-1', name: 'KANIMOZHI', role: 'Teacher', subjects: [], maxPeriods: 28 },
       { id: 'c-2', name: 'Head Coordinator 2', role: 'Coordinator', subjects: [], maxPeriods: 28 },
-      { id: 't-1', name: 'MS NURLIANA ASYIKIN', role: 'Teacher', subjects: [], maxPeriods: 28 },
-      { id: 't-2', name: 'MS KONG YOKE LAN', role: 'Teacher', subjects: [], maxPeriods: 28 },
-      { id: 't-3', name: 'MS KATHY LIM LE SHAN', role: 'Teacher', subjects: [], maxPeriods: 28 },
-      { id: 't-4', name: 'MS AUNI ZARIFAH', role: 'Teacher', subjects: [], maxPeriods: 28 },
-      { id: 't-5', name: 'MR TOMMY WONG SHENG-HANG', role: 'Teacher', subjects: [], maxPeriods: 28 },
-      { id: 't-6', name: 'MS NUR SHAHIDAH', role: 'Teacher', subjects: [], maxPeriods: 28 },
-      { id: 't-7', name: 'MR ISAAC LOO KAM FEI', role: 'Teacher', subjects: [], maxPeriods: 28 },
-      { id: 't-8', name: 'MS NUR HAZIRAH', role: 'Teacher', subjects: [], maxPeriods: 28 },
-      { id: 't-9', name: 'MS FARHAH', role: 'Teacher', subjects: [], maxPeriods: 28 },
-      { id: 't-10', name: 'MS NUR FARAHALYA', role: 'Teacher', subjects: [], maxPeriods: 28 },
-      { id: 't-11', name: 'MS PERVINA NAIR', role: 'Teacher', subjects: [], maxPeriods: 28 },
-      { id: 't-12', name: 'MS M.ROSHINI', role: 'Teacher', subjects: [], maxPeriods: 28 },
-      { id: 't-13', name: 'MR ABDUL WAFI', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-1', name: 'NURLIANA ASYIKIN', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-2', name: 'KONG YOKE LAN', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-3', name: 'KATHY LIM LE SHAN', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-4', name: 'AUNI ZARIFAH', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-5', name: 'TOMMY WONG SHENG-HANG', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-6', name: 'NUR SHAHIDAH', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-7', name: 'ISAAC LOO KAM FEI', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-8', name: 'NUR HAZIRAH', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-9', name: 'FARHAH', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-10', name: 'NUR FARAHALYA', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-11', name: 'PERVINA NAIR', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-12', name: 'M.ROSHINI', role: 'Teacher', subjects: [], maxPeriods: 28 },
+      { id: 't-13', name: 'ABDUL WAFI', role: 'Teacher', subjects: [], maxPeriods: 28 },
       ...Array.from({length: 6}, (_, i) => ({
         id: `t-${i + 14}`,
         name: `Teacher ${i + 14}`,
@@ -3159,6 +3794,8 @@ export default function App() {
       }))
     ]
   );
+
+  const [teacherSearchQuery, setTeacherSearchQuery] = useState('');
   
   const [subjects, setSubjects] = useState<string[]>(() => {
     return [
@@ -3304,6 +3941,68 @@ export default function App() {
 
   const [addTeacherModalOpen, setAddTeacherModalOpen] = useState(false);
   const [combinedClasses, setCombinedClasses] = useState<{ id: string; subject: string; yearGroups: string[] }[]>([]);
+  const [classroomClassMappings, setClassroomClassMappings] = useState<Record<string, string>>({
+    "Year 1": "1-1",
+    "Year 2": "1-2",
+    "Year 3": "1-3",
+    "Year 4": "2-1",
+    "Year 5": "1-5",
+    "Year 6": "5-1",
+    "Year 7": "2-2",
+    "Year 8": "2-3",
+    "Year 9": "3-1",
+    "Year 10": "5-3",
+    "Year 11": "5-1"
+  });
+
+  const [classroomSubjectMappings, setClassroomSubjectMappings] = useState<Record<string, string>>({
+    "SCIENCE": "Science Lab",
+    "Biology": "Science Lab",
+    "Chemistry": "Science Lab",
+    "Physics": "Science Lab",
+    "ART & DESIGN": "Art Room 2-4",
+    "MUSIC": "Music Room 1",
+    "PHYSICAL EDUCATION": "Hall",
+    "LIBRARY": "Library",
+    "SILENT READING": "Library",
+    "BREAKFAST": "Canteen",
+    "LUNCH": "Canteen"
+  });
+
+  const getDynamicVenue = (subject: string, yearGroup: string): string => {
+    const cleanSub = subject ? subject.toUpperCase().trim() : "";
+    if (classroomSubjectMappings && classroomSubjectMappings[cleanSub]) {
+      return classroomSubjectMappings[cleanSub];
+    }
+    if (cleanSub.includes("SCIENCE") || cleanSub.includes("BIOLOGY") || cleanSub.includes("CHEMISTRY") || cleanSub.includes("PHYSICS")) {
+      return "Science Lab";
+    }
+    if (cleanSub.includes("ART") || cleanSub.includes("DESIGN")) {
+      return "Art Room 2-4";
+    }
+    if (cleanSub.includes("MUSIC")) {
+      return "Music Room 1";
+    }
+    if (cleanSub.includes("PHYSICAL EDUCATION") || cleanSub.includes("PE") || cleanSub.includes("P.E.")) {
+      return "Hall";
+    }
+    if (cleanSub.includes("LIBRARY") || cleanSub.includes("SILENT READING")) {
+      return "Library";
+    }
+    if (cleanSub.includes("BREAKFAST") || cleanSub.includes("LUNCH") || cleanSub.includes("RECESS")) {
+      return "Canteen";
+    }
+    if (cleanSub.includes("ASSEMBLY")) {
+      return "Hall";
+    }
+
+    if (classroomClassMappings && classroomClassMappings[yearGroup]) {
+      return classroomClassMappings[yearGroup];
+    }
+    const matchDigit = yearGroup ? yearGroup.match(/\d+/) : null;
+    const digit = matchDigit ? matchDigit[0] : "1";
+    return `classroom ${digit}-1`;
+  };
   const [newCombinedSubject, setNewCombinedSubject] = useState("PHYSICAL EDUCATION");
   const [newCombinedYgs, setNewCombinedYgs] = useState<string[]>([]);
   const [parallelRules, setParallelRules] = useState<{ id: string; yearGroup: string; subjects: string[] }[]>([]);
@@ -3315,11 +4014,23 @@ export default function App() {
     role: string;
     maxPeriods: number;
     workingDays: string[];
+    email: string;
+    phone: string;
+    jobType: string;
+    nricName: string;
+    preferredName: string;
+    subjects: string[];
   }>({
     name: '',
     role: 'Teacher',
     maxPeriods: 28,
-    workingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+    workingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+    email: '',
+    phone: '',
+    jobType: 'full-time',
+    nricName: '',
+    preferredName: '',
+    subjects: []
   });
 
   const checkIsPE = (sub: string) => {
@@ -3383,6 +4094,67 @@ export default function App() {
   const [selectedTeacherSchedule, setSelectedTeacherSchedule] = useState<string>('');
   const [schedulerYearGroup, setSchedulerYearGroup] = useState("Year 1");
 
+  const isTeacherActive = (teacher: any) => {
+    if (!teacher || !teacher.id) return false;
+
+    // Ignore invalid/empty/undefined IDs or empty/blank names
+    if (
+      teacher.id === 'staff-undefined' ||
+      teacher.id === 'staff-null' ||
+      teacher.id === 'staff-' ||
+      String(teacher.id).includes('undefined') ||
+      String(teacher.id).includes('null') ||
+      !teacher.name ||
+      !teacher.name.trim()
+    ) {
+      return false;
+    }
+
+    // Check status case-insensitively
+    if (teacher.status && (teacher.status.toLowerCase() === 'inactive' || teacher.status.toLowerCase() === 'resigned' || teacher.status.toLowerCase() === 'terminated')) {
+      return false;
+    }
+
+    // Ignore development/test accounts to ensure precisely 52 unique real staff members are counted and displayed
+    const nameUpper = String(teacher.name).toUpperCase();
+    if (
+      nameUpper.includes('COMMUN DEV') ||
+      nameUpper.includes('COMMUN') ||
+      nameUpper.includes('DEVELOPER') ||
+      nameUpper.includes('TEST STAFF')
+    ) {
+      return false;
+    }
+    
+    // Check if there are any synced staff members (starting with 'staff-')
+    const hasSyncedStaff = teachers.some(t => {
+      if (!t || !t.id || !t.name || !t.name.trim()) return false;
+      if (!t.id.startsWith('staff-') || String(t.id).includes('undefined') || String(t.id).includes('null')) return false;
+      const tNameUpper = t.name.toUpperCase();
+      return !(tNameUpper.includes('COMMUN DEV') || tNameUpper.includes('COMMUN') || tNameUpper.includes('DEVELOPER') || tNameUpper.includes('TEST STAFF'));
+    });
+
+    if (hasSyncedStaff) {
+      // If synced staff exists, ONLY count actual synced staff! Completely ignore dummy/initial teachers.
+      return !!(teacher.id && teacher.id.startsWith('staff-'));
+    }
+    
+    return true;
+  };
+
+  const getActiveStaffList = (teachersList: any[]) => {
+    if (!teachersList) return [];
+    const active = teachersList.filter(isTeacherActive);
+    const seen = new Set<string>();
+    return active.filter(t => {
+      if (!t || !t.id) return false;
+      const idStr = String(t.id).trim();
+      if (seen.has(idStr)) return false;
+      seen.add(idStr);
+      return true;
+    });
+  };
+
   // Clear local storage on initial mount to ensure a fresh start
   useEffect(() => {
     localStorage.removeItem('zera_current_settings');
@@ -3432,6 +4204,184 @@ export default function App() {
 
   const [customThemes, setCustomThemes] = useState<AppTheme[]>([]);
   const [expandedTeacherSubjects, setExpandedTeacherSubjects] = useState<Record<string, boolean>>({});
+  const [isSyncingStaff, setIsSyncingStaff] = useState(false);
+  const [staffSyncModalOpen, setStaffSyncModalOpen] = useState(false);
+  const [apiSyncBaseUrl, setApiSyncBaseUrl] = useState(() => {
+    const saved = localStorage.getItem('zera_api_base_url');
+    if (!saved || saved === "https://zera.edu.my" || saved === "https://api.zera.edu.my") {
+      return "https://zera-education.commun.cloud";
+    }
+    return saved;
+  });
+  const [apiSyncToken, setApiSyncToken] = useState(() => localStorage.getItem('zera_api_token') || "23|IUgdvUdK3yUfa7IFGy3FC5ZkWAYc4E5uYYDTyTqV544970de");
+  const [syncResult, setSyncResult] = useState<{success: boolean; message: string; count?: number} | null>(null);
+
+  const handleSyncStaff = async () => {
+    setIsSyncingStaff(true);
+    setSyncResult(null);
+    localStorage.setItem('zera_api_base_url', apiSyncBaseUrl);
+    localStorage.setItem('zera_api_token', apiSyncToken);
+
+    try {
+      const response = await fetch('/api/staff/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          customBaseUrl: apiSyncBaseUrl,
+          customToken: apiSyncToken
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to fetch staff from API');
+      }
+
+      // If a working subdomain was successfully resolved/discovered, auto-update input & storage
+      if (data.resolvedUrl && data.resolvedUrl !== apiSyncBaseUrl) {
+        setApiSyncBaseUrl(data.resolvedUrl);
+        localStorage.setItem('zera_api_base_url', data.resolvedUrl);
+      }
+
+      const apiStaffList = data.staff || [];
+      if (apiStaffList.length === 0) {
+        setSyncResult({
+          success: true,
+          message: 'Sync completed, but no active staff members were returned from the API.'
+        });
+        setIsSyncingStaff(false);
+        return;
+      }
+
+      // Pre-deduplicate existing local list first
+      const preCleaned = deduplicateTeachersData(teachers, staffAssignments, assignmentQuotas, timetableGrid, teacherDuties);
+      let workingTeachers = preCleaned.teachers;
+      let workingAssignments = preCleaned.assignments;
+      let workingQuotas = preCleaned.quotas;
+      let workingGrid = preCleaned.grid;
+      let workingDuties = preCleaned.duties;
+
+      const updatedTeachers = [...workingTeachers];
+      let addedCount = 0;
+      let updatedCount = 0;
+
+      apiStaffList.forEach((s: any) => {
+        const rawApiName = (s.preferred_name || s.nric_name || `${s.first_name || ''} ${s.last_name || ''}`).trim().toUpperCase();
+        const apiName = rawApiName.replace(/^(MR|MS|MRS|MR\.|MS\.|MRS\.)\s+/i, '').trim();
+        const staffId = `staff-${s.id}`;
+
+        const isDevStaff = apiName.includes('COMMUN DEV') || apiName.includes('COMMUN') || apiName.includes('DEVELOPER') || apiName.includes('TEST STAFF');
+
+        if (!apiName || isDevStaff) {
+          // If the record from the API has an empty or blank name or is a dev/test staff, force any legacy matching record to inactive!
+          let existingIdx = updatedTeachers.findIndex(t => t.id === staffId);
+          if (existingIdx !== -1) {
+            updatedTeachers[existingIdx] = {
+              ...updatedTeachers[existingIdx],
+              status: 'inactive'
+            };
+          }
+          return; // Skip empty/dev records
+        }
+        
+        let existingIdx = updatedTeachers.findIndex(t => t.id === staffId);
+        
+        if (existingIdx === -1) {
+          existingIdx = updatedTeachers.findIndex(t => t.name.toUpperCase() === apiName);
+        }
+
+        const stripPrefix = (str: string) => {
+          if (!str) return str;
+          return str.replace(/^(MR|MS|MRS|MR\.|MS\.|MRS\.)\s+/i, '').trim();
+        };
+
+        const mergedTeacher = {
+          id: staffId,
+          name: apiName,
+          role: s.job_title || (existingIdx !== -1 ? updatedTeachers[existingIdx].role : 'Teacher'),
+          firstName: s.first_name || '',
+          lastName: s.last_name || '',
+          nricName: s.nric_name ? stripPrefix(s.nric_name) : '',
+          preferredName: s.preferred_name ? stripPrefix(s.preferred_name) : '',
+          email: s.email || '',
+          phone: s.phone || '',
+          jobType: s.job_type || '',
+          status: s.status || 'active',
+          subjects: existingIdx !== -1 ? (updatedTeachers[existingIdx].subjects || []) : [],
+          maxPeriods: existingIdx !== -1 ? (updatedTeachers[existingIdx].maxPeriods || 28) : 28,
+          workingDays: existingIdx !== -1 ? (updatedTeachers[existingIdx].workingDays || ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]) : ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+          locked: existingIdx !== -1 ? !!updatedTeachers[existingIdx].locked : false,
+        };
+
+        if (existingIdx !== -1) {
+          updatedTeachers[existingIdx] = mergedTeacher;
+          updatedCount++;
+        } else {
+          updatedTeachers.push(mergedTeacher);
+          addedCount++;
+        }
+      });
+
+      // Mark previously synced staff not returned in the current API response as 'inactive'
+      const syncedApiIds = new Set(apiStaffList.map((s: any) => `staff-${s.id}`));
+      updatedTeachers.forEach((t, idx) => {
+        if (t.id && t.id.startsWith('staff-') && !syncedApiIds.has(t.id)) {
+          updatedTeachers[idx] = {
+            ...t,
+            status: 'inactive'
+          };
+        }
+      });
+
+      // Post-clean to be 100% sure we didn't introduce duplicates during active additions
+      const postCleaned = deduplicateTeachersData(updatedTeachers, workingAssignments, workingQuotas, workingGrid, workingDuties);
+      
+      // Update local states directly 
+      setTeachers(postCleaned.teachers);
+      setStaffAssignments(postCleaned.assignments);
+      setAssignmentQuotas(postCleaned.quotas);
+      setTimetableGrid(postCleaned.grid);
+      setTeacherDuties(postCleaned.duties);
+
+      // Save directly to Firestore without causing double deduplications
+      await saveTimetableDataToFirestore(
+        postCleaned.teachers,
+        postCleaned.assignments,
+        postCleaned.quotas,
+        postCleaned.grid,
+        postCleaned.duties,
+        combinedClasses,
+        subjects,
+        parallelRules,
+        false // forceDeduplicate = false because we just ran it
+      );
+
+      const validApiStaffCount = apiStaffList.filter((s: any) => {
+        const rawApiName = (s.preferred_name || s.nric_name || `${s.first_name || ''} ${s.last_name || ''}`).trim();
+        if (!rawApiName) return false;
+        const nameUpper = rawApiName.toUpperCase();
+        const isDevStaff = nameUpper.includes('COMMUN DEV') || nameUpper.includes('COMMUN') || nameUpper.includes('DEVELOPER') || nameUpper.includes('TEST STAFF');
+        return !isDevStaff;
+      }).length;
+
+      setSyncResult({
+        success: true,
+        message: `Successfully synced! Added ${addedCount} new staff and updated/merged ${updatedCount} existing staff.${data.resolvedUrl && data.resolvedUrl !== apiSyncBaseUrl ? ` (Auto-redirected to active API: ${data.resolvedUrl})` : ''}`,
+        count: validApiStaffCount
+      });
+
+    } catch (error: any) {
+      console.error("Staff sync error:", error);
+      setSyncResult({
+        success: false,
+        message: error.message || 'An unexpected error occurred during Synchronization.'
+      });
+    } finally {
+      setIsSyncingStaff(false);
+    }
+  };
 
   const renderAdmin = () => {
     const isPrimary = (yg: string) => ["Year 1", "Year 2", "Year 3", "Year 4", "Year 5", "Year 6"].includes(yg);
@@ -3765,6 +4715,236 @@ export default function App() {
       }
     };
 
+    const downloadCommunTimetable = () => {
+      setIsDownloading(true);
+      try {
+        const wb = XLSX.utils.book_new();
+        const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+        const yg = schedulerYearGroup;
+
+        const dataRows: any[][] = [];
+        dataRows.push(["class_name", "class_id", "day", "from", "to", "venue", "weeks", "no_attendance", "period_id"]);
+
+        const formatSubjectCode = (sub: string): string => {
+          if (!sub) return "";
+          const upper = sub.trim().toUpperCase();
+          
+          if (upper.includes("REGISTRATION")) return "Registration";
+          if (upper.includes("MATHEMATICS") || upper.includes("MATH")) return "Mathematics";
+          if (upper.includes("MALAY")) return "Malay";
+          if (upper.includes("ENGLISH") || upper.includes("ESL")) return "English";
+          if (upper.includes("DIGITAL LITERACY") || upper.includes("ICT") || upper.includes("COMPUTER")) {
+            return "Digital Literacy";
+          }
+          if (upper.includes("MANDARIN") || upper.includes("CHINESE")) return "Mandarin/Chinese";
+          if (upper.includes("WELLBEING") || upper.includes("WELLNESS")) return "Wellbeing";
+          if (upper.includes("MUSIC")) return "Music";
+          if (upper.includes("ART & DESIGN") || upper.includes("ART")) return "Art & Design";
+          if (upper.includes("GLOBAL PERSPECTIVES")) return "Global Perspectives";
+          if (upper.includes("SCIENCE") || upper.includes("BIOLOGY") || upper.includes("CHEMISTRY") || upper.includes("PHYSICS")) {
+            return "Science";
+          }
+          if (upper.includes("PHYSICAL EDUCATION") || upper.includes("P.E.") || upper === "PE") {
+            return "Physical Education";
+          }
+          if (upper.includes("ASSEMBLY")) return "Assembly";
+          if (upper.includes("LIBRARY")) return "Library";
+          if (upper.includes("SEJARAH") || upper.includes("HISTORY")) return "History";
+          if (upper.includes("BUSINESS") || upper.includes("ECONOMICS") || upper.includes("ACCOUNTING")) return "Business Studies";
+          
+          return sub.trim()
+            .toLowerCase()
+            .split(' ')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
+        };
+
+        const getVenue = (subject: string, yg: string): string => {
+          const cleanSub = subject ? subject.toUpperCase().trim() : "";
+          if (classroomSubjectMappings && classroomSubjectMappings[cleanSub]) {
+            return classroomSubjectMappings[cleanSub];
+          }
+          if (cleanSub.includes("SCIENCE") || cleanSub.includes("BIOLOGY") || cleanSub.includes("CHEMISTRY") || cleanSub.includes("PHYSICS")) {
+            return "Science Lab";
+          }
+          if (cleanSub.includes("ART") || cleanSub.includes("DESIGN")) {
+            return "Art Room 2-4";
+          }
+          if (cleanSub.includes("MUSIC")) {
+            return "Music Room 1";
+          }
+          if (cleanSub.includes("PHYSICAL EDUCATION") || cleanSub.includes("PE") || cleanSub.includes("P.E.")) {
+            return "Hall";
+          }
+          if (cleanSub.includes("LIBRARY") || cleanSub.includes("SILENT READING")) {
+            return "Library";
+          }
+          if (cleanSub.includes("BREAKFAST") || cleanSub.includes("LUNCH") || cleanSub.includes("RECESS")) {
+            return "Canteen";
+          }
+          if (cleanSub.includes("ASSEMBLY")) {
+            return "Hall";
+          }
+
+          if (classroomClassMappings && classroomClassMappings[yg]) {
+            return classroomClassMappings[yg];
+          }
+          const matchDigit = yg.match(/\d+/);
+          const digit = matchDigit ? matchDigit[0] : "1";
+          return `classroom ${digit}-1`;
+        };
+
+        days.forEach(day => {
+          const slots = getSlots(day, yg);
+          const rawLessons: any[] = [];
+
+          // Collect lessons
+          slots.forEach((slot, sIdx) => {
+            if (slot.type === "registration") {
+              rawLessons.push({
+                key: "Registration",
+                label: `Registration ${yg}`,
+                noAttendance: "Yes",
+                start: slot.start,
+                end: slot.end,
+                sortKey: slot.start
+              });
+            } else if (slot.type === "assembly") {
+              rawLessons.push({
+                key: "Assembly",
+                label: `Assembly ${yg}`,
+                noAttendance: "No",
+                start: slot.start,
+                end: slot.end,
+                sortKey: slot.start
+              });
+            } else if (slot.type === "period") {
+              const assignment = timetableGrid[yg]?.[day]?.[sIdx];
+              if (assignment) {
+                const items = Array.isArray(assignment) ? assignment : [assignment];
+                items.forEach((item: any) => {
+                  if (item && item.subject) {
+                    const cleanSub = formatSubjectCode(item.subject);
+                    rawLessons.push({
+                      key: cleanSub,
+                      label: `${cleanSub} ${yg}`,
+                      noAttendance: "No",
+                      start: slot.start,
+                      end: slot.end,
+                      sortKey: slot.start
+                    });
+                  }
+                });
+              }
+            }
+          });
+
+          // Sort rawLessons by start/sortKey time
+          rawLessons.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+
+          // Merge consecutive lessons of the exact same subject
+          const mergedLessons: any[] = [];
+          rawLessons.forEach(lesson => {
+            if (mergedLessons.length === 0) {
+              mergedLessons.push({ ...lesson });
+            } else {
+              const lastMerged = mergedLessons[mergedLessons.length - 1];
+              // Check if they are the same subject and end time of last matches start time of current
+              if (lastMerged.key === lesson.key && lastMerged.end === lesson.start) {
+                lastMerged.end = lesson.end;
+              } else {
+                mergedLessons.push({ ...lesson });
+              }
+            }
+          });
+
+          // Push merged lessons into dataRows
+          mergedLessons.forEach(evt => {
+            dataRows.push([
+              evt.label,
+              "",
+              day,
+              evt.start,
+              evt.end,
+              getVenue(evt.key, yg),
+              "",
+              evt.noAttendance,
+              ""
+            ]);
+          });
+        });
+
+        const ws = XLSX.utils.aoa_to_sheet(dataRows);
+        ws['!cols'] = [
+          { wch: 25 },
+          { wch: 10 },
+          { wch: 12 },
+          { wch: 10 },
+          { wch: 10 },
+          { wch: 15 },
+          { wch: 10 },
+          { wch: 15 },
+          { wch: 10 }
+        ];
+
+        XLSX.utils.book_append_sheet(wb, ws, `${yg} Timetable`);
+        XLSX.writeFile(wb, `Commun_Timetable_${yg.replace(/\s+/g, '_')}.xlsx`);
+      } catch (err) {
+        console.error("Commun XLSX Export Error:", err);
+        alert("Failed to download Commun Excel. Please try again.");
+      } finally {
+        setIsDownloading(false);
+      }
+    };
+
+    const oklchToRgb = (oklchStr: string): string => {
+      try {
+        const regex = /oklch\(\s*([\d.]+%?|none)\s+([\d.]+|none)\s+([\d.]+|none)(?:\s*\/\s*([\d.]+%?|none))?\s*\)/i;
+        const match = oklchStr.match(regex);
+        if (!match) return '#3b82f6';
+        
+        const getVal = (str: string, isPercent = false) => {
+          if (!str || str.toLowerCase() === 'none') return 0;
+          if (str.endsWith('%')) return parseFloat(str) / 100;
+          return parseFloat(str) / (isPercent ? 100 : 1);
+        };
+
+        const L = getVal(match[1], match[1].endsWith('%'));
+        const C = getVal(match[2]);
+        const h = getVal(match[3]);
+        const alphaVal = match[4];
+        const alpha = alphaVal ? (alphaVal.endsWith('%') ? parseFloat(alphaVal) / 100 : parseFloat(alphaVal)) : 1;
+
+        const hRad = (h * Math.PI) / 180;
+        const aOriginal = C * Math.cos(hRad);
+        const bOriginal = C * Math.sin(hRad);
+
+        const l_ = L + 0.3963377774 * aOriginal + 0.2158037573 * bOriginal;
+        const m_ = L - 0.1055613458 * aOriginal - 0.0638541728 * bOriginal;
+        const s_ = L - 0.0894841775 * aOriginal - 1.2914855480 * bOriginal;
+
+        const l = l_ * l_ * l_;
+        const m = m_ * m_ * m_;
+        const s = s_ * s_ * s_;
+
+        const rLinear = +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+        const gLinear = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+        const bLinear = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+
+        const toSRGB = (c: number) => {
+          return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(Math.max(0, c), 1 / 2.4) - 0.055;
+        };
+
+        const r = Math.max(0, Math.min(255, Math.round(toSRGB(rLinear) * 255)));
+        const g = Math.max(0, Math.min(255, Math.round(toSRGB(gLinear) * 255)));
+        const b = Math.max(0, Math.min(255, Math.round(toSRGB(bLinear) * 255)));
+
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+      } catch (e) {
+        return '#3b82f6';
+      }
+    };
+
     const downloadTimetablePDF = async () => {
       if (!timetableRef.current) return;
       setIsDownloading(true);
@@ -3785,23 +4965,73 @@ export default function App() {
           windowWidth: element.scrollWidth,
           windowHeight: element.scrollHeight,
           onclone: (clonedDoc) => {
-            // Fix oklch colors for html2canvas support in cloned document
+            // 1. Fix oklch inside <style> tags text content so they won't crash html2canvas parser
+            const styleTags = clonedDoc.querySelectorAll('style');
+            styleTags.forEach(tag => {
+              if (tag.textContent && tag.textContent.includes('oklch')) {
+                tag.textContent = tag.textContent.replace(/oklch\([^)]+\)/gi, (match) => {
+                  return oklchToRgb(match);
+                });
+              }
+            });
+
+            // 2. Fix oklch in all styleSheets in the cloned document
+            for (let i = 0; i < clonedDoc.styleSheets.length; i++) {
+              const sheet = clonedDoc.styleSheets[i];
+              try {
+                const rules = sheet.cssRules || sheet.rules;
+                if (!rules) continue;
+                for (let j = rules.length - 1; j >= 0; j--) {
+                  const rule = rules[j] as CSSStyleRule;
+                  if (rule.cssText && rule.cssText.includes('oklch')) {
+                    try {
+                      if (rule.style) {
+                        const style = rule.style;
+                        for (let k = 0; k < style.length; k++) {
+                          const propName = style[k];
+                          const propValue = style.getPropertyValue(propName);
+                          if (propValue && propValue.includes('oklch')) {
+                            const rgbVal = oklchToRgb(propValue);
+                            style.setProperty(propName, rgbVal);
+                          }
+                        }
+                      }
+                    } catch (modErr) {
+                      // If we can't edit it, delete the rule to prevent a crash
+                      sheet.deleteRule(j);
+                    }
+                  }
+                }
+              } catch (sheetErr) {
+                // If the stylesheet is write-protected/cross-origin, ignore or disable it
+              }
+            }
+
+            // 3. Fix oklch inline colors for all elements in the DOM
             const elements = clonedDoc.getElementsByTagName('*');
             const tempCanvas = document.createElement('canvas');
             const ctx = tempCanvas.getContext('2d');
-            if (ctx) {
-              for (let i = 0; i < elements.length; i++) {
-                const el = elements[i] as HTMLElement;
-                const props = ['color', 'backgroundColor', 'borderColor', 'fill', 'stroke'];
-                const computed = window.getComputedStyle(el);
-                props.forEach(prop => {
-                  const val = computed.getPropertyValue(prop);
-                  if (val && val.includes('oklch')) {
-                    ctx.fillStyle = val;
-                    el.style.setProperty(prop, ctx.fillStyle, 'important');
+            for (let i = 0; i < elements.length; i++) {
+              const el = elements[i] as HTMLElement;
+              const props = ['color', 'backgroundColor', 'borderColor', 'fill', 'stroke'];
+              const computed = window.getComputedStyle(el);
+              props.forEach(prop => {
+                const val = computed.getPropertyValue(prop);
+                if (val && val.includes('oklch')) {
+                  let safeVal = '#3b82f6';
+                  if (ctx) {
+                    try {
+                      ctx.fillStyle = val;
+                      safeVal = ctx.fillStyle;
+                    } catch (canvasErr) {
+                      safeVal = oklchToRgb(val);
+                    }
+                  } else {
+                    safeVal = oklchToRgb(val);
                   }
-                });
-              }
+                  el.style.setProperty(prop, safeVal, 'important');
+                }
+              });
             }
 
             // Make sure internal scrollable elements are fully expanded inside clone so they don't clip
@@ -4053,6 +5283,521 @@ export default function App() {
       } catch (err) {
         console.error("DOCX Export Error:", err);
         alert("Failed to download Word Document. Please try again.");
+      } finally {
+        setIsDownloading(false);
+      }
+    };
+
+    const downloadTimetableHTML = () => {
+      setIsDownloading(true);
+      try {
+        const activeName = schedulerViewMode === 'class' ? schedulerYearGroup : (teachers.find(t => t.id === selectedTeacherSchedule)?.name || "Teacher");
+        const activeTitle = `${activeName} Timetable`;
+        const activeSubtitle = schedulerViewMode === 'class' ? `Class: ${schedulerYearGroup}` : `Staff: ${activeName}`;
+
+        const slotsBase = getSlots("Monday", schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7");
+        const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+
+        const renderHTMLCell = (cellData: any) => {
+          if (cellData.type === "empty" || cellData.isFree) {
+            return `<div class="free-block">
+                <span>FREE</span>
+                <p>${cellData.subtitle || 'Unassigned'}</p>
+            </div>`;
+          }
+
+          if (cellData.type === "breakfast" || cellData.type === "lunch" || cellData.type === "recess" || cellData.type === "assembly" || cellData.type === "registration") {
+            let styleClass = cellData.type;
+            return `<div class="special-block ${styleClass}">
+                <p class="special-type">${cellData.type.toUpperCase()}</p>
+                <h4>${cellData.subject}</h4>
+                ${cellData.subtitle ? `<p class="special-sub">${cellData.subtitle}</p>` : ''}
+            </div>`;
+          }
+
+          const fillVal = cellData.fill.startsWith('#') ? cellData.fill : `#${cellData.fill}`;
+          const textVal = cellData.textColor.startsWith('#') ? cellData.textColor : `#${cellData.textColor}`;
+
+          if (cellData.parallelLessons && cellData.parallelLessons.length > 0) {
+            let subHtml = `<div class="parallel-container">`;
+            cellData.parallelLessons.forEach((it: any) => {
+              const itFill = it.fill.startsWith('#') ? it.fill : `#${it.fill}`;
+              const itText = it.textColor.startsWith('#') ? it.textColor : `#${it.textColor}`;
+              subHtml += `<div class="parallel-sub-card" style="background-color: ${itFill}; color: ${itText}; border: 1px solid rgba(0,0,0,0.05);">
+                  <h5>${it.subject}</h5>
+                  <p>${it.subtitle}</p>
+              </div>`;
+            });
+            subHtml += `</div>`;
+
+            return `<div class="lesson-card" style="background-color: ${fillVal}; color: ${textVal}; border: 3px double rgba(0,0,0,0.08); padding: 4px;">
+                ${subHtml}
+            </div>`;
+          }
+
+          return `<div class="lesson-card" style="background-color: ${fillVal}; color: ${textVal}; border: 1px solid rgba(0,0,0,0.05);">
+              <h4>${cellData.subject}</h4>
+              <p>${cellData.subtitle}</p>
+          </div>`;
+        };
+
+        let htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${activeTitle}</title>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #064E3B;
+            --primary-light: #ECFDF5;
+            --accent: #FACC15;
+            --text-main: #0F172A;
+            --text-muted: #475569;
+            --bg-body: #FAFBFC;
+            --border-color: #E2E8F0;
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-body);
+            color: var(--text-main);
+            padding: 40px 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        
+        .container {
+            width: 100%;
+            max-width: 1200px;
+            background: #ffffff;
+            border-radius: 28px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.02);
+            padding: 32px;
+            border: 1px solid var(--border-color);
+        }
+        
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 2px solid #F1F5F9;
+            padding-bottom: 24px;
+            margin-bottom: 32px;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        
+        .header-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .logo-box {
+            background-color: var(--primary);
+            color: #ffffff;
+            width: 44px;
+            height: 44px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 800;
+            font-size: 20px;
+        }
+        
+        .header-text h1 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 800;
+            font-size: 24px;
+            color: var(--primary);
+        }
+        
+        .header-text p {
+            font-size: 13px;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+        
+        .badge {
+            background: var(--primary-light);
+            color: var(--primary);
+            padding: 8px 16px;
+            border-radius: 12px;
+            font-weight: 800;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border: 1.5px solid rgba(6, 78, 59, 0.1);
+        }
+        
+        .timetable-wrapper {
+            width: 100%;
+            overflow-x: auto;
+        }
+        
+        .grid-vertical {
+            display: grid;
+            grid-template-columns: 140px repeat(5, minmax(160px, 1fr));
+            gap: 8px;
+            width: 100%;
+        }
+        
+        .grid-header-corner {
+            height: 52px;
+        }
+        
+        .grid-day-header {
+            height: 52px;
+            background-color: #FEFCE8;
+            border: 1px solid rgba(250, 204, 21, 0.2);
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+        
+        .grid-day-header h3 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 800;
+            font-size: 11px;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .grid-day-header p {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            color: rgba(6, 78, 59, 0.6);
+            font-weight: 700;
+            margin-top: 1px;
+        }
+        
+        .time-label-cell {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: flex-end;
+            padding-right: 12px;
+            text-align: right;
+            border-right: 1px solid rgba(250, 204, 21, 0.15);
+        }
+        
+        .time-label-cell .period-label {
+            font-size: 9px;
+            font-weight: 900;
+            color: var(--primary);
+            opacity: 0.45;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 2px;
+        }
+        
+        .time-label-cell .period-label.special {
+            color: #D97706;
+            opacity: 0.8;
+        }
+        
+        .time-label-cell .time-start {
+            font-size: 13px;
+            font-weight: 900;
+            color: var(--primary);
+        }
+        
+        .time-label-cell .time-end {
+            font-size: 9px;
+            font-weight: 700;
+            color: rgba(6, 78, 59, 0.4);
+            margin-top: 2px;
+        }
+        
+        .grid-horizontal {
+            display: grid;
+            gap: 8px;
+            width: 100%;
+        }
+        
+        .lesson-card {
+            min-height: 72px;
+            border-radius: 14px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.01);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            font-size: 11px;
+        }
+        
+        .lesson-card:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.03);
+        }
+        
+        .lesson-card h4 {
+            font-weight: 800;
+            font-size: 11px;
+            line-height: 1.25;
+            word-break: break-word;
+            margin-bottom: 2px;
+        }
+        
+        .lesson-card p {
+            font-size: 9px;
+            font-weight: 600;
+            opacity: 0.8;
+            line-height: 1.25;
+            word-break: break-word;
+        }
+        
+        .special-block {
+            min-height: 72px;
+            border-radius: 14px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            background-color: #FEF3C7;
+            color: #78350F;
+            border: 1px dashed rgba(217, 119, 6, 0.3);
+            text-transform: uppercase;
+        }
+        
+        .special-block.breakfast, .special-block.lunch {
+            background-color: #FFFBEB;
+            color: #B45309;
+            border: 1px dashed rgba(217, 119, 6, 0.2);
+        }
+        
+        .special-block.assembly {
+            background-color: #EEF2F6;
+            color: #312E81;
+            border: 1px solid rgba(49, 46, 129, 0.1);
+            text-transform: none;
+        }
+        
+        .special-block.registration {
+            background-color: #ECFDF5;
+            color: #064E3B;
+            border: 1px solid rgba(6, 78, 59, 0.1);
+            text-transform: none;
+        }
+        
+        .special-block .special-type {
+            font-size: 8px;
+            font-weight: 950;
+            letter-spacing: 0.08em;
+            opacity: 0.65;
+            margin-bottom: 2px;
+        }
+        
+        .special-block h4 {
+            font-weight: 800;
+            font-size: 11px;
+        }
+        
+        .free-block {
+            min-height: 72px;
+            border-radius: 14px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            background-color: #FAFAF9;
+            color: #9CA3AF;
+            border: 1px dashed #E5E7EB;
+        }
+        
+        .free-block span {
+            font-size: 9px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .free-block p {
+            font-size: 8px;
+            margin-top: 1px;
+            opacity: 0.75;
+        }
+        
+        .parallel-container {
+            width: 100%;
+            height: 100%;
+            display: grid;
+            gap: 4px;
+            grid-template-rows: auto;
+        }
+        
+        .parallel-sub-card {
+            border-radius: 8px;
+            padding: 4px 6px;
+            text-align: center;
+            font-size: 9px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .parallel-sub-card h5 {
+            font-weight: 800;
+            font-size: 10px;
+            line-height: 1.1;
+        }
+        
+        .parallel-sub-card p {
+            font-size: 8px;
+            opacity: 0.8;
+        }
+        
+        @media print {
+            body {
+                background-color: #ffffff;
+                padding: 0;
+            }
+            .container {
+                box-shadow: none;
+                border: none;
+                padding: 0;
+            }
+            .no-print {
+                display: none;
+            }
+        }
+        
+        .footer {
+            margin-top: 32px;
+            text-align: center;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: rgba(6, 78, 59, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-logo">
+                <div class="logo-box">Z</div>
+                <div class="header-text">
+                    <h1>ZERA EDUCATION</h1>
+                    <p>Academic Master Timetable Scheduler</p>
+                </div>
+            </div>
+            <div class="badge">
+                ${activeSubtitle}
+            </div>
+        </header>
+
+        <div class="timetable-wrapper">
+`;
+
+        if (timetableOrientation === 'vertical') {
+          htmlContent += `            <div class="grid-vertical">
+                <div class="grid-header-corner"></div>\n`;
+
+          days.forEach(day => {
+            htmlContent += `                <div class="grid-day-header">
+                    <h3>${day}</h3>
+                    <p>${getDayFinishTime(day)}</p>
+                </div>\n`;
+          });
+
+          slotsBase.forEach((slot, sIdx) => {
+            const isSpecialNum = slot.type !== "period";
+            const slotTypeLabel = slot.type === "period" ? `P${sIdx + 1}` : slot.type.replace('_', ' ');
+            const specialClass = isSpecialNum ? "special" : "";
+
+            htmlContent += `                <!-- Slot ${sIdx + 1} -->
+                <div class="time-label-cell">
+                    <p class="period-label ${specialClass}">${slotTypeLabel}</p>
+                    <p class="time-start">${slot.start}</p>
+                    <p class="time-end">${slot.end}</p>
+                </div>\n`;
+
+            days.forEach(day => {
+              const cellData = getTimetableCellData(day, sIdx);
+              htmlContent += `                ${renderHTMLCell(cellData)}\n`;
+            });
+          });
+
+          htmlContent += `            </div>\n`;
+        } else {
+          htmlContent += `            <div class="grid-horizontal" style="grid-template-columns: 140px repeat(${slotsBase.length}, minmax(130px, 1fr));">
+                <div class="grid-day-header" style="background:#F8FAFC; border-color:#E2E8F0;">
+                    <h3 style="color:#64748B;">DAY / SPOT</h3>
+                </div>\n`;
+
+          slotsBase.forEach((slot, sIdx) => {
+            const slotTypeLabel = slot.type === "period" ? `P${sIdx + 1}` : slot.type.replace('_', ' ');
+            htmlContent += `                <div class="grid-day-header" style="background:#FEFCE8; border-color:#FACC15;">
+                    <h3>${slotTypeLabel}</h3>
+                    <p>${slot.start} - ${slot.end}</p>
+                </div>\n`;
+          });
+
+          days.forEach(day => {
+            htmlContent += `                <!-- Row for ${day} -->
+                <div class="grid-day-header" style="min-height:72px;">
+                    <h3>${day}</h3>
+                    <p>${getDayFinishTime(day)}</p>
+                </div>\n`;
+
+            const daySlots = getSlots(day, schedulerViewMode === 'class' ? schedulerYearGroup : "Year 7");
+            daySlots.forEach((slot, sIdx) => {
+              const cellData = getTimetableCellData(day, sIdx);
+              htmlContent += `                ${renderHTMLCell(cellData)}\n`;
+            });
+          });
+
+          htmlContent += `            </div>\n`;
+        }
+
+        htmlContent += `        </div>
+        
+        <div class="footer">
+            GENERATED BY ZERA ACADEMIC PORTAL • ${new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+        </div>
+    </div>
+</body>
+</html>`;
+
+        const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `Timetable_${activeName.replace(/\s+/g, '_')}.html`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        console.error("HTML Export Error:", err);
+        alert("Failed to download HTML. Please try again.");
       } finally {
         setIsDownloading(false);
       }
@@ -4824,11 +6569,17 @@ export default function App() {
                             </button>
                           </div>
                           <p className="text-[10px] font-black opacity-100 truncate leading-tight">{asgTeacher?.name || "Teacher"}</p>
-                          {isCombined && (
-                            <div className="mt-0.5 flex gap-0.5 flex-wrap">
-                              <span className="text-[7.5px] font-extrabold text-[#064E3B] bg-[#F0FDF4] px-1 py-0.2 rounded border border-[#D1FAE5]">Combined</span>
-                            </div>
-                          )}
+                          <div className="mt-1 flex items-center gap-1 flex-wrap">
+                            <span className="text-[7.5px] font-black text-[#047857] bg-emerald-50 px-1 py-0.5 rounded border border-emerald-200">
+                              {(() => {
+                                const uVenue = getDynamicVenue(asg.subject, schedulerYearGroup);
+                                return (uVenue.match(/^\d+-\d+$/) || uVenue.match(/^\d+$/)) ? `Room ${uVenue}` : uVenue;
+                              })()}
+                            </span>
+                            {isCombined && (
+                              <span className="text-[7.5px] font-extrabold text-[#064E3B] bg-[#F0FDF4] px-1 py-0.5 rounded border border-[#D1FAE5]">Combined</span>
+                            )}
+                          </div>
                         </div>
                     );
                   })}
@@ -5899,7 +7650,7 @@ export default function App() {
           <div className="flex items-center gap-8">
             <h2 className="text-2xl font-black text-[#064E3B]">Admin Dashboard</h2>
             <nav className="flex gap-4">
-              {['overview', 'timetable', 'teachers', 'assignments', 'plans', 'cover', 'members'].map((tab) => (
+              {['overview', 'timetable', 'teachers', 'assignments', 'classrooms', 'plans', 'cover', 'members'].map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setAdminTab(tab as any)}
@@ -5908,7 +7659,7 @@ export default function App() {
                     adminTab === tab ? "bg-[#064E3B] text-white" : "text-[#064E3B]/60 hover:bg-[#D1FAE5]"
                   )}
                 >
-                  {tab === 'plans' ? 'Lesson Plans' : tab === 'cover' ? 'Cover Planner' : tab}
+                  {tab === 'plans' ? 'Lesson Plans' : tab === 'cover' ? 'Cover Planner' : tab === 'classrooms' ? 'Classroom Allocation' : tab}
                 </button>
               ))}
             </nav>
@@ -5953,7 +7704,7 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {[
                   { label: "Total Year Groups", value: yearGroups.length, icon: Users, color: "bg-yellow-400" },
-                  { label: "Active Teachers", value: teachers.length, icon: UserCheck, color: "bg-yellow-400" },
+                  { label: "Active Teachers", value: getActiveStaffList(teachers).length, icon: UserCheck, color: "bg-yellow-400" },
                   { label: "Subjects Covered", value: subjects.length, icon: BookOpen, color: "bg-yellow-400" },
                 ].map((stat, i) => (
                   <div key={i} className="bg-white p-8 rounded-3xl shadow-xl border-b-8 border-black/5 flex items-center gap-6">
@@ -6301,7 +8052,13 @@ export default function App() {
                         name: '',
                         role: 'Teacher',
                         maxPeriods: 28,
-                        workingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+                        workingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+                        email: '',
+                        phone: '',
+                        jobType: 'full-time',
+                        nricName: '',
+                        preferredName: '',
+                        subjects: []
                       });
                       setAddTeacherModalOpen(true);
                     }}
@@ -6658,6 +8415,286 @@ export default function App() {
                         ))}
                       </div>
                     )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {adminTab === 'classrooms' && (
+            <div className="max-w-6xl mx-auto space-y-8 pb-20">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-8 rounded-[2.5rem] shadow-xl border-b-8 border-black/5 gap-4">
+                <div>
+                  <h3 className="text-3xl font-black text-[#064E3B]">Classroom & Space Allocation</h3>
+                  <p className="text-[#064E3B]/60 font-bold mt-1">Assign classes to classrooms and specialized subjects to special learning spaces.</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={async () => {
+                      try {
+                        const payload = sanitizeFirestore({
+                          teachers,
+                          staffAssignments,
+                          assignmentQuotas,
+                          timetableGrid,
+                          teacherDuties,
+                          combinedClasses,
+                          subjects,
+                          parallelRules,
+                          classroomClassMappings,
+                          classroomSubjectMappings,
+                          updatedAt: Date.now()
+                        });
+                        await setDoc(doc(db, 'school_config', 'timetable'), payload);
+                        alert("Classroom allocations synced successfully!");
+                      } catch (err) {
+                        alert("Sync failed: " + err);
+                      }
+                    }}
+                    className="px-6 py-3 bg-[#064E3B]/10 hover:bg-[#064E3B]/20 text-[#064E3B] rounded-2xl font-black text-xs uppercase tracking-wider transition-all border border-[#064E3B]/20 shadow-sm"
+                  >
+                    Sync Allocations
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                <div className="lg:col-span-5 space-y-6">
+                  <div className="bg-white rounded-[2rem] p-8 border border-[#D1FAE5] shadow-lg space-y-6">
+                    <h4 className="text-sm font-black text-[#064E3B] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 block" />
+                      Class to Classroom Allocation
+                    </h4>
+                    
+                    <div className="space-y-4 max-h-[350px] overflow-y-auto pr-2 custom-scrollbar">
+                      {yearGroups.map((yg) => {
+                        const currentRoom = classroomClassMappings[yg] || "5-1";
+                        return (
+                          <div key={yg} className="flex justify-between items-center bg-gray-50 p-3 rounded-xl hover:bg-gray-100 transition-colors">
+                            <span className="text-xs font-black text-gray-700">{yg}</span>
+                            <select
+                              value={currentRoom}
+                              onChange={(e) => {
+                                const next = { ...classroomClassMappings, [yg]: e.target.value };
+                                setClassroomClassMappings(next);
+                                saveTimetableDataToFirestore(
+                                  teachers, staffAssignments, assignmentQuotas, timetableGrid, 
+                                  teacherDuties, combinedClasses, subjects, parallelRules
+                                );
+                              }}
+                              className="text-xs font-mono font-black text-[#064E3B] p-2 bg-white rounded-lg border-2 border-transparent focus:border-[#FACC15] outline-none"
+                            >
+                              {["1-1", "1-2", "1-3", "1-5", "2-1", "2-2", "2-3", "3-1", "5-1", "5-3"].map((room) => (
+                                <option key={room} value={room}>Room {room}</option>
+                              ))}
+                            </select>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-[2rem] p-8 border border-[#D1FAE5] shadow-lg space-y-6">
+                    <h4 className="text-sm font-black text-[#064E3B] uppercase tracking-widest flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500 block" />
+                      Specialized Subject Rooms
+                    </h4>
+                    
+                    <div className="space-y-4">
+                      {[
+                        { subj: "SCIENCE", defaultRoom: "Science Lab" },
+                        { subj: "Biology", defaultRoom: "Science Lab" },
+                        { subj: "Chemistry", defaultRoom: "Science Lab" },
+                        { subj: "Physics", defaultRoom: "Science Lab" },
+                        { subj: "ART & DESIGN", defaultRoom: "Art Room 2-4" },
+                        { subj: "MUSIC", defaultRoom: "Music Room 1" },
+                        { subj: "PHYSICAL EDUCATION", defaultRoom: "Hall" },
+                        { subj: "LIBRARY", defaultRoom: "Library" },
+                        { subj: "SILENT READING", defaultRoom: "Library" },
+                        { subj: "BREAKFAST", defaultRoom: "Canteen" },
+                        { subj: "LUNCH", defaultRoom: "Canteen" }
+                      ].map(({ subj, defaultRoom }) => {
+                        const currentRoom = classroomSubjectMappings[subj] || defaultRoom;
+                        return (
+                          <div key={subj} className="flex justify-between items-center bg-gray-50 p-3 rounded-xl hover:bg-gray-100 transition-colors">
+                            <span className="text-xs font-black text-gray-700 truncate mr-2 w-1/2">{subj}</span>
+                            <select
+                              value={currentRoom}
+                              onChange={(e) => {
+                                const next = { ...classroomSubjectMappings, [subj]: e.target.value };
+                                setClassroomSubjectMappings(next);
+                                saveTimetableDataToFirestore(
+                                  teachers, staffAssignments, assignmentQuotas, timetableGrid, 
+                                  teacherDuties, combinedClasses, subjects, parallelRules
+                                );
+                              }}
+                              className="text-xs font-black text-amber-800 p-2 bg-white rounded-lg border-2 border-transparent focus:border-[#FACC15] outline-none"
+                            >
+                              {[
+                                "Science Lab", 
+                                "Art Room 2-4", 
+                                "Music Room 1", 
+                                "Music Room 2", 
+                                "Library", 
+                                "Hall", 
+                                "Canteen",
+                                "1-1",
+                                "1-2",
+                                "1-3",
+                                "1-5",
+                                "2-1",
+                                "2-2",
+                                "2-3",
+                                "3-1",
+                                "5-1",
+                                "5-3"
+                              ].map((room) => (
+                                <option key={room} value={room}>
+                                  {room.includes("-") ? `Room ${room}` : room}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="lg:col-span-7 bg-white rounded-[2.5rem] p-8 border border-[#D1FAE5] shadow-xl space-y-6">
+                  <div>
+                    <h4 className="text-sm font-black text-[#064E3B] uppercase tracking-widest">Interactive Classroom Floor Plan</h4>
+                    <p className="text-xs font-bold text-[#064E3B]/60 mt-1">Highlighted green classrooms correspond exactly to the directory floor layout map.</p>
+                  </div>
+
+                  <div className="bg-[#F0FDF4]/50 border border-[#D1FAE5]/50 rounded-2xl p-6 space-y-8">
+                    <div>
+                      <h5 className="text-[10px] font-black text-[#059669] uppercase font-mono tracking-widest border-l-2 border-[#10B981] pl-2 mb-3">Corridor 1</h5>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {[
+                          { id: "1-1", label: "Room 1-1", activeClass: Object.entries(classroomClassMappings).find(([yg, r]) => r === "1-1")?.[0] },
+                          { id: "1-2", label: "Room 1-2", activeClass: Object.entries(classroomClassMappings).find(([yg, r]) => r === "1-2")?.[0] },
+                          { id: "1-3", label: "Room 1-3", activeClass: Object.entries(classroomClassMappings).find(([yg, r]) => r === "1-3")?.[0] },
+                          { id: "1-5", label: "Room 1-5", activeClass: Object.entries(classroomClassMappings).find(([yg, r]) => r === "1-5")?.[0] }
+                        ].map((cell) => {
+                          return (
+                            <div 
+                              key={cell.id}
+                              className="bg-emerald-50 border-2 border-emerald-400 p-3 rounded-xl text-center shadow-sm select-none transition-all hover:scale-[1.02] hover:bg-emerald-100"
+                            >
+                              <p className="text-xs font-black text-[#064E3B]">{cell.label}</p>
+                              {cell.activeClass && <p className="text-[9px] font-bold text-emerald-800/80 mt-1 uppercase bg-emerald-200/50 rounded py-0.5 px-1 truncate">{cell.activeClass}</p>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <h5 className="text-[10px] font-black text-[#059669] uppercase font-mono tracking-widest border-l-2 border-[#10B981] pl-2 mb-3">Corridor 2</h5>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {[
+                          { id: "2-1", label: "Room 2-1", activeClass: Object.entries(classroomClassMappings).find(([yg, r]) => r === "2-1")?.[0] },
+                          { id: "2-2", label: "Room 2-2", activeClass: Object.entries(classroomClassMappings).find(([yg, r]) => r === "2-2")?.[0] },
+                          { id: "2-3", label: "Room 2-3", activeClass: Object.entries(classroomClassMappings).find(([yg, r]) => r === "2-3")?.[0] },
+                          { id: "Art Room 2-4", label: "Art Room 2-4", activeSubj: "Art & Design" }
+                        ].map((cell) => {
+                          return (
+                            <div 
+                              key={cell.id}
+                              className="bg-emerald-50 border-2 border-emerald-400 p-3 rounded-xl text-center shadow-sm select-none transition-all hover:scale-[1.02] hover:bg-emerald-100"
+                            >
+                              <p className="text-xs font-black text-[#064E3B]">{cell.label}</p>
+                              {cell.activeClass && <p className="text-[9px] font-bold text-emerald-800/80 mt-1 uppercase bg-emerald-200/50 rounded py-0.5 px-1 truncate">{cell.activeClass}</p>}
+                              {cell.activeSubj && <p className="text-[9px] font-bold text-[#064E3B]/70 mt-1 uppercase bg-emerald-200/50 rounded py-0.5 px-1">{cell.activeSubj}</p>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <h5 className="text-[10px] font-black text-[#059669] uppercase font-mono tracking-widest border-l-2 border-[#10B981] pl-2 mb-3">Corridor 3</h5>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {[
+                          { id: "3-1", label: "Room 3-1", activeClass: Object.entries(classroomClassMappings).find(([yg, r]) => r === "3-1")?.[0] },
+                          { id: "Library", label: "Library", activeSubj: "Reading" }
+                        ].map((cell) => {
+                          return (
+                            <div 
+                              key={cell.id}
+                              className="bg-emerald-50 border-2 border-emerald-400 p-3 rounded-xl text-center shadow-sm select-none transition-all hover:scale-[1.02] hover:bg-emerald-100"
+                            >
+                              <p className="text-xs font-black text-[#064E3B]">{cell.label}</p>
+                              {cell.activeClass && <p className="text-[9px] font-bold text-emerald-800/80 mt-1 uppercase bg-emerald-200/50 rounded py-0.5 px-1 truncate">{cell.activeClass}</p>}
+                              {cell.activeSubj && <p className="text-[9px] font-bold text-[#064E3B]/70 mt-1 uppercase bg-emerald-200/50 rounded py-0.5 px-1">{cell.activeSubj}</p>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <h5 className="text-[10px] font-black text-[#059669] uppercase font-mono tracking-widest border-l-2 border-[#10B981] pl-2 mb-3">Corridor 5</h5>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {[
+                          { id: "5-1", label: "Room 5-1 / Extra", activeClass: Object.entries(classroomClassMappings).find(([yg, r]) => r === "5-1")?.[0] },
+                          { id: "5-3", label: "Room 5-3", activeClass: Object.entries(classroomClassMappings).find(([yg, r]) => r === "5-3")?.[0] }
+                        ].map((cell) => {
+                          return (
+                            <div 
+                              key={cell.id}
+                              className="bg-emerald-50 border-2 border-emerald-400 p-3 rounded-xl text-center shadow-sm select-none transition-all hover:scale-[1.02] hover:bg-emerald-100"
+                            >
+                              <p className="text-xs font-black text-[#064E3B]">{cell.label}</p>
+                              {cell.activeClass && <p className="text-[9px] font-bold text-emerald-800/80 mt-1 uppercase bg-emerald-200/50 rounded py-0.5 px-1 truncate">{cell.activeClass}</p>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <h5 className="text-[10px] font-black text-[#059669] uppercase font-mono tracking-widest border-l-2 border-[#10B981] pl-2 mb-3">Corridor 6</h5>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {[
+                          { id: "Science Lab", label: "Science Lab", activeSubj: "sciences" }
+                        ].map((cell) => {
+                          return (
+                            <div 
+                              key={cell.id}
+                              className="bg-emerald-50 border-2 border-emerald-400 p-3 rounded-xl text-center shadow-sm select-none transition-all hover:scale-[1.02] hover:bg-emerald-100"
+                            >
+                              <p className="text-xs font-black text-[#064E3B]">{cell.label}</p>
+                              {cell.activeSubj && <p className="text-[9px] font-bold text-[#064E3B]/70 mt-1 uppercase bg-emerald-200/50 rounded py-0.5 px-1">{cell.activeSubj}</p>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <h5 className="text-[10px] font-black text-[#059669] uppercase font-mono tracking-widest border-l-2 border-[#10B981] pl-2 mb-3">Facility Zones</h5>
+                      <div className="grid grid-cols-5 gap-3">
+                        {[
+                          { id: "Music Room 1", label: "Music Room 1", activeSubj: "Music" },
+                          { id: "Music Room 2", label: "Music Room 2" },
+                          { id: "Hall", label: "Main Hall / PE", activeSubj: "PE / Assembly" },
+                          { id: "Canteen", label: "Canteen", activeSubj: "Meals" },
+                          { id: "Staff Room", label: "Staff Room" }
+                        ].map((cell) => {
+                          return (
+                            <div 
+                              key={cell.id}
+                              className="bg-teal-50 border-2 border-teal-300 p-3 rounded-xl text-center shadow-sm select-none transition-all hover:scale-[1.02] hover:bg-teal-100"
+                            >
+                              <p className="text-xs font-black text-[#115E59]">{cell.label}</p>
+                              {cell.activeSubj && <p className="text-[9px] font-bold text-teal-800/80 mt-1 uppercase bg-teal-200/30 rounded py-0.5 px-1 truncate">{cell.activeSubj}</p>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -7092,11 +9129,27 @@ export default function App() {
                   </button>
                   <button 
                     onClick={() => {
+                      setSyncResult(null);
+                      setStaffSyncModalOpen(true);
+                    }}
+                    className="px-5 py-3 bg-amber-50 text-amber-750 hover:bg-amber-100 border border-amber-200/50 rounded-2xl transition-all font-bold text-sm flex items-center gap-2 cursor-pointer shadow-xs"
+                  >
+                    <RefreshCw size={18} className={isSyncingStaff ? "animate-spin" : ""} /> Sync Staff API
+                  </button>
+
+                   <button 
+                    onClick={() => {
                       setNewTeacherForm({
                         name: '',
                         role: 'Teacher',
                         maxPeriods: 28,
-                        workingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+                        workingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+                        email: '',
+                        phone: '',
+                        jobType: 'full-time',
+                        nricName: '',
+                        preferredName: '',
+                        subjects: []
                       });
                       setAddTeacherModalOpen(true);
                     }}
@@ -7107,147 +9160,266 @@ export default function App() {
                 </div>
               </div>
               
+              {/* Search and Stats Section */}
+              <div className="mb-8 flex flex-col md:flex-row gap-4 items-center justify-between bg-gray-50/50 p-6 rounded-3xl border border-black/5">
+                <div className="relative w-full md:max-w-md">
+                  <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-[#064E3B]/40">
+                    <Search size={18} />
+                  </span>
+                  <input
+                    type="text"
+                    value={teacherSearchQuery}
+                    onChange={(e) => setTeacherSearchQuery(e.target.value)}
+                    placeholder="Search staff by name, alias, email, role or phone..."
+                    className="w-full pl-11 pr-16 py-3.5 bg-white hover:bg-gray-50/50 focus:bg-white rounded-2xl border-2 border-gray-100 focus:border-[#FACC15] outline-none font-bold text-sm text-[#064E3B] placeholder-[#064E3B]/30 transition-all shadow-xs"
+                  />
+                  {teacherSearchQuery && (
+                    <button
+                      onClick={() => setTeacherSearchQuery('')}
+                      className="absolute inset-y-0 right-0 flex items-center pr-4 text-[#064E3B]/40 hover:text-red-500 transition-colors"
+                      title="Clear Search"
+                    >
+                      <span className="text-[10px] font-black border border-current rounded-md px-1.5 py-0.5 hover:bg-red-50 transition-all uppercase tracking-wider">Clear</span>
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 text-xs font-black text-[#064E3B]/60 uppercase tracking-widest bg-[#F0FDF4] px-4 py-2.5 rounded-xl border border-emerald-100 shrink-0">
+                  <span className="w-2 h-2 rounded-full bg-[#059669] animate-pulse"></span>
+                  {(() => {
+                    const activeStaff = getActiveStaffList(teachers);
+                    const filteredCount = activeStaff.filter(t => {
+                      const q = teacherSearchQuery.toLowerCase().trim();
+                      if (!q) return true;
+                      return (
+                        t.name?.toLowerCase().includes(q) ||
+                        t.preferredName?.toLowerCase().includes(q) ||
+                        t.nricName?.toLowerCase().includes(q) ||
+                        t.role?.toLowerCase().includes(q) ||
+                        t.email?.toLowerCase().includes(q) ||
+                        t.phone?.toLowerCase().includes(q) ||
+                        (t.subjects && t.subjects.some(s => s.toLowerCase().includes(q)))
+                      );
+                    }).length;
+                    return `Showing ${filteredCount} of ${activeStaff.length} Staff Members`;
+                  })()}
+                </div>
+              </div>
+              
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {teachers.map(teacher => (
-                  <div key={teacher.id} className="p-6 rounded-2xl border-2 border-[#FEFCE8] hover:border-[#FACC15]/30 transition-all flex flex-col gap-4">
-                    <div className="flex justify-between items-start">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-[#064E3B] rounded-xl flex items-center justify-center text-white font-bold">
-                          {teacher.name[0]}
-                        </div>
-                         <div>
-                           <p className="font-black text-[#064E3B]">{teacher.name}</p>
-                           <div className="flex flex-col gap-1 mt-1">
-                              <div className="flex gap-2 flex-wrap">
-                                <p className="text-[9px] font-black bg-[#F0FDF4] px-1.5 py-0.5 rounded text-[#059669] uppercase tracking-widest">{teacher.role}</p>
-                                <p className="text-[9px] font-black bg-gray-100 px-1.5 py-0.5 rounded text-gray-500 uppercase tracking-widest">Max: {teacher.maxPeriods} Periods</p>
-                                {teacher.locked && (
-                                  <p className="text-[9px] font-black bg-amber-100 px-1.5 py-0.5 rounded text-amber-750 uppercase tracking-widest flex items-center gap-1">
-                                    <Lock size={10} /> Locked
-                                  </p>
-                                )}
-                              </div>
-                              <div className="space-y-2 mt-2 pt-2 border-t border-gray-100/60 border-dashed">
-                                <div className="space-y-1">
-                                  <div className="flex justify-between text-[8px] font-black uppercase tracking-widest text-[#064E3B]/40">
-                                    <span>Quota Load:</span>
-                                    <span className={cn((teacherPlannedLoads[teacher.id] || 0) > teacher.maxPeriods ? "text-red-500 font-bold" : "text-[#064E3B]")}>
-                                      {teacherPlannedLoads[teacher.id] || 0} / {teacher.maxPeriods} Pds
-                                    </span>
+                {(() => {
+                  const activeStaff = getActiveStaffList(teachers);
+                  const filtered = activeStaff.filter(t => {
+                    const q = teacherSearchQuery.toLowerCase().trim();
+                    if (!q) return true;
+                    return (
+                      t.name?.toLowerCase().includes(q) ||
+                      t.preferredName?.toLowerCase().includes(q) ||
+                      t.nricName?.toLowerCase().includes(q) ||
+                      t.role?.toLowerCase().includes(q) ||
+                      t.email?.toLowerCase().includes(q) ||
+                      t.phone?.toLowerCase().includes(q) ||
+                      (t.subjects && t.subjects.some(s => s.toLowerCase().includes(q)))
+                    );
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="col-span-full p-20 text-center bg-gray-50 border-2 border-dashed border-gray-200 rounded-3xl space-y-4">
+                        <p className="text-lg font-black text-[#064E3B]">No staff matches found</p>
+                        <p className="text-xs font-bold text-[#064E3B]/60">Try searching for a different name, role, email, phone number, or subject.</p>
+                        <button 
+                          onClick={() => setTeacherSearchQuery('')} 
+                          className="px-5 py-2.5 bg-[#064E3B] text-white rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-[#059669] transition-all cursor-pointer shadow-sm"
+                        >
+                          Reset Search Filter
+                        </button>
+                      </div>
+                    );
+                  }
+
+                  return filtered.map(teacher => (
+                    <div key={teacher.id} className="p-6 rounded-2xl border-2 border-[#FEFCE8] hover:border-[#FACC15]/30 transition-all flex flex-col gap-4">
+                      <div className="flex justify-between items-start">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-[#064E3B] rounded-xl flex items-center justify-center text-white font-bold">
+                            {teacher.name[0]}
+                          </div>
+                           <div>
+                             <p className="font-black text-[#064E3B]">{teacher.name}</p>
+                             <div className="flex flex-col gap-1 mt-1">
+                                 <div className="flex gap-2 flex-wrap text-left">
+                                  <p className="text-[9px] font-black bg-[#F0FDF4] px-1.5 py-0.5 rounded text-[#059669] uppercase tracking-widest">{teacher.role}</p>
+                                  <p className="text-[9px] font-black bg-gray-100 px-1.5 py-0.5 rounded text-gray-500 uppercase tracking-widest">Max: {teacher.maxPeriods} Periods</p>
+                                  {teacher.jobType && (
+                                    <p className="text-[9px] font-black bg-blue-50 px-1.5 py-0.5 rounded text-blue-600 uppercase tracking-widest">{teacher.jobType}</p>
+                                  )}
+                                  {teacher.locked && (
+                                    <p className="text-[9px] font-black bg-amber-100 px-1.5 py-0.5 rounded text-amber-750 uppercase tracking-widest flex items-center gap-1">
+                                      <Lock size={10} /> Locked
+                                    </p>
+                                  )}
+                                </div>
+                                
+                                {(teacher.email || teacher.phone || teacher.nricName || teacher.preferredName) && (
+                                  <div className="text-[10px] space-y-1 mt-2 pt-2 border-t border-gray-100 text-gray-500 leading-normal text-left">
+                                    {teacher.nricName && teacher.nricName !== teacher.name && (
+                                      <p className="flex items-center gap-1.5">
+                                        <span className="font-bold text-gray-400 text-[8px] uppercase tracking-wider">NRIC Name:</span> 
+                                        <span className="font-extrabold text-gray-700">{teacher.nricName}</span>
+                                      </p>
+                                    )}
+                                    {teacher.preferredName && teacher.preferredName !== teacher.name && (
+                                      <p className="flex items-center gap-1.5">
+                                        <span className="font-bold text-gray-400 text-[8px] uppercase tracking-wider">Alias:</span> 
+                                        <span className="font-extrabold text-[#059669]">{teacher.preferredName}</span>
+                                      </p>
+                                    )}
+                                    {teacher.email && (
+                                      <p className="flex items-center gap-1.5">
+                                        <span className="text-gray-400 shrink-0 text-xs">✉️</span> 
+                                        <a href={`mailto:${teacher.email}`} className="hover:underline hover:text-emerald-600 font-semibold text-gray-600 truncate max-w-[190px] block font-mono text-[9px]" title={teacher.email}>{teacher.email}</a>
+                                      </p>
+                                    )}
+                                    {teacher.phone && (
+                                      <p className="flex items-center gap-1.5">
+                                        <span className="text-gray-400 shrink-0 text-xs">📞</span> 
+                                        <span className="text-gray-600 font-bold font-mono text-[9px]">{teacher.phone}</span>
+                                      </p>
+                                    )}
                                   </div>
-                                  <div className="w-full h-1 bg-gray-100 rounded-full overflow-hidden">
-                                    <div 
-                                      className={cn("h-full transition-all", (teacherPlannedLoads[teacher.id] || 0) > teacher.maxPeriods ? "bg-red-500" : "bg-[#FACC15]")} 
-                                      style={{ width: `${Math.min(100, ((teacherPlannedLoads[teacher.id] || 0) / teacher.maxPeriods) * 100)}%` }}
-                                    />
+                                )}
+                                <div className="space-y-2 mt-2 pt-2 border-t border-gray-100/60 border-dashed">
+                                  <div className="space-y-1">
+                                    <div className="flex justify-between text-[8px] font-black uppercase tracking-widest text-[#064E3B]/40">
+                                      <span>Quota Load:</span>
+                                      <span className={cn((teacherPlannedLoads[teacher.id] || 0) > teacher.maxPeriods ? "text-red-500 font-bold" : "text-[#064E3B]")}>
+                                        {teacherPlannedLoads[teacher.id] || 0} / {teacher.maxPeriods} Pds
+                                      </span>
+                                    </div>
+                                    <div className="w-full h-1 bg-gray-100 rounded-full overflow-hidden">
+                                      <div 
+                                        className={cn("h-full transition-all", (teacherPlannedLoads[teacher.id] || 0) > teacher.maxPeriods ? "bg-red-500" : "bg-[#FACC15]")} 
+                                        style={{ width: `${Math.min(100, ((teacherPlannedLoads[teacher.id] || 0) / teacher.maxPeriods) * 100)}%` }}
+                                      />
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
-                              <div className="flex gap-1.5 flex-wrap items-center mt-1 pt-1.5 border-t border-gray-100 border-dashed">
-                                <span className="text-[8px] font-black uppercase text-gray-400">Works On:</span>
-                                {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => {
-                                  const isWorking = !teacher.workingDays || teacher.workingDays.includes(day);
-                                  return (
-                                    <span 
-                                      key={day} 
-                                      className={cn(
-                                        "text-[8px] font-extrabold px-1 py-0.5 rounded uppercase tracking-tight",
-                                        isWorking ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-gray-50 text-gray-300 line-through"
-                                      )}
-                                    >
-                                      {day.substring(0,3)}
-                                    </span>
-                                  );
-                                })}
+                                <div className="flex gap-1.5 flex-wrap items-center mt-1 pt-1.5 border-t border-gray-100 border-dashed">
+                                  <span className="text-[8px] font-black uppercase text-gray-400">Works On:</span>
+                                  {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map(day => {
+                                    const isWorking = !teacher.workingDays || teacher.workingDays.includes(day);
+                                    return (
+                                      <span 
+                                        key={day} 
+                                        className={cn(
+                                          "text-[8px] font-extrabold px-1 py-0.5 rounded uppercase tracking-tight",
+                                          isWorking ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-gray-50 text-gray-300 line-through"
+                                        )}
+                                      >
+                                        {day.substring(0,3)}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
                               </div>
                             </div>
                           </div>
+                          <div className="flex gap-2">
+                            <button 
+                              type="button"
+                              onClick={() => {
+                                updateTeachersAndSave(teachers.map(t => t.id === teacher.id ? { ...t, locked: !t.locked } : t));
+                              }}
+                              className={cn(
+                                "transition-all cursor-pointer p-1 rounded-lg",
+                                teacher.locked 
+                                  ? "text-amber-500 hover:text-amber-600 bg-amber-50" 
+                                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-50"
+                              )}
+                              title={teacher.locked ? "Unlock Schedule" : "Lock Schedule"}
+                            >
+                              {teacher.locked ? <Lock size={16} /> : <Unlock size={16} />}
+                            </button>
+                            <button 
+                              onClick={() => setEditingTeacher(teacher)}
+                              className="text-blue-400 hover:text-blue-600 transition-all cursor-pointer p-1"
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                            <button 
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                updateTeachersAndSave(teachers.filter(t => String(t.id) !== String(teacher.id)));
+                              }} 
+                              className="text-red-400 hover:text-red-600 transition-all cursor-pointer p-1"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex gap-2">
-                          <button 
-                            type="button"
-                            onClick={() => {
-                              updateTeachersAndSave(teachers.map(t => t.id === teacher.id ? { ...t, locked: !t.locked } : t));
-                            }}
-                            className={cn(
-                              "transition-all cursor-pointer p-1 rounded-lg",
-                              teacher.locked 
-                                ? "text-amber-500 hover:text-amber-600 bg-amber-50" 
-                                : "text-gray-400 hover:text-gray-600 hover:bg-gray-50"
-                            )}
-                            title={teacher.locked ? "Unlock Schedule" : "Lock Schedule"}
-                          >
-                            {teacher.locked ? <Lock size={16} /> : <Unlock size={16} />}
-                          </button>
-                          <button 
-                            onClick={() => setEditingTeacher(teacher)}
-                            className="text-blue-400 hover:text-blue-600 transition-all cursor-pointer p-1"
-                          >
-                            <Edit2 size={16} />
-                          </button>
-                          <button 
-                            type="button"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              updateTeachersAndSave(teachers.filter(t => String(t.id) !== String(teacher.id)));
-                            }} 
-                            className="text-red-400 hover:text-red-600 transition-all cursor-pointer p-1"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </div>
-                    <p className="text-[10px] font-black uppercase text-[#064E3B]/30 mb-1.5 mt-3 flex items-center gap-1">
-                      <span>🏷️ Assigned Subjects:</span>
-                    </p>
-                    {(() => {
-                      const assignedSubjects: string[] = [];
-                      const seen = new Set<string>();
-                      Object.entries(staffAssignments || {}).forEach(([key, val]) => {
-                        if (!val) return;
-                        const ids = val.split(',').map(id => id.trim());
-                        if (ids.includes(teacher.id)) {
-                          const parts = key.split('-');
-                          if (parts.length >= 2) {
-                            const subName = parts.slice(1).join('-');
-                            if (!seen.has(subName)) {
-                              seen.add(subName);
-                              assignedSubjects.push(subName);
+                      <p className="text-[10px] font-black uppercase text-[#064E3B]/30 mb-1.5 mt-3 flex items-center gap-1">
+                        <span>🏷️ Assigned Subjects:</span>
+                      </p>
+                      {(() => {
+                        const assignedSubjects: string[] = [];
+                        const seen = new Set<string>();
+                        
+                        if (teacher.subjects) {
+                          teacher.subjects.forEach(s => {
+                            if (s && !seen.has(s)) {
+                              seen.add(s);
+                              assignedSubjects.push(s);
+                            }
+                          });
+                        }
+
+                        Object.entries(staffAssignments || {}).forEach(([key, val]) => {
+                          if (!val) return;
+                          const ids = val.split(',').map(id => id.trim());
+                          if (ids.includes(teacher.id)) {
+                            const parts = key.split('-');
+                            if (parts.length >= 2) {
+                              const subName = parts.slice(1).join('-');
+                              if (!seen.has(subName)) {
+                                seen.add(subName);
+                                assignedSubjects.push(subName);
+                              }
                             }
                           }
-                        }
-                      });
+                        });
 
-                      if (assignedSubjects.length === 0) {
+                        if (assignedSubjects.length === 0) {
+                          return (
+                            <div className="text-[10px] font-extrabold text-amber-600 bg-amber-50 rounded-xl px-3 py-2 border border-amber-100/50">
+                              No subject assigned or mapped yet.
+                            </div>
+                          );
+                        }
+
                         return (
-                          <div className="text-[10px] font-extrabold text-amber-600 bg-amber-50 rounded-xl px-3 py-2 border border-amber-100/50">
-                            No subject assigned in Yearly Subject Mapping yet.
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {assignedSubjects.map(s => {
+                              const colorClass = getSubjectColorClass(s);
+                              return (
+                                <span 
+                                  key={s}
+                                  className={cn(
+                                    "px-2 py-1 rounded-md text-[9px] font-black uppercase border",
+                                    colorClass
+                                  )}
+                                >
+                                  {s}
+                                </span>
+                              );
+                            })}
                           </div>
                         );
-                      }
-
-                      return (
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {assignedSubjects.map(s => {
-                            const colorClass = getSubjectColorClass(s);
-                            return (
-                              <span 
-                                key={s}
-                                className={cn(
-                                  "px-2 py-1 rounded-md text-[9px] font-black uppercase border",
-                                  colorClass
-                                )}
-                              >
-                                {s}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                ))}
+                      })()}
+                    </div>
+                  ));
+                })()}
               </div>
 
               {/* Edit Teacher Modal */}
@@ -7256,7 +9428,7 @@ export default function App() {
                   <motion.div 
                     initial={{ scale: 0.95, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
-                    className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl space-y-6"
+                    className="bg-white rounded-[2.5rem] w-full max-w-lg p-10 shadow-2xl space-y-6"
                   >
                     <div className="flex justify-between items-center">
                       <h4 className="text-2xl font-black text-[#064E3B]">Edit Teacher</h4>
@@ -7265,39 +9437,101 @@ export default function App() {
                       </button>
                     </div>
 
-                    <div className="space-y-4">
-                      <div>
-                        <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Full Name</label>
-                        <input 
-                          type="text" 
-                          value={editingTeacher.name}
-                          onChange={(e) => setEditingTeacher({...editingTeacher, name: e.target.value})}
-                          className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold"
-                        />
+                    <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2 text-left">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Full Name</label>
+                          <input 
+                            type="text" 
+                            value={editingTeacher.name}
+                            onChange={(e) => setEditingTeacher({...editingTeacher, name: e.target.value})}
+                            className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Preferred Name / Alias</label>
+                          <input 
+                            type="text" 
+                            placeholder="e.g. Elliot"
+                            value={editingTeacher.preferredName || ''}
+                            onChange={(e) => setEditingTeacher({...editingTeacher, preferredName: e.target.value})}
+                            className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm"
+                          />
+                        </div>
                       </div>
 
-                      <div>
-                        <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Position / Role</label>
-                        <select 
-                          value={editingTeacher.role}
-                          onChange={(e) => setEditingTeacher({...editingTeacher, role: e.target.value})}
-                          className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold"
-                        >
-                          <option value="Teacher">Teacher</option>
-                          <option value="Coordinator">Coordinator</option>
-                          <option value="Principal">Principal</option>
-                          <option value="Admin">Admin Staff</option>
-                        </select>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">NRIC Name (Official)</label>
+                          <input 
+                            type="text" 
+                            placeholder="e.g. Yap Zhan Zhang"
+                            value={editingTeacher.nricName || ''}
+                            onChange={(e) => setEditingTeacher({...editingTeacher, nricName: e.target.value})}
+                            className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Job Type</label>
+                          <select 
+                            value={editingTeacher.jobType || 'full-time'}
+                            onChange={(e) => setEditingTeacher({...editingTeacher, jobType: e.target.value})}
+                            className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm cursor-pointer"
+                          >
+                            <option value="full-time">Full-Time</option>
+                            <option value="part-time">Part-Time</option>
+                            <option value="contract">Contract</option>
+                            <option value="intern">Intern</option>
+                          </select>
+                        </div>
                       </div>
 
-                      <div>
-                        <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Max Periods per Week</label>
-                        <input 
-                          type="number" 
-                          value={editingTeacher.maxPeriods}
-                          onChange={(e) => setEditingTeacher({...editingTeacher, maxPeriods: parseInt(e.target.value) || 0})}
-                          className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold"
-                        />
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Email Address</label>
+                          <input 
+                            type="email" 
+                            placeholder="elliot@zera.edu.my"
+                            value={editingTeacher.email || ''}
+                            onChange={(e) => setEditingTeacher({...editingTeacher, email: e.target.value})}
+                            className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Phone Number</label>
+                          <input 
+                            type="text" 
+                            placeholder="+6012xxxxxxxx"
+                            value={editingTeacher.phone || ''}
+                            onChange={(e) => setEditingTeacher({...editingTeacher, phone: e.target.value})}
+                            className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Position / Role</label>
+                          <select 
+                            value={editingTeacher.role}
+                            onChange={(e) => setEditingTeacher({...editingTeacher, role: e.target.value})}
+                            className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm cursor-pointer"
+                          >
+                            <option value="Teacher">Teacher</option>
+                            <option value="Coordinator">Coordinator</option>
+                            <option value="Principal">Principal</option>
+                            <option value="Admin">Admin Staff</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Max Periods per Week</label>
+                          <input 
+                            type="number" 
+                            value={editingTeacher.maxPeriods}
+                            onChange={(e) => setEditingTeacher({...editingTeacher, maxPeriods: parseInt(e.target.value) || 0})}
+                            className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm"
+                          />
+                        </div>
                       </div>
 
                       <div>
@@ -7333,14 +9567,48 @@ export default function App() {
                           })}
                         </div>
                       </div>
+
+                      <div>
+                        <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1.5">Directly Assigned Subjects (Curriculum Expertise)</label>
+                        <div className="p-3 bg-gray-50 rounded-2xl max-h-36 overflow-y-auto border border-gray-100 space-y-1">
+                          {subjects.map(sub => {
+                            const isSelected = editingTeacher.subjects?.includes(sub);
+                            return (
+                              <label key={sub} className="flex items-center gap-2 text-[11px] font-bold text-gray-700 select-none py-0.5 hover:bg-white px-1.5 rounded-lg cursor-pointer">
+                                <input 
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => {
+                                    const curr = editingTeacher.subjects || [];
+                                    const next = curr.includes(sub) ? curr.filter(x => x !== sub) : [...curr, sub];
+                                    setEditingTeacher({ ...editingTeacher, subjects: next });
+                                  }}
+                                  className="rounded border-gray-300 text-[#064E3B] focus:ring-[#064E3B]"
+                                />
+                                <span>{sub}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
 
                     <button 
                       onClick={() => {
-                        updateTeachersAndSave(teachers.map(t => t.id === editingTeacher.id ? editingTeacher : t));
+                        const cleanVal = (val: string) => {
+                          if (!val) return '';
+                          return val.replace(/^(MR|MS|MRS|MR\.|MS\.|MRS\.)\s+/i, '').trim().toUpperCase();
+                        };
+                        const cleanedEditingTeacher = {
+                          ...editingTeacher,
+                          name: cleanVal(editingTeacher.name),
+                          preferredName: editingTeacher.preferredName ? cleanVal(editingTeacher.preferredName) : editingTeacher.preferredName,
+                          nricName: editingTeacher.nricName ? cleanVal(editingTeacher.nricName) : editingTeacher.nricName
+                        };
+                        updateTeachersAndSave(teachers.map(t => t.id === editingTeacher.id ? cleanedEditingTeacher : t));
                         setEditingTeacher(null);
                       }}
-                      className="w-full py-4 bg-[#064E3B] text-white rounded-2xl font-black uppercase tracking-widest hover:bg-[#059669] transition-all shadow-lg shadow-[#064E3B]/20"
+                      className="w-full py-4 bg-[#064E3B] text-white rounded-2xl font-black uppercase tracking-widest hover:bg-[#059669] transition-all shadow-lg shadow-[#064E3B]/20 cursor-pointer"
                     >
                       Save Changes
                     </button>
@@ -7667,21 +9935,21 @@ export default function App() {
                     </button>
 
                     <button 
-                      onClick={downloadTimetablePDF}
+                      onClick={downloadCommunTimetable}
                       disabled={isDownloading}
-                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-black uppercase text-[10px] tracking-wider shadow hover:scale-[1.01] active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                      className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-black uppercase text-[10px] tracking-wider shadow hover:scale-[1.01] active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
                     >
-                      {isDownloading ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
-                      PDF
+                      {isDownloading ? <Loader2 size={12} className="animate-spin" /> : <FileSpreadsheet size={12} />}
+                      Commun Export
                     </button>
 
                     <button 
-                      onClick={downloadTimetableDocx}
+                      onClick={downloadTimetableHTML}
                       disabled={isDownloading}
-                      className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-xl font-black uppercase text-[10px] tracking-wider shadow hover:scale-[1.01] active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black uppercase text-[10px] tracking-wider shadow hover:scale-[1.01] active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
                     >
-                      {isDownloading ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
-                      Word
+                      {isDownloading ? <Loader2 size={12} className="animate-spin" /> : <FileCode size={12} />}
+                      HTML
                     </button>
 
                     <button 
@@ -12592,7 +14860,25 @@ export default function App() {
         )}
         {currentView === 'admin' && (
           <motion.div key="admin" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-1 flex overflow-hidden">
-            {renderAdmin()}
+            {userRoles.includes('admin') ? renderAdmin() : (
+              <div className="flex-1 flex flex-col items-center justify-center p-8 bg-[#F0FDF4] w-full">
+                <div className="bg-white p-12 rounded-[3rem] shadow-2xl border-8 border-red-100 max-w-md text-center flex flex-col items-center gap-6">
+                  <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center">
+                    <Lock size={32} />
+                  </div>
+                  <h2 className="text-2xl font-black text-gray-900">Access Denied</h2>
+                  <p className="text-gray-500 font-bold text-sm">
+                    Only Administrators, Admin Staff, and Coordinators are permitted to access the Admin Portal.
+                  </p>
+                  <button
+                    onClick={() => setCurrentView('home')}
+                    className="mt-4 px-6 py-3 bg-[#059669] text-white rounded-xl font-bold hover:bg-[#047857] shadow-md transition-all"
+                  >
+                    Go Back Home
+                  </button>
+                </div>
+              </div>
+            )}
           </motion.div>
         )}
         {currentView === 'lesson-plan' && (
@@ -12799,7 +15085,7 @@ export default function App() {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl space-y-6"
+              className="bg-white rounded-[2.5rem] w-full max-w-lg p-10 shadow-2xl space-y-6"
             >
               <div className="flex justify-between items-center">
                 <h4 className="text-2xl font-black text-[#064E3B]">Add New Staff</h4>
@@ -12811,40 +15097,102 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="space-y-4">
-                <div>
-                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Full Name</label>
-                  <input 
-                    type="text" 
-                    placeholder="e.g. MR JOHN DOE"
-                    value={newTeacherForm.name}
-                    onChange={(e) => setNewTeacherForm({...newTeacherForm, name: e.target.value})}
-                    className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold"
-                  />
+              <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2 text-left">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Full Name</label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. MR JOHN DOE"
+                      value={newTeacherForm.name}
+                      onChange={(e) => setNewTeacherForm({...newTeacherForm, name: e.target.value})}
+                      className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Preferred Name / Alias</label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. Elliot"
+                      value={newTeacherForm.preferredName}
+                      onChange={(e) => setNewTeacherForm({...newTeacherForm, preferredName: e.target.value})}
+                      className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm"
+                    />
+                  </div>
                 </div>
 
-                <div>
-                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Position / Role</label>
-                  <select 
-                    value={newTeacherForm.role}
-                    onChange={(e) => setNewTeacherForm({...newTeacherForm, role: e.target.value})}
-                    className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold cursor-pointer"
-                  >
-                    <option value="Teacher">Teacher</option>
-                    <option value="Coordinator">Coordinator</option>
-                    <option value="Principal">Principal</option>
-                    <option value="Admin">Admin Staff</option>
-                  </select>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">NRIC Name (Official)</label>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. Yap Zhan Zhang"
+                      value={newTeacherForm.nricName}
+                      onChange={(e) => setNewTeacherForm({...newTeacherForm, nricName: e.target.value})}
+                      className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Job Type</label>
+                    <select 
+                      value={newTeacherForm.jobType}
+                      onChange={(e) => setNewTeacherForm({...newTeacherForm, jobType: e.target.value})}
+                      className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm cursor-pointer"
+                    >
+                      <option value="full-time">Full-Time</option>
+                      <option value="part-time">Part-Time</option>
+                      <option value="contract">Contract</option>
+                      <option value="intern">Intern</option>
+                    </select>
+                  </div>
                 </div>
 
-                <div>
-                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Max Periods per Week</label>
-                  <input 
-                    type="number" 
-                    value={newTeacherForm.maxPeriods}
-                    onChange={(e) => setNewTeacherForm({...newTeacherForm, maxPeriods: parseInt(e.target.value) || 0})}
-                    className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold"
-                  />
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Email Address</label>
+                    <input 
+                      type="email" 
+                      placeholder="elliot@zera.edu.my"
+                      value={newTeacherForm.email}
+                      onChange={(e) => setNewTeacherForm({...newTeacherForm, email: e.target.value})}
+                      className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Phone Number</label>
+                    <input 
+                      type="text" 
+                      placeholder="+6012xxxxxxxx"
+                      value={newTeacherForm.phone}
+                      onChange={(e) => setNewTeacherForm({...newTeacherForm, phone: e.target.value})}
+                      className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Position / Role</label>
+                    <select 
+                      value={newTeacherForm.role}
+                      onChange={(e) => setNewTeacherForm({...newTeacherForm, role: e.target.value})}
+                      className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm cursor-pointer"
+                    >
+                      <option value="Teacher">Teacher</option>
+                      <option value="Coordinator">Coordinator</option>
+                      <option value="Principal">Principal</option>
+                      <option value="Admin">Admin Staff</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">Max Periods per Week</label>
+                    <input 
+                      type="number" 
+                      value={newTeacherForm.maxPeriods}
+                      onChange={(e) => setNewTeacherForm({...newTeacherForm, maxPeriods: parseInt(e.target.value) || 0})}
+                      className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm"
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -12880,6 +15228,30 @@ export default function App() {
                     })}
                   </div>
                 </div>
+
+                <div>
+                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1.5">Directly Assigned Subjects (Curriculum Expertise)</label>
+                  <div className="p-3 bg-gray-50 rounded-2xl max-h-36 overflow-y-auto border border-gray-100 space-y-1">
+                    {subjects.map(sub => {
+                      const isSelected = newTeacherForm.subjects?.includes(sub);
+                      return (
+                        <label key={sub} className="flex items-center gap-2 text-[11px] font-bold text-gray-700 select-none py-0.5 hover:bg-white px-1.5 rounded-lg cursor-pointer">
+                          <input 
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {
+                              const curr = newTeacherForm.subjects || [];
+                              const next = curr.includes(sub) ? curr.filter(x => x !== sub) : [...curr, sub];
+                              setNewTeacherForm({ ...newTeacherForm, subjects: next });
+                            }}
+                            className="rounded border-gray-300 text-[#064E3B] focus:ring-[#064E3B]"
+                          />
+                          <span>{sub}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
 
               <button 
@@ -12888,13 +15260,22 @@ export default function App() {
                     alert("Please enter a teacher name.");
                     return;
                   }
+                  const cleanVal = (val: string) => {
+                    if (!val) return '';
+                    return val.replace(/^(MR|MS|MRS|MR\.|MS\.|MRS\.)\s+/i, '').trim().toUpperCase();
+                  };
                   updateTeachersAndSave([...teachers, { 
                     id: `t-${Date.now()}`, 
-                    name: newTeacherForm.name.trim().toUpperCase(), 
+                    name: cleanVal(newTeacherForm.name), 
                     role: newTeacherForm.role, 
-                    subjects: [], 
+                    subjects: newTeacherForm.subjects || [], 
                     maxPeriods: newTeacherForm.maxPeriods || 28,
-                    workingDays: newTeacherForm.workingDays
+                    workingDays: newTeacherForm.workingDays,
+                    email: newTeacherForm.email || '',
+                    phone: newTeacherForm.phone || '',
+                    jobType: newTeacherForm.jobType || '',
+                    nricName: cleanVal(newTeacherForm.nricName),
+                    preferredName: cleanVal(newTeacherForm.preferredName),
                   }]);
                   setAddTeacherModalOpen(false);
                 }}
@@ -12902,6 +15283,105 @@ export default function App() {
               >
                 Add Staff Member
               </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {staffSyncModalOpen && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <motion.div 
+               initial={{ scale: 0.95, opacity: 0 }}
+               animate={{ scale: 1, opacity: 1 }}
+               exit={{ scale: 0.95, opacity: 0 }}
+               className="bg-white rounded-[2.5rem] w-full max-w-lg p-10 shadow-2xl space-y-6 overflow-hidden max-h-[90vh] overflow-y-auto text-left"
+            >
+              <div className="flex justify-between items-center">
+                <div>
+                  <h4 className="text-2xl font-black text-[#064E3B]">API Synchronization</h4>
+                  <p className="text-[10px] font-black uppercase text-[#059669] tracking-wider mt-0.5">Zera Staff Management System</p>
+                </div>
+                <button 
+                  onClick={() => setStaffSyncModalOpen(false)} 
+                  className="p-2 hover:bg-gray-100 rounded-full transition-all text-gray-400 hover:text-gray-600 cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">API Base URL</label>
+                  <input 
+                    type="url" 
+                    placeholder="https://zera.edu.my"
+                    value={apiSyncBaseUrl}
+                    onChange={(e) => setApiSyncBaseUrl(e.target.value)}
+                    className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm"
+                  />
+                  <p className="text-[9px] font-bold text-gray-400 mt-1">Specify school ERP endpoint. Slashes will be cleaned automatically.</p>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">API Authentication Token</label>
+                  <input 
+                    type="password" 
+                    placeholder="Enter Sanctum API Key"
+                    value={apiSyncToken}
+                    onChange={(e) => setApiSyncToken(e.target.value)}
+                    className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm tracking-widest font-mono"
+                  />
+                  <p className="text-[9px] font-bold text-gray-400 mt-1">Laravel Sanctum Bearer token for staff.read capability.</p>
+                </div>
+
+                <div className="p-3 bg-amber-50 border border-amber-200/50 rounded-2xl text-amber-900 flex gap-2.5 items-start">
+                  <Info size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-[10px] leading-relaxed font-bold">
+                    This non-destructively merges active staff into your directory. Match and duplicate merging operates based on uppercase Names and Sync IDs, so assigned timetables and quota configurations are safely preserved.
+                  </p>
+                </div>
+              </div>
+
+              {syncResult && (
+                <div className={cn(
+                  "p-4 rounded-2xl text-xs font-bold leading-relaxed",
+                  syncResult.success ? "bg-emerald-50 border border-emerald-100 text-emerald-950" : "bg-red-50 border border-red-100 text-red-950"
+                )}>
+                  <div className="flex gap-2 items-start">
+                    <CheckCircle size={16} className={cn("shrink-0 mt-0.5", syncResult.success ? "text-emerald-600" : "text-red-400")} />
+                    <div>
+                      <p className="font-extrabold text-[13px] mb-0.5">{syncResult.success ? "Synchronization Success" : "Sync Failed"}</p>
+                      <p className="opacity-90">{syncResult.message}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button 
+                  onClick={() => setStaffSyncModalOpen(false)}
+                  disabled={isSyncingStaff}
+                  className="flex-1 py-4 bg-gray-50 text-[#064E3B] hover:bg-gray-100 rounded-2xl font-black text-xs uppercase tracking-widest transition-all cursor-pointer disabled:opacity-50"
+                >
+                  Close
+                </button>
+                <button 
+                  onClick={handleSyncStaff}
+                  disabled={isSyncingStaff}
+                  className="flex-1 py-4 bg-[#064E3B] text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-[#059669] transition-all shadow-lg shadow-[#064E3B]/20 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isSyncingStaff ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Syncing...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw size={14} /> Synchronize
+                    </>
+                  )}
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
