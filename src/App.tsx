@@ -1398,49 +1398,67 @@ export default function App() {
       });
 
       await setDoc(doc(db, 'school_config', 'timetable'), payload);
+      setHasUnsavedTimetableChanges(false);
     } catch (err) {
       console.error("Failed to sync timetable config with cloud:", err);
     }
   };
 
+  const handleManualCloudSave = async () => {
+    setIsSavingCloud(true);
+    setSaveCloudSuccess(false);
+    try {
+      await saveTimetableDataToFirestore(
+        teachers, staffAssignments, assignmentQuotas, timetableGrid, 
+        teacherDuties, combinedClasses, subjects, parallelRules
+      );
+      setSaveCloudSuccess(true);
+      setTimeout(() => setSaveCloudSuccess(false), 3000);
+    } catch (err) {
+      console.error("Manual cloud save failed:", err);
+    } finally {
+      setIsSavingCloud(false);
+    }
+  };
+
   const updateTeachersAndSave = async (newTeachers: any[]) => {
     setTeachers(newTeachers);
-    await saveTimetableDataToFirestore(newTeachers, staffAssignments, assignmentQuotas, timetableGrid, teacherDuties, combinedClasses, subjects, parallelRules);
+    setHasUnsavedTimetableChanges(true);
   };
 
   const updateStaffAssignmentsAndSave = async (newAssignments: any) => {
     setStaffAssignments(newAssignments);
-    await saveTimetableDataToFirestore(teachers, newAssignments, assignmentQuotas, timetableGrid, teacherDuties, combinedClasses, subjects, parallelRules);
+    setHasUnsavedTimetableChanges(true);
   };
 
   const updateAssignmentQuotasAndSave = async (newQuotas: any[]) => {
     setAssignmentQuotas(newQuotas);
-    await saveTimetableDataToFirestore(teachers, staffAssignments, newQuotas, timetableGrid, teacherDuties, combinedClasses, subjects, parallelRules);
+    setHasUnsavedTimetableChanges(true);
   };
 
   const updateTimetableGridAndSave = async (newGrid: any) => {
     setTimetableGrid(newGrid);
-    await saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, newGrid, teacherDuties, combinedClasses, subjects, parallelRules);
+    setHasUnsavedTimetableChanges(true);
   };
 
   const updateTeacherDutiesAndSave = async (newDuties: any) => {
     setTeacherDuties(newDuties);
-    await saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, timetableGrid, newDuties, combinedClasses, subjects, parallelRules);
+    setHasUnsavedTimetableChanges(true);
   };
 
   const updateCombinedClassesAndSave = async (newCombined: any[]) => {
     setCombinedClasses(newCombined);
-    await saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, timetableGrid, teacherDuties, newCombined, subjects, parallelRules);
+    setHasUnsavedTimetableChanges(true);
   };
 
   const updateSubjectsAndSave = async (newSubjects: string[]) => {
     setSubjects(newSubjects);
-    await saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, timetableGrid, teacherDuties, combinedClasses, newSubjects, parallelRules);
+    setHasUnsavedTimetableChanges(true);
   };
 
   const updateParallelRulesAndSave = async (newRules: any[]) => {
     setParallelRules(newRules);
-    await saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, timetableGrid, teacherDuties, combinedClasses, subjects, newRules);
+    setHasUnsavedTimetableChanges(true);
   };
 
   const saveTimetableToFirebase = async (newTeachers: any, newAssignments: any, newQuotas: any, newGrid: any) => {
@@ -3921,6 +3939,10 @@ export default function App() {
     return grid;
   });
 
+  const [hasUnsavedTimetableChanges, setHasUnsavedTimetableChanges] = useState(false);
+  const [isSavingCloud, setIsSavingCloud] = useState(false);
+  const [saveCloudSuccess, setSaveCloudSuccess] = useState(false);
+
   const [parallelDropConfirm, setParallelDropConfirm] = useState<{
     day: string;
     sIdx: number;
@@ -4331,8 +4353,31 @@ export default function App() {
         return;
       }
 
-      // Pre-deduplicate existing local list first
-      const preCleaned = deduplicateTeachersData(teachers, staffAssignments, assignmentQuotas, timetableGrid, teacherDuties);
+      // Fetch latest cloud state to prevent race conditions during staff sync
+      const latestSnap = await getDoc(doc(db, 'school_config', 'timetable'));
+      let baseTeachers = teachers;
+      let baseAssignments = staffAssignments;
+      let baseQuotas = assignmentQuotas;
+      let baseGrid = timetableGrid;
+      let baseDuties = teacherDuties;
+      let baseCombined = combinedClasses;
+      let baseSubjects = subjects;
+      let baseRules = parallelRules;
+
+      if (latestSnap.exists()) {
+        const d = latestSnap.data();
+        if (d.teachers) baseTeachers = d.teachers;
+        if (d.staffAssignments) baseAssignments = d.staffAssignments;
+        if (d.assignmentQuotas) baseQuotas = d.assignmentQuotas;
+        if (d.timetableGrid) baseGrid = d.timetableGrid;
+        if (d.teacherDuties) baseDuties = d.teacherDuties;
+        if (d.combinedClasses) baseCombined = d.combinedClasses;
+        if (d.subjects) baseSubjects = d.subjects;
+        if (d.parallelRules) baseRules = d.parallelRules;
+      }
+
+      // Pre-deduplicate existing list first
+      const preCleaned = deduplicateTeachersData(baseTeachers, baseAssignments, baseQuotas, baseGrid, baseDuties);
       let workingTeachers = preCleaned.teachers;
       let workingAssignments = preCleaned.assignments;
       let workingQuotas = preCleaned.quotas;
@@ -4428,9 +4473,9 @@ export default function App() {
         postCleaned.quotas,
         postCleaned.grid,
         postCleaned.duties,
-        combinedClasses,
-        subjects,
-        parallelRules,
+        baseCombined,
+        baseSubjects,
+        baseRules,
         false // forceDeduplicate = false because we just ran it
       );
 
@@ -6584,7 +6629,7 @@ export default function App() {
                   });
 
                   setTimetableGrid(nextGrid);
-                  saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, nextGrid, teacherDuties, combinedClasses);
+                  setHasUnsavedTimetableChanges(true);
                   setDraggedAssignment(null);
                 }
               }}
@@ -6649,7 +6694,7 @@ export default function App() {
                                 });
 
                                 setTimetableGrid(nextGrid);
-                                saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, nextGrid, teacherDuties, combinedClasses);
+                                setHasUnsavedTimetableChanges(true);
                               }}
                               className="opacity-0 group-hover:opacity-100 group-hover/item:opacity-100 text-red-600 hover:text-red-700 hover:scale-105 transition-all outline-none"
                               title={isCombined ? "Remove this subject from ALL combined year groups" : "Remove this subject"}
@@ -8297,7 +8342,7 @@ export default function App() {
                                                         return filtered;
                                                       })();
                                                       setAssignmentQuotas(nextQuotas);
-                                                      saveTimetableDataToFirestore(teachers, nextAssignments, nextQuotas, timetableGrid);
+                                                      setHasUnsavedTimetableChanges(true);
                                                     }}
                                                     options={teachers}
                                                     placeholder={idx === 0 ? "No Teacher" : `Co-Teacher ${idx}`}
@@ -8327,7 +8372,7 @@ export default function App() {
                                                         return filtered;
                                                       })();
                                                       setAssignmentQuotas(nextQuotas);
-                                                      saveTimetableDataToFirestore(teachers, nextAssignments, nextQuotas, timetableGrid);
+                                                      setHasUnsavedTimetableChanges(true);
                                                     }}
                                                     className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition-all shrink-0 cursor-pointer"
                                                     title="Remove Teacher"
@@ -8366,7 +8411,7 @@ export default function App() {
                                                 (q.yearGroup === yg && q.subject === s) ? { ...q, total: val } : q
                                               );
                                               setAssignmentQuotas(nextQuotas);
-                                              saveTimetableDataToFirestore(teachers, staffAssignments, nextQuotas, timetableGrid);
+                                              setHasUnsavedTimetableChanges(true);
                                             }}
                                             className="w-full bg-transparent text-[10px] font-black text-[#064E3B] outline-none text-right"
                                           />
@@ -8823,10 +8868,7 @@ export default function App() {
                               onChange={(e) => {
                                 const next = { ...classroomClassMappings, [yg]: e.target.value };
                                 setClassroomClassMappings(next);
-                                saveTimetableDataToFirestore(
-                                  teachers, staffAssignments, assignmentQuotas, timetableGrid, 
-                                  teacherDuties, combinedClasses, subjects, parallelRules
-                                );
+                                setHasUnsavedTimetableChanges(true);
                               }}
                               className="text-xs font-mono font-black text-[#064E3B] p-2 bg-white rounded-lg border-2 border-transparent focus:border-[#FACC15] outline-none"
                             >
@@ -8869,10 +8911,7 @@ export default function App() {
                               onChange={(e) => {
                                 const next = { ...classroomSubjectMappings, [subj]: e.target.value };
                                 setClassroomSubjectMappings(next);
-                                saveTimetableDataToFirestore(
-                                  teachers, staffAssignments, assignmentQuotas, timetableGrid, 
-                                  teacherDuties, combinedClasses, subjects, parallelRules
-                                );
+                                setHasUnsavedTimetableChanges(true);
                               }}
                               className="text-xs font-black text-amber-800 p-2 bg-white rounded-lg border-2 border-transparent focus:border-[#FACC15] outline-none"
                             >
@@ -10039,7 +10078,7 @@ export default function App() {
                              nextGrid[schedulerYearGroup][parallelDropConfirm.day][parallelDropConfirm.sIdx] = arr;
                              
                              setTimetableGrid(nextGrid);
-                             saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, nextGrid, teacherDuties);
+                             setHasUnsavedTimetableChanges(true);
                              setParallelDropConfirm(null);
                              setDraggedAssignment(null);
                            }}
@@ -10077,7 +10116,7 @@ export default function App() {
                              }
 
                              setTimetableGrid(nextGrid);
-                             saveTimetableDataToFirestore(teachers, staffAssignments, assignmentQuotas, nextGrid, teacherDuties);
+                             setHasUnsavedTimetableChanges(true);
                              setParallelDropConfirm(null);
                              setDraggedAssignment(null);
                            }}
@@ -11560,6 +11599,32 @@ export default function App() {
             </div>
           </div>
           <div className="flex gap-4 items-center">
+            {hasUnsavedTimetableChanges && (
+              <button
+                onClick={handleManualCloudSave}
+                disabled={isSavingCloud}
+                className={cn(
+                  "px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest transition-all flex items-center gap-2 border shadow-lg cursor-pointer",
+                  saveCloudSuccess
+                    ? "bg-emerald-500 text-white border-emerald-600"
+                    : "bg-amber-400 hover:bg-amber-300 text-amber-950 border-amber-500 hover:scale-[1.02] animate-pulse"
+                )}
+              >
+                {isSavingCloud ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" /> Saving...
+                  </>
+                ) : saveCloudSuccess ? (
+                  <>
+                    <Check size={16} /> Synced & Saved
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={16} className="animate-spin" style={{ animationDuration: '3s' }} /> Save & Sync Cloud
+                  </>
+                )}
+              </button>
+            )}
             <div className="hidden md:flex items-center gap-3 bg-white/10 px-6 py-2.5 rounded-xl border border-white/20">
               <div className="w-8 h-8 bg-[#FACC15] rounded-full flex items-center justify-center text-[#064E3B] font-black text-xs">
                 {teacherName[0]}
