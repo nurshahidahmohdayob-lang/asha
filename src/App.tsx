@@ -101,6 +101,7 @@ import pptxgen from 'pptxgenjs';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, SectionType, Table, TableRow, TableCell, WidthType, BorderStyle, PageOrientation, VerticalAlign } from 'docx';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
+import { ZeraBrandLogo } from './components/ZeraBrandLogo';
 
 const getSubjectColorClass = (subject: string): string => {
   const s = (subject || '').trim().toLowerCase();
@@ -2329,9 +2330,7 @@ export default function App() {
         className="bg-white rounded-[3rem] p-8 md:p-12 shadow-2xl w-full max-w-md border-8 border-white/20 overflow-y-auto max-h-[95vh]"
       >
         <div className="flex flex-col items-center gap-6 mb-6">
-          <div className="w-20 h-20 bg-[#059669] rounded-2xl flex items-center justify-center transform rotate-12 shadow-lg">
-            <BookOpen className="text-white" size={40} />
-          </div>
+          <ZeraBrandLogo size="lg" variant="original" />
           <div className="text-center">
             <h2 className="text-4xl font-black text-[#064E3B] uppercase tracking-tight">
               {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
@@ -11482,32 +11481,27 @@ export default function App() {
 
   // --- Rendering Helpers ---
   const renderHome = () => (
-    <div className="flex-1 flex flex-col overflow-hidden bg-[#FDFBF7]">
+    <div className="flex-1 flex flex-col overflow-hidden bg-[#FAFDFB]">
       <header className="h-20 bg-white border-b-2 border-[#D1FAE5] px-12 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-[#059669] rounded-xl flex items-center justify-center text-white">
-            <BookOpen size={24} />
-          </div>
-          <h1 className="text-xl font-black text-[#064E3B] uppercase tracking-tight flex items-center gap-2">
-            EduMagic Suite
-            <span className={cn(
-              "text-[9px] font-black uppercase px-2.5 py-1 rounded-full border tracking-wide transition-all",
-              isOnline 
-                ? "bg-emerald-50 text-emerald-700 border-emerald-200" 
-                : "bg-amber-50 text-amber-700 border-amber-200"
-            )}>
-              {isOnline ? "● Cloud Sync" : "● Offline Cache"}
-            </span>
-          </h1>
+        <div className="flex items-center gap-4">
+          <ZeraBrandLogo size="md" variant="original" />
+          <span className={cn(
+            "text-[9px] font-black uppercase px-2.5 py-1 rounded-full border tracking-wide transition-all shrink-0",
+            isOnline 
+              ? "bg-emerald-50 text-emerald-700 border-emerald-200" 
+              : "bg-amber-50 text-amber-700 border-amber-200"
+          )}>
+            {isOnline ? "● Cloud Sync" : "● Offline Cache"}
+          </span>
         </div>
         <div className="flex items-center gap-6">
           <div className="hidden md:flex items-center gap-3 bg-[#F0FDF4] px-4 py-2 rounded-xl border border-[#D1FAE5]">
-            <div className="w-8 h-8 bg-[#064E3B] rounded-full flex items-center justify-center text-white font-black text-xs">
+            <div className="w-8 h-8 bg-[#0A4F29] rounded-full flex items-center justify-center text-white font-black text-xs">
               {teacherName[0]}
             </div>
             <div className="text-left">
-              <p className="text-[10px] font-black text-[#059669] uppercase tracking-tight">Member</p>
-              <p className="text-sm font-black text-[#064E3B] leading-none">{teacherName}</p>
+              <p className="text-[10px] font-black text-[#3A7A5E] uppercase tracking-tight">Educator</p>
+              <p className="text-sm font-black text-[#0A4F29] leading-none">{teacherName}</p>
             </div>
           </div>
           <button 
@@ -11520,54 +11514,140 @@ export default function App() {
         </div>
       </header>
       
-      <div className="flex-1 overflow-y-auto p-12 flex items-center justify-center">
-        <div className="max-w-4xl mx-auto space-y-12 text-center pb-20">
-        <div className="space-y-4">
-          <h1 className="text-7xl font-black text-[#064E3B] leading-tight">Zera International Dashboard</h1>
-          <p className="text-2xl font-medium text-[#064E3B]/80 max-w-2xl mx-auto">Welcome back, <span className="text-[#059669]">{teacherName}</span>. Please select your workspace to begin.</p>
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-8">
-            {(userRoles.includes('educator') || userRoles.includes('admin')) && (
-              <button 
-                onClick={() => setCurrentView('educator-suite')} 
-                className={cn(
-                  "group p-12 bg-[#064E3B] rounded-[3rem] shadow-2xl transition-all hover:scale-[1.02] hover:-translate-y-2 flex flex-col items-center gap-6 text-white",
-                  (!userRoles.includes('admin') || !userRoles.includes('educator')) && !(userRoles.includes('admin') && userRoles.includes('educator')) && "md:col-span-2 max-w-xl mx-auto w-full"
-                )}
-              >
-                <div className="w-24 h-24 bg-[#FACC15] rounded-3xl flex items-center justify-center text-[#064E3B] transition-all group-hover:scale-110">
-                  <BookOpen size={48} />
-                </div>
-                <div>
-                  <h2 className="text-3xl font-black">Educator Suite</h2>
-                  <p className="text-white/40 font-bold mt-2 uppercase text-xs tracking-widest">Creative Studio</p>
-                </div>
-              </button>
-            )}
+      <div className="flex-1 overflow-y-auto p-12 custom-scrollbar">
+        <div className="max-w-5xl mx-auto space-y-16 pb-20">
+          
+          {/* Main App Title / Welcoming */}
+          <div className="text-center space-y-6 flex flex-col items-center">
+            <ZeraBrandLogo size="xl" variant="original" className="scale-110 mb-2" />
+            <div className="inline-flex justify-center items-center gap-2 px-4 py-1.5 bg-[#F0FDF4] text-[#0A4F29] rounded-full border border-[#D1FAE5] shadow-sm mb-2 scale-[0.98]">
+              <span className="w-2 h-2 rounded-full bg-[#3A7A5E] animate-pulse" />
+              <span className="text-[10px] uppercase font-black tracking-widest">Finest education for all.</span>
+            </div>
+            <p className="text-xl font-medium text-[#3A7A5E] max-w-2xl mx-auto">
+              Shaping character and inspiring students to be leaders of tomorrow. 
+              Welcome, <span className="text-[#0A4F29] font-bold">{teacherName}</span>.
+            </p>
+          </div>
+          
+          {/* Workspace Launch Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+              {(userRoles.includes('educator') || userRoles.includes('admin')) && (
+                <button 
+                  onClick={() => setCurrentView('educator-suite')} 
+                  className={cn(
+                    "group p-10 bg-[#0A4F29] rounded-[2.5rem] shadow-xl hover:shadow-2xl transition-all hover:scale-[1.02] hover:-translate-y-2 flex flex-col items-center gap-6 text-white cursor-pointer",
+                    (!userRoles.includes('admin') || !userRoles.includes('educator')) && !(userRoles.includes('admin') && userRoles.includes('educator')) && "md:col-span-2 max-w-xl mx-auto w-full"
+                  )}
+                >
+                  <div className="w-20 h-20 bg-[#F7B917] rounded-3xl flex items-center justify-center text-[#0A4F29] transition-all group-hover:scale-110">
+                    <BookOpen size={40} />
+                  </div>
+                  <div className="text-center">
+                    <h2 className="text-3xl font-black">Educator Studio</h2>
+                    <p className="text-[#F7B917] font-bold mt-2 uppercase text-xs tracking-widest">Plan & Generate Lessons</p>
+                  </div>
+                </button>
+              )}
 
-            {userRoles.includes('admin') && (
-              <button 
-                onClick={() => setCurrentView('admin')} 
-                className={cn(
-                  "group p-12 bg-white rounded-[3rem] border-4 border-[#064E3B] hover:border-[#FACC15] hover:shadow-2xl transition-all hover:scale-[1.02] hover:-translate-y-2 flex flex-col items-center gap-6",
-                  !userRoles.includes('educator') && "md:col-span-2 max-w-xl mx-auto w-full"
-                )}
-              >
-                <div className="w-24 h-24 bg-[#FEFCE8] rounded-3xl flex items-center justify-center text-[#064E3B] group-hover:bg-[#FACC15] transition-all group-hover:scale-110">
-                  <LayoutGrid size={48} />
+              {userRoles.includes('admin') && (
+                <button 
+                  onClick={() => setCurrentView('admin')} 
+                  className={cn(
+                    "group p-10 bg-white rounded-[2.5rem] border-4 border-[#0A4F29] hover:border-[#668C4A] shadow-xl hover:shadow-2xl transition-all hover:scale-[1.02] hover:-translate-y-2 flex flex-col items-center gap-6 cursor-pointer",
+                    !userRoles.includes('educator') && "md:col-span-2 max-w-xl mx-auto w-full"
+                  )}
+                >
+                  <div className="w-20 h-20 bg-[#FAF9F0] rounded-3xl flex items-center justify-center text-[#0A4F29] group-hover:bg-[#DFDFE7] transition-all group-hover:scale-110">
+                    <LayoutGrid size={40} />
+                  </div>
+                  <div className="text-center">
+                    <h2 className="text-3xl font-black text-[#0A4F29]">Admin Portal</h2>
+                    <p className="text-[#668C4A] font-bold mt-2 uppercase text-xs tracking-widest">Staff & Timetable Grid</p>
+                  </div>
+                </button>
+              )}
+          </div>
+
+          <div className="w-full border-t border-slate-200/60 my-6" />
+
+          {/* brand Kit Highlight Section */}
+          <div className="space-y-10">
+            <div className="text-center">
+              <h2 className="text-3xl font-black text-[#0A4F29] tracking-tight">Zera Identity & Standards</h2>
+              <p className="text-sm font-bold text-[#668C4A] uppercase tracking-[0.2em] mt-1">Founding Vision and Ideals</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Vision Card */}
+              <div className="bg-white p-8 rounded-[2rem] border border-[#D1FAE5] shadow-sm space-y-4 flex flex-col">
+                <div className="w-12 h-12 bg-[#F0FDF4] rounded-2xl flex items-center justify-center text-[#0A4F29]">
+                  <span className="text-2xl">🌟</span>
                 </div>
+                <h3 className="text-xl font-bold text-[#0A4F29]">Our Vision</h3>
+                <p className="text-sm text-slate-600 leading-relaxed flex-1">
+                  We shape students' character and inspire them to become the visionary leaders of tomorrow.
+                </p>
+              </div>
+
+              {/* Mission Card */}
+              <div className="bg-white p-8 rounded-[2rem] border border-[#D1FAE5] shadow-sm space-y-4 flex flex-col">
+                <div className="w-12 h-12 bg-[#F0FDF8] rounded-2xl flex items-center justify-center text-[#3A7A5E]">
+                  <span className="text-2xl">🌱</span>
+                </div>
+                <h3 className="text-xl font-bold text-[#3A7A5E]">Our Mission</h3>
+                <p className="text-sm text-slate-600 leading-relaxed flex-1">
+                  Providing top-quality education in a nurturing environment celebrating three core elements: <span className="font-bold text-[#0A4F29]">Curiosity, Creativity, and Collaboration</span>.
+                </p>
+              </div>
+
+              {/* Philosophy Card */}
+              <div className="bg-white p-8 rounded-[2rem] border border-[#D1FAE5] shadow-sm space-y-4 flex flex-col">
+                <div className="w-12 h-12 bg-[#FFFDF2] rounded-2xl flex items-center justify-center text-[#F7B917]">
+                  <span className="text-2xl">🎓</span>
+                </div>
+                <h3 className="text-xl font-bold text-[#668C4A]">Edu-Philosophy</h3>
+                <p className="text-sm text-slate-600 leading-relaxed flex-1">
+                  Education is about more than academics — it is about shaping Courageous, Compassionate, and Committed leaders.
+                </p>
+              </div>
+            </div>
+
+            {/* Core Values (Z.E.R.A.O.S.) Section */}
+            <div className="bg-white p-10 rounded-[2.5rem] border border-[#D1FAE5] shadow-sm space-y-8">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-6">
                 <div>
-                  <h2 className="text-3xl font-black text-[#064E3B]">Admin Portal</h2>
-                  <p className="text-[#064E3B]/40 font-bold mt-2 uppercase text-xs tracking-widest">School Management</p>
+                  <h3 className="text-2xl font-black text-[#0A4F29]" id="core-values-title">The Z.E.R.A.O.S. Core Values</h3>
+                  <p className="text-xs font-bold text-[#668C4A] uppercase tracking-wider mt-1">Our Behavioral Anchor</p>
                 </div>
-              </button>
-            )}
+                <div className="font-serif italic text-sm text-slate-500 font-medium">
+                  "From a seed to a mighty tree."
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-6">
+                {[
+                  { letter: "Z", val: "Zealous", bg: "bg-[#F0FDF4] text-[#0A4F29] border-[#D1FAE5]" },
+                  { letter: "E", val: "Excellence", bg: "bg-[#F7FEE7] text-[#668C4A] border-lime-200" },
+                  { letter: "R", val: "Resilience", bg: "bg-[#F0FDF8] text-[#3A7A5E] border-emerald-200" },
+                  { letter: "A", val: "Authenticity", bg: "bg-[#ECFEFF] text-[#27829E] border-cyan-200" },
+                  { letter: "O", val: "Open-mindedness", bg: "bg-[#FFFDF2] text-[#854D0E] border-amber-200" },
+                  { letter: "S", val: "Sustainability", bg: "bg-slate-50 text-slate-700 border-[#DFDFE7]" }
+                ].map((item, idx) => (
+                  <div key={idx} className={cn("p-5 rounded-2xl border text-center flex flex-col items-center gap-2 shadow-sm", item.bg)}>
+                    <span className="text-3xl font-black tracking-tight font-serif">{item.letter}</span>
+                    <span className="text-xs font-black uppercase tracking-wider">{item.val}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            
+          </div>
+
         </div>
       </div>
     </div>
-  </div>
-);
+  );
 
   const renderEducatorSuite = () => (
     <div className="flex-1 overflow-y-auto p-12 bg-[#FDFBF7] custom-scrollbar">
@@ -12013,6 +12093,17 @@ export default function App() {
       }
     };
 
+    const handleBackgroundUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          updateSlideData(currentSlideIdx, 'backgroundWallpaper', event.target?.result as string);
+        };
+        reader.readAsDataURL(file);
+      }
+    };
+
     return (
       <div className="flex-1 flex flex-col bg-[#F0FDF4] overflow-hidden">
         <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20">
@@ -12170,19 +12261,33 @@ export default function App() {
                         
                         <div className="pt-4 space-y-4">
                           {selectedImg?.url && (
-                            <button 
-                              onClick={() => {
-                                if (selectedSlideImageId) {
-                                  setImageEditorCallback({
-                                    cb: (newUrl: string) => updateSlideImage(selectedSlideImageId, { url: newUrl })
-                                  });
-                                  setEditingImageUrl(selectedImg.url);
-                                }
-                              }}
-                              className="w-full py-2.5 flex items-center justify-center gap-2 bg-[#059669] text-white rounded-xl text-[10px] font-black uppercase hover:bg-[#047857] shadow-md transition-all active:scale-95"
-                            >
-                              <Crop size={14} /> Edit Image Studio
-                            </button>
+                            <div className="space-y-2">
+                              <button 
+                                onClick={() => {
+                                  if (selectedSlideImageId) {
+                                    setImageEditorCallback({
+                                      cb: (newUrl: string) => updateSlideImage(selectedSlideImageId, { url: newUrl })
+                                    });
+                                    setEditingImageUrl(selectedImg.url);
+                                  }
+                                }}
+                                className="w-full py-2.5 flex items-center justify-center gap-2 bg-[#059669] text-white rounded-xl text-[10px] font-black uppercase hover:bg-[#047857] shadow-md transition-all active:scale-95"
+                              >
+                                <Crop size={14} /> Edit Image Studio
+                              </button>
+                              <button 
+                                onClick={() => {
+                                  if (selectedSlideImageId && selectedImg?.url) {
+                                    updateSlideData(currentSlideIdx, 'backgroundWallpaper', selectedImg.url);
+                                    removeSlideImage(selectedSlideImageId);
+                                    setSelectedSlideImageId(null);
+                                  }
+                                }}
+                                className="w-full py-2.5 flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-[10px] font-black uppercase shadow-md transition-all active:scale-95"
+                              >
+                                <WallpaperIcon size={14} /> Set as Slide Background
+                              </button>
+                            </div>
                           )}
 
                           <div className="flex gap-4">
@@ -12232,12 +12337,15 @@ export default function App() {
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <label className="text-[10px] font-black uppercase text-[#7C7A65]">Images & Assets</label>
-                      <label 
-                        className="flex items-center gap-1 px-2 py-1 bg-[#D1FAE5] text-[#059669] rounded-lg text-[10px] font-bold hover:bg-[#A7F3D0] transition-colors cursor-pointer"
-                      >
-                        <Plus size={14} /> Device
-                        <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
-                      </label>
+                      <div className="flex gap-1.5">
+                        <label 
+                          className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gradient-to-r from-[#059669] to-teal-600 text-white rounded-lg text-[9px] font-black uppercase hover:from-emerald-700 hover:to-teal-700 transition-all cursor-pointer shadow-sm active:scale-95"
+                          title="Set uploaded image straight as slide background"
+                        >
+                          <WallpaperIcon size={11} /> Zera Background
+                          <input type="file" className="hidden" accept="image/*" onChange={handleBackgroundUpload} />
+                        </label>
+                      </div>
                     </div>
 
                     <div className="flex gap-1 p-1 bg-gray-50 rounded-xl">
@@ -12344,6 +12452,15 @@ export default function App() {
                             ))}
                          </div>
                          <div className="grid grid-cols-2 gap-3 max-h-[400px] overflow-y-auto pr-1 custom-scrollbar">
+                            <label 
+                              className="aspect-video rounded-xl border-2 border-dashed border-[#059669]/30 bg-[#F0FDF4] flex flex-col items-center justify-center gap-1 hover:bg-[#D1FAE5] hover:border-[#059669] transition-all group cursor-pointer"
+                              title="Upload custom background from device"
+                            >
+                              <FileUp size={20} className="text-[#059669]" />
+                              <span className="text-[9px] font-black uppercase text-[#059669]">Device BG</span>
+                              <input type="file" className="hidden" accept="image/*" onChange={handleBackgroundUpload} />
+                            </label>
+
                             <button 
                               onClick={() => updateSlideData(currentSlideIdx, 'backgroundWallpaper', undefined)}
                               className="aspect-video rounded-xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center gap-1 hover:bg-gray-50 transition-all group"
@@ -12886,9 +13003,17 @@ export default function App() {
                     )}
                   </div>
 
-                  {!isDownloading && (
-                    <div className="absolute bottom-6 right-8 text-[10px] font-black uppercase tracking-widest opacity-30 z-[70] pointer-events-none">
-                      Slide {currentSlideIdx + 1}
+                   {true && (
+                    <div className="absolute bottom-5 left-12 right-12 flex justify-between items-center text-[10px] font-black uppercase tracking-wider opacity-60 z-[70] pointer-events-none select-none">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm leading-none">{activeTheme.emoji}</span>
+                        <span style={{ color: activeTheme.accentColor }}>{activeTheme.id.startsWith('zera-') ? activeTheme.name : 'Zera Education'}</span>
+                        <span className="opacity-40">|</span>
+                        <span className="normal-case italic opacity-80 font-medium font-sans">"From a seed to a mighty tree."</span>
+                      </div>
+                      <div className="opacity-75 bg-slate-50/90 px-3 py-1 rounded-lg border border-slate-100 shadow-sm text-slate-600 font-sans font-bold">
+                        Slide {currentSlideIdx + 1}
+                      </div>
                     </div>
                   )}
 
@@ -15125,15 +15250,35 @@ export default function App() {
           }
         });
 
-        // Footer - removed per user request
-/*
-        s.addText(`${content.lessonTitle} | Slide ${idx + 1}`, {
-          x: 0.5, y: 5.3, w: 9.0, h: 0.3,
-          fontSize: 8, 
-          color: '999999', 
-          align: pres.AlignH.right
-        });
-*/
+        // Footer - updated per user request for brand kit compatibility
+        const isZeraTheme = activeTheme.id.startsWith('zera-');
+        if (isZeraTheme) {
+          s.addText(`${activeTheme.emoji} ${activeTheme.name}`, {
+            x: 0.5, y: 5.3, w: 4.5, h: 0.3,
+            fontSize: 8,
+            color: accentColor,
+            bold: true,
+            align: pres.AlignH.left,
+            valign: 'middle'
+          });
+          
+          s.addText(`"From a seed to a mighty tree."`, {
+            x: 5.0, y: 5.3, w: 4.5, h: 0.3,
+            fontSize: 8,
+            color: '666666',
+            italic: true,
+            align: pres.AlignH.right,
+            valign: 'middle'
+          });
+        } else {
+          s.addText(`${activeTheme.emoji} ${activeTheme.name} | Slide ${idx + 1}`, {
+            x: 0.5, y: 5.3, w: 9.0, h: 0.3,
+            fontSize: 8,
+            color: '666666',
+            align: pres.AlignH.right,
+            valign: 'middle'
+          });
+        }
       });
 
       await pres.writeFile({ fileName: `${content.lessonTitle.replace(/\s+/g, '_')}_Slides.pptx` });
