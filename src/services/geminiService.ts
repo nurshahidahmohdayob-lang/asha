@@ -123,21 +123,10 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
       mainPrompt += `\nPedagogical Methodology to follow: ${options.metadataHints.methodology}`;
     }
 
-    mainPrompt += `\n\nZERA EDUCATION BRAND INTEGRATION:
-    - These slides are generated specifically for "Zera Education", an esteemed Cambridge International School.
-    - Zera's Vision is: "We shape students' character and inspire them to become the visionary leaders of tomorrow."
-    - Zera's Mission focuses on Curiosity, Creativity, and Collaboration.
-    - Zera's Edu-Philosophy is: "Education is about more than academics — it is about shaping Courageous, Compassionate, and Committed leaders."
-    - Zera's Tagline is: "From a seed to a mighty tree."
-    - Zera's Slogan is: "Finest education for all."
-    - Zera's Core Values are represented by the acronym Z.E.R.A.O.S:
-      * Z - Zealous
-      * E - Excellence
-      * R - Resilience
-      * A - Authenticity
-      * O - Open-mindedness
-      * S - Sustainability
-    - When writing slide content (especially for titles, collaborative activities, discussions, or character reflections), naturally incorporate and highlight these values and ideals (such as Curiosity, Collaboration, Sustainability, or Resilience) in a pedagogical context appropriate for the grade level. Ensure that introduction or closing slides reflect these high Zera Education standards.`;
+    mainPrompt += `\n\nCONTENT BRANDING RESTRICTION:
+    - DO NOT include or reference "Zera", "Zera Education", "Zera International School", or any Zera brand-specific taglines (such as "From a seed to a mighty tree") or slogans inside the slide titles, bullet points, activities, or descriptions.
+    - All generated text, exercises, quiz questions, and activities must be entirely general, neutral, and strictly follow Cambridge Framework standards.
+    - The slide templates/design styles handle aesthetic branding, but the actual content itself must be standard and fully universal.`;
 
     contents.push(mainPrompt);
     contents.push(`Format: JSON object with "slides" (array of {title, type, content, illustrationPrompt}) AND "metadata" (object with "description": string, "methodology": string).
