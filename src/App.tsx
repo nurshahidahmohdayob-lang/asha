@@ -102,6 +102,136 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, Sect
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { ZeraBrandLogo } from './components/ZeraBrandLogo';
+import mammoth from 'mammoth';
+
+const extractTextFromDocx = async (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const arrayBuffer = event.target?.result as ArrayBuffer;
+      try {
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        resolve(result.value);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+};
+
+const extractTextFromExcel = async (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const arrayBuffer = event.target?.result as ArrayBuffer;
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+        let textResult = "";
+        workbook.SheetNames.forEach((sheetName) => {
+          textResult += `Sheet: ${sheetName}\n`;
+          const sheet = workbook.Sheets[sheetName];
+          const csv = XLSX.utils.sheet_to_csv(sheet);
+          textResult += csv + "\n\n";
+        });
+        resolve(textResult);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+};
+
+const extractTextFromTextFile = async (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      resolve(event.target?.result as string);
+    };
+    reader.onerror = reject;
+    reader.readAsText(file);
+  });
+};
+
+const prepareFileForGemini = async (file: File): Promise<{ mimeType: string, data: string }> => {
+  const mimeType = file.type || '';
+  const fileName = file.name.toLowerCase();
+
+  // 1. If it is an image or PDF, we can use Gemini's native multimodal support!
+  const isImage = mimeType.startsWith('image/');
+  const isPdf = mimeType === 'application/pdf' || fileName.endsWith('.pdf');
+  
+  if (isImage || isPdf) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64Data = result.split(',')[1];
+        resolve({
+          mimeType: isPdf ? 'application/pdf' : mimeType,
+          data: base64Data
+        });
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // 2. If it is a Word document (.docx)
+  if (fileName.endsWith('.docx') || mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+    try {
+      const extractedText = await extractTextFromDocx(file);
+      const base64Text = btoa(unescape(encodeURIComponent(extractedText)));
+      return {
+        mimeType: 'text/plain',
+        data: base64Text
+      };
+    } catch (err) {
+      console.error("Error reading Word document:", err);
+    }
+  }
+
+  // 3. If it is a Spreadsheet/Excel/CSV (.xlsx, .xls, .csv)
+  if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls') || fileName.endsWith('.csv') || mimeType === 'application/vnd.ms-excel' || mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || mimeType === 'text/csv') {
+    try {
+      const extractedText = await extractTextFromExcel(file);
+      const base64Text = btoa(unescape(encodeURIComponent(extractedText)));
+      return {
+        mimeType: 'text/plain',
+        data: base64Text
+      };
+    } catch (err) {
+      console.error("Error reading spreadsheet document:", err);
+    }
+  }
+
+  // 4. Default / Text Fallback (Plain Text, Markdown, html, JSON, code, etc.)
+  try {
+    const text = await extractTextFromTextFile(file);
+    const base64Text = btoa(unescape(encodeURIComponent(text)));
+    return {
+      mimeType: 'text/plain',
+      data: base64Text
+    };
+  } catch (err) {
+    console.error("Fallback text reader error, trying binary base64:", err);
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        resolve({
+          mimeType: mimeType || 'application/octet-stream',
+          data: result.split(',')[1]
+        });
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+};
 
 const getSubjectColorClass = (subject: string): string => {
   const s = (subject || '').trim().toLowerCase();
@@ -2075,7 +2205,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [historyIndex, historyStack]);
   const [templateUploadMode, setTemplateUploadMode] = useState<'strict' | 'custom'>('strict');
-  const [fileContext, setFileContext] = useState<{ mimeType: string, data: string, name: string } | null>(null);
+  const [fileContext, setFileContext] = useState<{ mimeType: string, data: any, name: string } | null>(null);
   const [selectedQuestionTypes, setSelectedQuestionTypes] = useState<string[]>(['Multiple Choice', 'Fill in the Blanks', 'Short Answer']);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
@@ -3453,22 +3583,51 @@ export default function App() {
     });
   };
 
-  const generateOnlySlides = async () => {
-    const topic = lessonInput.trim() || content?.lessonTitle || content?.lessonPlan?.overallTopic;
-    if (!topic) return;
-    setGeneratingMessage("Generating Slides...");
+  const generateOnlySlides = async (basedOnAssessment: boolean = false) => {
+    const topic = lessonInput.trim() || content?.lessonTitle || content?.lessonPlan?.overallTopic || (fileContext ? `Presentation based on ${fileContext.name}` : "");
+    if (!topic && !basedOnAssessment && !fileContext) return;
+    setGeneratingMessage(
+      fileContext 
+        ? "Transforming assessment file to slideshow..." 
+        : basedOnAssessment 
+          ? "Generating Slides from Assessment..." 
+          : "Generating Slides..."
+    );
     setIsGenerating(true);
-    const result = await generateSlides(topic, {
+    
+    let fileData: { mimeType: string; data: string } | undefined;
+    if (fileContext && !basedOnAssessment) {
+      try {
+        fileData = await prepareFileForGemini(fileContext.data);
+      } catch (err) {
+        console.error("File processing error in slides:", err);
+      }
+    }
+
+    const options: any = {
       yearGroup: content?.gradeLevel || yearGroup,
       lexileLevel: content?.metadata?.lexileLevel || lexileLevel,
       subject: content?.subject || subject,
-      numSlides,
+      numSlides: basedOnAssessment ? Math.max(5, numSlides) : numSlides,
       numQuestions,
       questionTypes: selectedQuestionTypes,
-      metadataHints: content?.slidesMetadata
-    });
+      metadataHints: content?.slidesMetadata,
+      fileContext: fileData
+    };
+
+    if (basedOnAssessment && content?.worksheet) {
+      options.worksheetContext = {
+        title: content.worksheet.title,
+        readingPassage: content.worksheet.readingPassage || "",
+        description: content.worksheet.description || "",
+        methodology: content.worksheet.methodology || "",
+        sections: content.worksheet.sections || []
+      };
+    }
+
+    const result = await generateSlides(topic || content?.worksheet?.title || "Assessment-based Lesson", options);
     if (result) {
-      const topicToSave = topic;
+      const topicToSave = topic || content?.worksheet?.title || "Assessment-based Lesson";
       // Convert static imageURLs to movable images for the new slides
       const slidesWithMovableImages = convertSlidesToMovable(result.slides);
 
@@ -3503,11 +3662,21 @@ export default function App() {
   };
 
   const generateOnlyWorksheet = async (basedOnSlides: boolean = false) => {
-    if (!lessonInput.trim() && !basedOnSlides) return;
-    setGeneratingMessage("Generating Worksheet...");
+    if (!lessonInput.trim() && !basedOnSlides && !fileContext) return;
+    setGeneratingMessage(fileContext ? "Analyzing uploaded assessment file..." : "Generating Worksheet...");
     setIsGenerating(true);
+
+    let fileData: { mimeType: string; data: string } | undefined;
+    if (fileContext && !basedOnSlides) {
+      try {
+        fileData = await prepareFileForGemini(fileContext.data);
+      } catch (err) {
+        console.error("File processing error in assessment gen:", err);
+      }
+    }
+
     const result = await generateWorksheet(
-      lessonInput || (content?.lessonTitle || ""), 
+      lessonInput.trim() || (fileContext ? `Analysis and answer sheet for uploaded exam: ${fileContext.name}` : content?.lessonTitle || ""), 
       {
         yearGroup,
         lexileLevel,
@@ -3517,7 +3686,8 @@ export default function App() {
         questionTypes: selectedQuestionTypes,
         includeStory,
         readingPassageOnly,
-        metadataHints: content?.worksheet
+        metadataHints: content?.worksheet,
+        fileContext: fileData
       },
       basedOnSlides ? content?.slides : undefined
     );
@@ -3528,7 +3698,7 @@ export default function App() {
         methodology: content?.worksheet?.methodology || result.methodology || ""
       };
       const eduContent: EduContent = content ? { ...content, worksheet: worksheetData } : {
-        lessonTitle: lessonInput || result.title,
+        lessonTitle: lessonInput.trim() || result.title,
         subject,
         gradeLevel: yearGroup,
         slides: [],
@@ -3686,6 +3856,14 @@ export default function App() {
   const [editingImageUrl, setEditingImageUrl] = useState<string | null>(null);
   const [imageEditorCallback, setImageEditorCallback] = useState<{ cb: (settings: any) => void }>({ cb: () => {} });
   const [currentView, setCurrentView] = useState<'home' | 'educator-suite' | 'lesson-plan' | 'slides' | 'worksheet' | 'notes' | 'admin'>('home');
+  const [previousView, setPreviousView] = useState<'home' | 'educator-suite' | 'admin'>('home');
+
+  useEffect(() => {
+    if (currentView && !['lesson-plan', 'slides', 'worksheet', 'notes'].includes(currentView)) {
+      setPreviousView(currentView as any);
+    }
+  }, [currentView]);
+
   const [adminTab, setAdminTab] = useState<'overview' | 'timetable' | 'teachers' | 'assignments' | 'plans' | 'members' | 'cover' | 'classrooms'>('overview');
   const [allMembers, setAllMembers] = useState<any[]>([]);
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
@@ -12047,12 +12225,21 @@ export default function App() {
                         <span className="text-[10px] font-black text-gray-400">
                           {formattedDate}
                         </span>
-                        <button
-                          onClick={() => loadProject(plan, true)}
-                          className="px-4 py-1.5 bg-[#FEFCE8] text-[#854D0E] hover:bg-[#FACC15] hover:text-[#064E3B] rounded-xl font-black text-[10px] uppercase tracking-wider transition-all"
-                        >
-                          View Copy
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => loadProject(plan, true)}
+                            className="px-4 py-1.5 bg-[#FEFCE8] text-[#854D0E] hover:bg-[#FACC15] hover:text-[#064E3B] rounded-xl font-black text-[10px] uppercase tracking-wider transition-all"
+                          >
+                            View Copy
+                          </button>
+                          <button
+                            onClick={() => deleteSubmittedPlan(plan.id)}
+                            className="p-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-xl transition-all shadow-sm active:scale-95 flex items-center justify-center border border-red-100"
+                            title="Delete Submission"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -12065,16 +12252,132 @@ export default function App() {
     </div>
   );
 
+  const renderWorkspaceFlowNavigator = () => {
+    const steps = [
+      { id: 'lesson-plan', label: 'Lesson Design', icon: BookOpen },
+      { id: 'slides', label: 'Slide Studio', icon: Presentation },
+      { id: 'worksheet', label: 'Assessment Hub', icon: FileText },
+      { id: 'notes', label: 'Journal & Handouts', icon: Edit2 },
+    ];
+
+    const currentIdx = steps.findIndex(s => s.id === currentView);
+    if (currentIdx === -1) return null;
+
+    const handleStepClick = (stepId: any) => {
+      if (content) {
+        if (stepId === 'slides' && !content.slides) {
+          content.slides = [];
+        }
+        if (stepId === 'worksheet' && !content.worksheet) {
+          content.worksheet = {
+            title: content.lessonTitle || "Assessment",
+            sections: []
+          };
+        }
+        if (stepId === 'notes' && !content.studentNotes) {
+          content.studentNotes = "";
+        }
+      }
+      setCurrentView(stepId);
+    };
+
+    const handleBack = () => {
+      if (currentIdx > 0) {
+        handleStepClick(steps[currentIdx - 1].id);
+      } else {
+        clearWorkspace();
+        setCurrentView(previousView || 'educator-suite');
+      }
+    };
+
+    const handleNext = () => {
+      if (currentIdx < steps.length - 1) {
+        handleStepClick(steps[currentIdx + 1].id);
+      } else {
+        clearWorkspace();
+        setCurrentView(previousView || 'educator-suite');
+      }
+    };
+
+    return (
+      <div className="h-12 bg-white border-b border-[#E6F4EA] flex items-center justify-between px-6 shrink-0 shadow-sm overflow-x-auto gap-4 select-none">
+        {/* Back Button */}
+        <button
+          onClick={handleBack}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[#064E3B] hover:bg-[#F0FDF4] text-xs font-black uppercase tracking-wider transition-all border border-[#D1FAE5] active:scale-95 cursor-pointer hover:border-[#059669]"
+        >
+          <ChevronLeft size={16} className="stroke-[3]" />
+          Back
+        </button>
+
+        {/* Steps */}
+        <div className="hidden md:flex items-center gap-0.5">
+          {steps.map((step, idx) => {
+            const StepIcon = step.icon;
+            const isActive = step.id === currentView;
+            const isCompleted = idx < currentIdx;
+
+            return (
+              <React.Fragment key={step.id}>
+                {idx > 0 && (
+                  <div className="text-[#064E3B]/20 font-black mx-2 select-none">
+                    &rarr;
+                  </div>
+                )}
+                <button
+                  onClick={() => handleStepClick(step.id)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all active:scale-95 border cursor-pointer",
+                    isActive
+                      ? "bg-[#059669] text-white border-[#059669] shadow-sm shadow-[#059669]/10"
+                      : isCompleted
+                        ? "bg-[#F0FDF4] text-[#064E3B] border-[#D1FAE5]"
+                        : "bg-transparent text-gray-400 border-transparent hover:text-[#064E3B] hover:bg-[#F9FCFA]"
+                  )}
+                >
+                  <StepIcon size={14} />
+                  <span>{step.label}</span>
+                </button>
+              </React.Fragment>
+            );
+          })}
+        </div>
+
+        {/* Steps Indicator for Small Screens */}
+        <div className="md:hidden flex items-center bg-[#F0FDF4] px-3 py-1.5 rounded-xl border border-[#D1FAE5]">
+          <span className="text-[10px] font-black uppercase tracking-wider text-[#064E3B]">
+            Step {currentIdx + 1} of 4: {steps[currentIdx].label}
+          </span>
+        </div>
+
+        {/* Next Button */}
+        <button
+          onClick={handleNext}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[#064E3B] hover:bg-[#F0FDF4] text-xs font-black uppercase tracking-wider transition-all border border-[#D1FAE5] active:scale-95 cursor-pointer hover:border-[#059669]"
+        >
+          {currentIdx === steps.length - 1 ? 'Finish' : 'Next'}
+          <ChevronRight size={16} className="stroke-[3]" />
+        </button>
+      </div>
+    );
+  };
+
   const renderSlidesView = () => {
     if (!content || !content.slides) {
       return (
-        <div className="flex-1 flex items-center justify-center bg-[#F0FDF4]">
-          <div className="text-center space-y-4">
-            <Presentation size={48} className="mx-auto text-[#064E3B]/20" />
-            <p className="text-[#064E3B]/60 font-bold">No slides content available.</p>
-            <button onClick={() => setCurrentView('educator-suite')} className="text-[#059669] font-black uppercase text-[10px] tracking-widest hover:underline">
-              Return to Suite
-            </button>
+        <div className="flex-1 flex flex-col bg-[#F0FDF4] overflow-hidden">
+          {renderWorkspaceFlowNavigator()}
+          <div className="flex-1 flex items-center justify-center bg-[#F0FDF4]">
+            <div className="text-center space-y-4">
+              <Presentation size={48} className="mx-auto text-[#064E3B]/20" />
+              <p className="text-[#064E3B]/60 font-bold">No slides content available.</p>
+              <button onClick={() => {
+                clearWorkspace();
+                setCurrentView(previousView || 'educator-suite');
+              }} className="text-[#059669] font-black uppercase text-[10px] tracking-widest hover:underline">
+                {previousView === 'admin' ? 'Return to Admin' : previousView === 'home' ? 'Return Home' : 'Return to Suite'}
+              </button>
+            </div>
           </div>
         </div>
       );
@@ -12110,9 +12413,9 @@ export default function App() {
           <div className="flex items-center gap-4">
             <button onClick={() => {
               clearWorkspace();
-              setCurrentView('educator-suite');
+              setCurrentView(previousView || 'educator-suite');
             }} className="flex items-center gap-2 text-[#064E3B]/60 font-bold hover:text-[#064E3B] transition-colors">
-              <Home size={18} /> Suite
+              <Home size={18} /> {previousView === 'admin' ? 'Admin Portal' : previousView === 'home' ? 'Home' : 'Suite'}
             </button>
             {content?.lessonPlan && (
               <button 
@@ -12181,6 +12484,7 @@ export default function App() {
              )}
           </div>
         </div>
+        {renderWorkspaceFlowNavigator()}
         <div className="flex-1 flex overflow-hidden">
           {!isReviewMode && (
             <aside className="w-80 bg-white border-r-2 border-[#D1FAE5] p-6 space-y-8 overflow-y-auto custom-scrollbar">
@@ -12710,7 +13014,7 @@ export default function App() {
                 />
               </div>
               <button 
-                onClick={generateOnlySlides} 
+                onClick={() => generateOnlySlides()} 
                 disabled={isGenerating}
                 className="w-full py-3 bg-[#059669] text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-[#047857] transition-colors"
               >
@@ -13229,7 +13533,7 @@ export default function App() {
                     : "Describe your lesson in the sidebar and click generate to create beautiful interactive slides."}
                 </p>
                 <button 
-                  onClick={generateOnlySlides}
+                  onClick={() => generateOnlySlides()}
                   disabled={isGenerating || (!lessonInput.trim() && !content?.lessonTitle && !content?.lessonPlan?.overallTopic)}
                   className="px-8 py-4 bg-[#059669] text-white rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl shadow-[#059669]/20 hover:scale-105 transition-all flex items-center gap-3 disabled:opacity-50 disabled:pointer-events-none"
                 >
@@ -13247,13 +13551,19 @@ export default function App() {
   const renderWorksheetView = () => {
     if (!content || !content.worksheet) {
       return (
-        <div className="flex-1 flex items-center justify-center bg-[#FDFBF7]">
-          <div className="text-center space-y-4">
-            <FileText size={48} className="mx-auto text-[#064E3B]/20" />
-            <p className="text-[#064E3B]/60 font-bold">No worksheet content available.</p>
-            <button onClick={() => setCurrentView('educator-suite')} className="text-[#059669] font-black uppercase text-[10px] tracking-widest hover:underline">
-              Return to Suite
-            </button>
+        <div className="flex-1 flex flex-col bg-[#FDFBF7] overflow-hidden">
+          {renderWorkspaceFlowNavigator()}
+          <div className="flex-1 flex items-center justify-center bg-[#FDFBF7]">
+            <div className="text-center space-y-4">
+              <FileText size={48} className="mx-auto text-[#064E3B]/20" />
+              <p className="text-[#064E3B]/60 font-bold">No worksheet content available.</p>
+              <button onClick={() => {
+                clearWorkspace();
+                setCurrentView(previousView || 'educator-suite');
+              }} className="text-[#059669] font-black uppercase text-[10px] tracking-widest hover:underline">
+                {previousView === 'admin' ? 'Return to Admin' : previousView === 'home' ? 'Return Home' : 'Return to Suite'}
+              </button>
+            </div>
           </div>
         </div>
       );
@@ -13264,9 +13574,9 @@ export default function App() {
          <div className="flex items-center gap-4">
            <button onClick={() => {
              clearWorkspace();
-             setCurrentView('educator-suite');
+             setCurrentView(previousView || 'educator-suite');
            }} className="flex items-center gap-2 text-[#064E3B]/60 font-bold hover:text-[#064E3B] transition-colors">
-             <Home size={18} /> Suite
+             <Home size={18} /> {previousView === 'admin' ? 'Admin Portal' : previousView === 'home' ? 'Home' : 'Suite'}
            </button>
            {content?.lessonPlan && (
              <button 
@@ -13310,6 +13620,13 @@ export default function App() {
                   >
                     <PlusCircle size={14} /> Save
                   </button>
+                  <button 
+                    onClick={() => generateOnlySlides(true)}
+                    disabled={isGenerating}
+                    className="px-4 py-2 bg-[#059669] text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#047857] transition-all shadow-sm flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {isGenerating && generatingMessage.includes("Slides") ? <Loader2 className="animate-spin" size={14} /> : <Presentation size={14} />} Generate Slides
+                  </button>
                    <div className="flex items-center gap-4">
                      <WeekSelector value={selectedWeekForSubmission} onChange={handleWeekSelectionChange} />
                      <button 
@@ -13326,11 +13643,73 @@ export default function App() {
           <div className="w-12" />
         </div>
       </div>
+      {renderWorkspaceFlowNavigator()}
       <div className="flex-1 flex overflow-hidden">
         {!isReviewMode && (
           <aside className="w-80 bg-white border-r-2 border-[#D1FAE5] p-6 space-y-6 overflow-y-auto">
           <div className="space-y-4">
             <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest leading-none">Assessment Settings</h3>
+            
+            {/* Upload Assessment Block */}
+            <div className="space-y-2 pt-2 pb-1 text-left">
+              <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Upload Assessment / Exam File</label>
+              {!fileContext ? (
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) {
+                      setFileContext({
+                        name: file.name,
+                        mimeType: file.type || 'application/octet-stream',
+                        data: file
+                      });
+                    }
+                  }}
+                  className="border-2 border-dashed border-[#D1FAE5] hover:border-[#059669] transition-all rounded-2xl p-4 text-center cursor-pointer bg-[#FDFBF7] flex flex-col items-center justify-center gap-1.5 relative group"
+                >
+                  <input
+                    type="file"
+                    accept=".pdf,.txt,.docx,.png,.jpg,.jpeg,.doc"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        setFileContext({
+                          name: file.name,
+                          mimeType: file.type || 'application/octet-stream',
+                          data: file
+                        });
+                      }
+                    }}
+                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                  />
+                  <FileUp className="text-[#059669] group-hover:scale-110 transition-transform" size={24} />
+                  <span className="text-xs font-black text-[#064E3B] uppercase">Drop or click file</span>
+                  <span className="text-[9px] font-medium text-[#064E3B]/60 italic leading-snug">Doc, PDF, TXT, or Image</span>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-2xl relative shadow-sm">
+                  <div className="flex items-center gap-2 truncate max-w-[80%]">
+                    <FileText className="text-[#059669] shrink-0" size={16} />
+                    <span className="text-xs font-black text-[#0A4F29] truncate uppercase">{fileContext.name}</span>
+                  </div>
+                  <button
+                    onClick={() => setFileContext(null)}
+                    className="p-1 hover:bg-emerald-100 rounded-full transition-colors text-[#064E3B]"
+                    type="button"
+                    title="Remove File"
+                  >
+                    <X size={14} className="stroke-[3]" />
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div className="space-y-2">
               <label className="text-[10px] font-black uppercase text-[#064E3B]/40">Grade</label>
               <select value={yearGroup} onChange={(e) => setYearGroup(e.target.value)} className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold">
@@ -13476,20 +13855,38 @@ export default function App() {
                   />
               </div>
             </div>
-            <button 
+             <button 
               onClick={() => generateOnlyWorksheet(false)} 
-              disabled={isGenerating || !lessonInput.trim()}
+              disabled={isGenerating || (!lessonInput.trim() && !fileContext)}
               className="w-full py-3 bg-[#059669] text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#047857] transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              {isGenerating ? <Loader2 className="animate-spin" /> : <Sparkles />} Generate Assessment
+              {isGenerating && generatingMessage.includes("Worksheet") ? <Loader2 className="animate-spin" /> : <Sparkles />} {fileContext ? "Solve & Analyze with AI" : "Generate Assessment"}
             </button>
-            {content?.worksheet && (
+            {fileContext && (
               <button 
-                onClick={downloadDOCX}
-                className="w-full py-3 bg-[#F0FDF4] text-[#064E3B] border-2 border-[#059669] rounded-xl text-xs font-black uppercase tracking-widest hover:bg-[#D1FAE5] transition-all shadow-sm flex items-center justify-center gap-2"
+                onClick={() => generateOnlySlides(false)} 
+                disabled={isGenerating}
+                className="w-full py-3 bg-[#3A7A5E] text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#2D5F49] transition-all shadow-md flex items-center justify-center gap-2 focus:ring-2 focus:ring-emerald-500/20 outline-none"
               >
-                <Download /> Download DOCX
+                {isGenerating && generatingMessage.includes("Slides") ? <Loader2 className="animate-spin" /> : <Presentation size={16} />} Turn File into Slides
               </button>
+            )}
+            {content?.worksheet && (
+              <div className="space-y-2 w-full pt-2 border-t border-[#D1FAE5]/60">
+                <button 
+                  onClick={downloadDOCX}
+                  className="w-full py-3 bg-[#F0FDF4] text-[#064E3B] border-2 border-[#059669] rounded-xl text-xs font-black uppercase tracking-widest hover:bg-[#D1FAE5] transition-all shadow-sm flex items-center justify-center gap-2"
+                >
+                  <Download size={16} /> Download DOCX
+                </button>
+                <button 
+                  onClick={() => generateOnlySlides(true)}
+                  disabled={isGenerating}
+                  className="w-full py-3 bg-[#059669] text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-[#047857] transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isGenerating && generatingMessage.includes("Slides") ? <Loader2 className="animate-spin" size={16} /> : <Presentation size={16} />} Generate Slides from Assessment
+                </button>
+              </div>
             )}
           </div>
         </aside>
@@ -13818,14 +14215,35 @@ export default function App() {
   };
 
   const renderNotesView = () => {
-    if (!content) return null;
+    if (!content) {
+      return (
+        <div className="flex-1 flex flex-col bg-[#FDFBF7] overflow-hidden">
+          {renderWorkspaceFlowNavigator()}
+          <div className="flex-1 flex items-center justify-center bg-[#FDFBF7]">
+            <div className="text-center space-y-4">
+              <Edit2 size={48} className="mx-auto text-[#064E3B]/20" />
+              <p className="text-[#064E3B]/60 font-bold">No handouts/journal content available.</p>
+              <button onClick={() => {
+                clearWorkspace();
+                setCurrentView(previousView || 'educator-suite');
+              }} className="text-[#059669] font-black uppercase text-[10px] tracking-widest hover:underline">
+                {previousView === 'admin' ? 'Return to Admin' : previousView === 'home' ? 'Return Home' : 'Return to Suite'}
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div className="flex-1 flex flex-col bg-[#FDFBF7] overflow-hidden">
         <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20">
           <div className="flex items-center gap-4">
-            <button onClick={() => setCurrentView('educator-suite')} className="flex items-center gap-2 text-[#064E3B]/60 font-bold hover:text-[#064E3B] transition-colors">
-              <Home size={18} /> Suite
+            <button onClick={() => {
+              clearWorkspace();
+              setCurrentView(previousView || 'educator-suite');
+            }} className="flex items-center gap-2 text-[#064E3B]/60 font-bold hover:text-[#064E3B] transition-colors">
+              <Home size={18} /> {previousView === 'admin' ? 'Admin Portal' : previousView === 'home' ? 'Home' : 'Suite'}
             </button>
             <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
             {content?.slides && (
@@ -13880,6 +14298,7 @@ export default function App() {
             )}
           </div>
         </div>
+        {renderWorkspaceFlowNavigator()}
 
         <div className="flex-1 p-8 max-w-7xl mx-auto w-full overflow-y-auto custom-scrollbar">
           <div className={cn("grid gap-10", fullscreenNote ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2")}>
@@ -14277,13 +14696,19 @@ export default function App() {
   const renderLessonPlanView = () => {
     if (!content || !content.lessonPlan) {
       return (
-        <div className="flex-1 flex items-center justify-center bg-[#FDFBF7]">
-          <div className="text-center space-y-4">
-            <BookOpen size={48} className="mx-auto text-[#064E3B]/20" />
-            <p className="text-[#064E3B]/60 font-bold">No lesson plan content available.</p>
-            <button onClick={() => setCurrentView('educator-suite')} className="text-[#059669] font-black uppercase text-[10px] tracking-widest hover:underline">
-              Return to Suite
-            </button>
+        <div className="flex-1 flex flex-col bg-[#FDFBF7] overflow-hidden">
+          {renderWorkspaceFlowNavigator()}
+          <div className="flex-1 flex items-center justify-center bg-[#FDFBF7]">
+            <div className="text-center space-y-4">
+              <BookOpen size={48} className="mx-auto text-[#064E3B]/20" />
+              <p className="text-[#064E3B]/60 font-bold">No lesson plan content available.</p>
+              <button onClick={() => {
+                clearWorkspace();
+                setCurrentView(previousView || 'educator-suite');
+              }} className="text-[#059669] font-black uppercase text-[10px] tracking-widest hover:underline">
+                {previousView === 'admin' ? 'Return to Admin' : previousView === 'home' ? 'Return Home' : 'Return to Suite'}
+              </button>
+            </div>
           </div>
         </div>
       );
@@ -14294,9 +14719,9 @@ export default function App() {
         <div className="flex items-center gap-4">
           <button onClick={() => {
             clearWorkspace();
-            setCurrentView('educator-suite');
+            setCurrentView(previousView || 'educator-suite');
           }} className="flex items-center gap-2 text-[#064E3B]/60 font-bold hover:text-[#064E3B] transition-colors">
-            <Home size={18} /> Suite
+            <Home size={18} /> {previousView === 'admin' ? 'Admin Portal' : previousView === 'home' ? 'Home' : 'Suite'}
           </button>
         </div>
         <div className="flex items-center gap-2">
@@ -14361,6 +14786,7 @@ export default function App() {
              )}
           </div>
       </div>
+      {renderWorkspaceFlowNavigator()}
       <div className="flex-1 flex overflow-hidden">
         {!isReviewMode && (
           <aside className="w-[450px] bg-white border-r-2 border-[#D1FAE5] p-8 space-y-8 overflow-y-auto custom-scrollbar">
@@ -14935,16 +15361,7 @@ export default function App() {
     let fileData: { mimeType: string; data: string } | undefined;
     if (fileContext) {
       try {
-        const base64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const result = reader.result as string;
-            resolve(result.split(',')[1]);
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(fileContext.data as any);
-        });
-        fileData = { mimeType: (fileContext as any).mimeType || (fileContext as any).type, data: base64 };
+        fileData = await prepareFileForGemini(fileContext.data);
       } catch (err) {
         console.error("File processing error:", err);
       }

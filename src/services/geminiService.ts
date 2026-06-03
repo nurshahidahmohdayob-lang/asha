@@ -38,6 +38,13 @@ export interface EduOptions {
   readingProgramOnly?: boolean;
   templateMode?: 'strict' | 'custom';
   metadataHints?: { description?: string, methodology?: string };
+  worksheetContext?: {
+    title: string;
+    readingPassage?: string;
+    description?: string;
+    methodology?: string;
+    sections: WorksheetSection[];
+  };
   fileContext?: {
     mimeType: string;
     data: string;
@@ -121,6 +128,18 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
     }
     if (options.metadataHints?.methodology) {
       mainPrompt += `\nPedagogical Methodology to follow: ${options.metadataHints.methodology}`;
+    }
+
+    if (options.worksheetContext) {
+      mainPrompt += `\n\nCOHESIVE LESSON SEQUENCING FROM ASSESSMENT:
+      - This presentation has been triggered directly to convert a generated assessment/worksheet into a comprehensive set of instructional slides.
+      - Make sure the slides structure builds up to this assessment!
+      - Assessment Title: ${options.worksheetContext.title}
+      - Assessment Overview/Description: ${options.worksheetContext.description || "N/A"}
+      - Assessment Methodology: ${options.worksheetContext.methodology || "N/A"}
+      - Reading Passage (if any) to integrate into early/content slides: ${options.worksheetContext.readingPassage || "None"}
+      - Incorporate key concepts, exercises, quiz questions, or activities from the assessment's sections and questions into the slide content where relevant:
+      ${JSON.stringify(options.worksheetContext.sections, null, 2)}`;
     }
 
     mainPrompt += `\n\nCONTENT BRANDING RESTRICTION:
