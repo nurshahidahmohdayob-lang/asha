@@ -59,6 +59,7 @@ export interface EduOptions {
   checkedBy?: string;
   unit?: string[];
   topics?: string[];
+  targetWordCount?: string;
 }
 
 const CAMBRIDGE_CURRICULUM_INFO = `
@@ -206,15 +207,18 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
   }
 }
 
-export async function generateWorksheet(lessonInput: string, options: EduOptions, slideContext?: SlideContent[]): Promise<{ title: string; readingPassage?: string; description?: string; methodology?: string; sections: WorksheetSection[] }> {
+export async function generateWorksheet(lessonInput: string, options: EduOptions, slideContext?: SlideContent[]): Promise<{ title: string; readingPassage?: string; leveledPassages?: Record<string, string>; description?: string; methodology?: string; sections: WorksheetSection[] }> {
   try {
     const contents: any[] = [];
     if (options.fileContext) {
       contents.push({ inlineData: options.fileContext });
     }
     
+    const requestedWordCount = options.targetWordCount ? `${options.targetWordCount} words` : "300-500 words";
+    const requestedWorksheetPassageWordCount = options.targetWordCount ? `${options.targetWordCount} words` : "500-800 words";
+
     const storyPrompt = options.includeStory 
-      ? `IMPORTANT: Start by writing a short story or reading passage (around 300-500 words) about "${lessonInput}" suitable for ${options.yearGroup} students. Include this story in the "readingPassage" field.`
+      ? `IMPORTANT: Start by writing a short story or reading passage (around ${requestedWordCount}) about "${lessonInput}" suitable for ${options.yearGroup} students. Include this story in the "readingPassage" field.`
       : "DO NOT include a reading passage. Leave the 'readingPassage' field as an empty string \"\".";
 
     if (slideContext) {
@@ -223,7 +227,7 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
     }
 
     let mainPrompt = options.readingPassageOnly
-      ? `As an expert Cambridge Educator, generate a high-quality READING PASSAGE only (around 500-800 words) for: "${lessonInput}". 
+      ? `As an expert Cambridge Educator, generate a high-quality READING PASSAGE only (around ${requestedWorksheetPassageWordCount}) for: "${lessonInput}". 
          Subject: ${options.subject}, Year Group: ${options.yearGroup}, Lexile: ${options.lexileLevel}.
          The passage should be informative, engaging, and strictly follow the Lexile level complexity. 
          DO NOT generate any assessment questions or sections. Return exactly one empty section to satisfy the schema.`
@@ -301,18 +305,31 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
 export async function generateReadingProgram(lessonInput: string, options: EduOptions): Promise<ReadingProgram> {
   try {
     const contents: any[] = [];
-    contents.push(`As an expert Literacy Specialist and Cambridge Educator, generate a comprehensive READING PROGRAM based on the theme: "${lessonInput}".
-      Subject: ${options.subject}, Grade Level: ${options.yearGroup}.
+    
+    let passageDetails = "";
+    const activePassage = options.worksheetContext?.readingPassage || "";
+    if (activePassage) {
+      passageDetails = `Here is the READING PASSAGE generated for this topic:\n"${activePassage}"\n\n`;
+    }
+    
+    contents.push(`As an expert Literacy Specialist and Cambridge Educator, generate a comprehensive STRATEGIC READING PLAN for ${options.yearGroup} ${options.subject} based on the topic: "${lessonInput}".
+
+      ${passageDetails}
       
-      THE PROGRAM SHOULD INCLUDE:
+      THE STRATEGIC PLAN MUST CONTAIN:
       1. A clear title and description.
-      2. A specific focus area (e.g., Phonics, Comprehension, Fluency, or Literature Appreciation).
-      3. A duration (e.g., 4 weeks).
-      4. 4-6 specific weekly goals.
-      5. 3-5 recommended books with Lexile levels, summaries, themes, vocabulary, and 3 comprehension questions each.
-      6. Weekly milestones (what the students should achieve and specific tasks for each week).
-      
-      Format: JSON object with "title", "description", "gradeLevel", "focusArea", "duration", "weeklyGoals" (string array), "recommendedBooks" (array of {title, author, lexileLevel, summary, themes, vocabulary, comprehensionQuestions}), and "milestones" (array of {week, objective, task}).`);
+      2. A specific focus area (e.g., Reading Comprehension, Active Analysis, Narrative Interpretation, Class Inquiry).
+      3. A duration (specifically "1 Day" or "Single Session" for this passage).
+      4. 2-3 specific strategic goals of analyzing this passage.
+      5. To maintain compatibility with existing structures, populate "recommendedBooks" with a single record describing the topic or passage itself, and "milestones" with a single milestone representing this 1-day study activity.
+      6. A "oneDayPlan" object specifically designed for studying the generated passage containing:
+         - "dayTopic": A specific main topic/theme of the day.
+         - "passageObjective": The targeted learning outcome for studying the generated passage.
+         - "vocabulary": An array of 3-5 vocabulary words SELECTED FROM THE GENERATED PASSAGE, each with its definition and an example context sentence from or related to the passage context.
+         - "questions": An array of 3-5 comprehension and analytical discussion questions based strictly on the narrative/details of the generated passage, with brief answer guidance.
+         - "activities": An array of 3 actionable, engaging follow-up activities to do in class based on the passage (e.g., student roleplay, creative drawing, group discussion, short sentence-building), with titles, description, and planned duration (e.g. "15 minutes").
+
+      Format: JSON object matching the defined schema.`);
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -355,9 +372,52 @@ export async function generateReadingProgram(lessonInput: string, options: EduOp
                 },
                 required: ["week", "objective", "task"]
               }
+            },
+            oneDayPlan: {
+              type: Type.OBJECT,
+              properties: {
+                dayTopic: { type: Type.STRING },
+                passageObjective: { type: Type.STRING },
+                vocabulary: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      word: { type: Type.STRING },
+                      definition: { type: Type.STRING },
+                      contextSentence: { type: Type.STRING }
+                    },
+                    required: ["word", "definition", "contextSentence"]
+                  }
+                },
+                questions: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      question: { type: Type.STRING },
+                      answer: { type: Type.STRING }
+                    },
+                    required: ["question"]
+                  }
+                },
+                activities: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      title: { type: Type.STRING },
+                      description: { type: Type.STRING },
+                      duration: { type: Type.STRING }
+                    },
+                    required: ["title", "description", "duration"]
+                  }
+                }
+              },
+              required: ["dayTopic", "passageObjective", "vocabulary", "questions", "activities"]
             }
           },
-          required: ["title", "description", "weeklyGoals", "recommendedBooks", "milestones"]
+          required: ["title", "description", "weeklyGoals", "recommendedBooks", "milestones", "oneDayPlan"]
         }
       }
     });
@@ -757,6 +817,62 @@ export async function generateEduNotes(lessonInput: string, options: EduOptions)
   } catch (err: any) {
     if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
       return callAiProxy('notes', lessonInput, options);
+    }
+    throw err;
+  }
+}
+
+export async function relevelReadingPassage(passage: string, targetLexile: string, subject: string, yearGroup: string, targetWordCount?: string): Promise<{ readingPassage: string }> {
+  try {
+    let mainPrompt = `You are an expert Cambridge Educator and literacy developer.
+    We have an existing reading passage on a specific topic.
+    We need you to rewrite this EXACT SAME reading passage so that it aligns strictly with a different Lexile level and target audience.
+
+    Original Reading Passage:
+    """
+    ${passage}
+    """
+
+    Target Requirements:
+    - Subject: ${subject}
+    - Target Year Group/Grade: ${yearGroup}
+    - New Target Lexile Level: ${targetLexile}`;
+
+    if (targetWordCount) {
+      mainPrompt += `\n    - Targeted Word Count: Around ${targetWordCount} words`;
+    }
+
+    mainPrompt += `
+
+    Instructions:
+    1. Retain the core content, characters, concepts, facts, and structure of the original passage.
+    2. Adjust sentence complexity, word choice, vocabulary density, and syntax to perfectly match the target Lexile level: ${targetLexile}.
+    3. Ensure the result is of high-quality educational value.
+    4. Do not include any introduction, notes, or extra sections, just the rewritten reading passage text itself. Keep safety and educational standards high.
+    5. HTML formatting can be used for paragraphs if the source passage had HTML structure, but standard text or HTML formatting is expected.
+    `;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: { parts: [{ text: mainPrompt }] },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            readingPassage: { type: Type.STRING, description: "The complete rewritten reading passage text matching the target Lexile complexity." }
+          },
+          required: ["readingPassage"]
+        }
+      }
+    });
+
+    const text = response.text;
+    if (!text) throw new Error("Empty response");
+    return JSON.parse(text);
+  } catch (err: any) {
+    if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
+      return callAiProxy('relevelPassage', passage, { targetLexile, subject, yearGroup });
     }
     throw err;
   }

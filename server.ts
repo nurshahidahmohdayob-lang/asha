@@ -41,7 +41,7 @@ async function startServer() {
     }
 
     try {
-      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateEduContent, suggestWeeklyInput, generateEduNotes } = await import("./src/services/geminiService.ts");
+      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateEduContent, suggestWeeklyInput, generateEduNotes, relevelReadingPassage } = await import("./src/services/geminiService.ts");
       
       let result;
       switch (type) {
@@ -54,6 +54,7 @@ async function startServer() {
         case 'notes': result = await generateEduNotes(lessonInput, options); break;
         case 'suggest': result = await suggestWeeklyInput(lessonInput as any, options, options.weekNum); break;
         case 'all': result = await generateEduContent(lessonInput, options); break;
+        case 'relevelPassage': result = await relevelReadingPassage(lessonInput, options.targetLexile, options.subject, options.yearGroup); break;
         default: throw new Error(`Unknown generation type: ${type}`);
       }
       

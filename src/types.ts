@@ -73,6 +73,26 @@ export interface ReadingBook {
   comprehensionQuestions: string[];
 }
 
+export interface OneDayActivity {
+  title: string;
+  description: string;
+  duration: string;
+}
+
+export interface OneDayVocab {
+  word: string;
+  definition: string;
+  contextSentence: string;
+}
+
+export interface OneDayPlan {
+  dayTopic: string;
+  passageObjective: string;
+  questions: { question: string; answer?: string }[];
+  vocabulary: OneDayVocab[];
+  activities: OneDayActivity[];
+}
+
 export interface ReadingProgram {
   title: string;
   description: string;
@@ -86,6 +106,10 @@ export interface ReadingProgram {
     objective: string;
     task: string;
   }[];
+  readingPassage?: string;
+  passageTitle?: string;
+  leveledPassages?: Record<string, string>;
+  oneDayPlan?: OneDayPlan;
 }
 
 export interface WeeklyPlan {
@@ -134,6 +158,7 @@ export interface EduContent {
   worksheet?: {
     title: string;
     readingPassage?: string;
+    leveledPassages?: Record<string, string>;
     description?: string;
     methodology?: string;
     sections: WorksheetSection[];
