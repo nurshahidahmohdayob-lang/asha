@@ -822,11 +822,24 @@ export async function generateEduNotes(lessonInput: string, options: EduOptions)
   }
 }
 
-export async function relevelReadingPassage(passage: string, targetLexile: string, subject: string, yearGroup: string, targetWordCount?: string): Promise<{ readingPassage: string }> {
+export async function relevelReadingPassage(
+  passage: string,
+  targetLexile: string,
+  subject: string,
+  yearGroup: string,
+  targetWordCount?: string
+): Promise<{
+  readingPassage: string;
+  vocabulary: { word: string; definition: string; contextSentence: string }[];
+  questions: { question: string; answer: string }[];
+}> {
   try {
     let mainPrompt = `You are an expert Cambridge Educator and literacy developer.
     We have an existing reading passage on a specific topic.
-    We need you to rewrite this EXACT SAME reading passage so that it aligns strictly with a different Lexile level and target audience.
+    We need you to perform a dual task:
+    1. Rewrite this EXACT SAME reading passage so that it aligns strictly with a different target Lexile level: ${targetLexile} and target audience. Keep sentence complexity and syntax in perfect alignment with the target Lexile.
+    2. Extract and define 3-5 key vocabulary words directly from your newly written passage that are appropriate learning targets for a student at the ${targetLexile} Lexile level.
+    3. Formulate 3-5 level-appropriate comprehension questions based strictly on the details of your adapted passage.
 
     Original Reading Passage:
     """
@@ -848,8 +861,9 @@ export async function relevelReadingPassage(passage: string, targetLexile: strin
     1. Retain the core content, characters, concepts, facts, and structure of the original passage.
     2. Adjust sentence complexity, word choice, vocabulary density, and syntax to perfectly match the target Lexile level: ${targetLexile}.
     3. Ensure the result is of high-quality educational value.
-    4. Do not include any introduction, notes, or extra sections, just the rewritten reading passage text itself. Keep safety and educational standards high.
-    5. HTML formatting can be used for paragraphs if the source passage had HTML structure, but standard text or HTML formatting is expected.
+    4. Provide 3-5 vocabulary words selecting from the adapted passage, giving a definition and context sentence for each word.
+    5. Provide 3-5 level-appropriate comprehension questions with concise answers based on the adapted passage.
+    6. HTML formatting can be used for paragraphs if the source passage had HTML structure, but standard text or HTML formatting is expected.
     `;
 
     const response = await ai.models.generateContent({
@@ -860,9 +874,34 @@ export async function relevelReadingPassage(passage: string, targetLexile: strin
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            readingPassage: { type: Type.STRING, description: "The complete rewritten reading passage text matching the target Lexile complexity." }
+            readingPassage: { type: Type.STRING, description: "The complete rewritten reading passage text matching the target Lexile complexity." },
+            vocabulary: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  word: { type: Type.STRING },
+                  definition: { type: Type.STRING },
+                  contextSentence: { type: Type.STRING }
+                },
+                required: ["word", "definition", "contextSentence"]
+              },
+              description: "An array of 3-5 key vocabulary words from the rewritten text adapted to the target level."
+            },
+            questions: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  question: { type: Type.STRING },
+                  answer: { type: Type.STRING }
+                },
+                required: ["question", "answer"]
+              },
+              description: "An array of 3-5 key comprehension questions and answers for this target level adaptation."
+            }
           },
-          required: ["readingPassage"]
+          required: ["readingPassage", "vocabulary", "questions"]
         }
       }
     });
@@ -873,6 +912,91 @@ export async function relevelReadingPassage(passage: string, targetLexile: strin
   } catch (err: any) {
     if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
       return callAiProxy('relevelPassage', passage, { targetLexile, subject, yearGroup });
+    }
+    throw err;
+  }
+}
+
+export async function generateInteractiveSortingGame(
+  topic: string,
+  subject: string,
+  yearGroup: string
+): Promise<{
+  title: string;
+  activityNumber: string;
+  instruction: string;
+  categories: { id: string; name: string; color: string }[];
+  items: { id: string; name: string; category: string; description?: string; iconName?: string }[];
+  footerNote?: string;
+}> {
+  try {
+    let mainPrompt = `You are an expert children's worksheet and interactive learning developer.
+    We need you to design an attractive, kid-friendly "Category Sorting Activity" based on the topic: "${topic}".
+    The subject is "${subject}" and the grade group is "${yearGroup}".
+
+    GUIDELINES:
+    1. Identify interest-inducing columns or categories (usually exactly 2 categories, e.g., "MAMMAL" vs "REPTILE", or "COLD BLOODED" vs "WARM BLOODED", or "FILE" vs "NOT A FILE", or "CONDUCTOR" vs "INSULATOR", or "NOUN" vs "VERB").
+    2. Suggest 6 to 10 typical, highly relatable items that kids can sort into these columns/categories.
+    3. Provide clear instructions (e.g., "Cut out the pictures and paste them into the correct column", "Sort the items to match their category").
+    4. Choose a clean children-appropriate name (e.g. "Activity 2: File or Not a File?", "Activity 1: Noun or Verb Quest!").
+    5. Ensure the item descriptions are super playful, simple, and explain the object's role/meaning.
+    6. Assign a standard Lucide icon name for each item to render as a cute illustration.
+       Choose ONLY from the following list of valid Lucide icon names:
+       'FileText', 'Image', 'Video', 'Folder', 'MousePointer', 'Keyboard', 'Tv', 'Headphones', 'Activity', 'Sparkles', 'Zap', 'Flame', 'Apple', 'Compass', 'BookOpen', 'Lightbulb', 'Cpu', 'Atom', 'Coins', 'Anchor', 'CloudRain', 'Smile', 'Scissors', 'Wind', 'Glasses', 'PenTool', 'Music', 'CheckCircle', 'MessageSquare', 'Target', 'LifeBuoy'
+    7. Specify pleasant colors for each category (e.g. "emerald", "rose", "sky", "amber", "violet", "indigo"). For opposite categories, use distinct colors (e.g., emerald for column A, and rose or amber for column B).
+    8. Add a playful summary footnote at the bottom (e.g., "Remember: Files are saved on computer drives. Other devices help us query and command them!").
+    `;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: mainPrompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING, description: "Friendly title for the activity card, e.g. 'File or Not a File?'" },
+            activityNumber: { type: Type.STRING, description: "E.g., 'Activity 2' or 'Challenge 1'" },
+            instruction: { type: Type.STRING, description: "A simple child-friendly instruction what to do." },
+            categories: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING, description: "Unique slug identifier, e.g., 'file' or 'not-a-file'" },
+                  name: { type: Type.STRING, description: "Human friendly label, e.g., 'FILE' or 'NOT A FILE'" },
+                  color: { type: Type.STRING, description: "Descriptive tailwind/standard/hex color hint, e.g. 'emerald' or 'rose' or 'sky' or 'amber'" }
+                },
+                required: ["id", "name", "color"]
+              }
+            },
+            items: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING },
+                  name: { type: Type.STRING, description: "Label for the item, e.g., 'Document', 'Picture File'" },
+                  category: { type: Type.STRING, description: "Must match one of the category 'id's defined above." },
+                  description: { type: Type.STRING, description: "Kid-friendly context description, e.g., 'A document file stores text writing on a disk.'" },
+                  iconName: { type: Type.STRING, description: "Selected Lucide icon name, e.g., 'FileText'" }
+                },
+                required: ["id", "name", "category", "iconName"]
+              }
+            },
+            footerNote: { type: Type.STRING, description: "A friendly, playful takeaway summary at the bottom." }
+          },
+          required: ["title", "activityNumber", "instruction", "categories", "items"]
+        }
+      }
+    });
+
+    const text = response.text;
+    if (!text) throw new Error("Empty response");
+    return JSON.parse(text);
+  } catch (err: any) {
+    if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
+      return callAiProxy('interactiveSorting', topic, { subject: subject || "English", yearGroup: yearGroup || "Year 3" });
     }
     throw err;
   }

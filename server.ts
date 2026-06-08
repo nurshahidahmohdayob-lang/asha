@@ -5,6 +5,8 @@ import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
+import crypto from "crypto";
+import jwt from "jsonwebtoken";
 
 dotenv.config();
 
@@ -41,12 +43,13 @@ async function startServer() {
     }
 
     try {
-      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateEduContent, suggestWeeklyInput, generateEduNotes, relevelReadingPassage } = await import("./src/services/geminiService.ts");
+      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateEduContent, suggestWeeklyInput, generateEduNotes, relevelReadingPassage, generateInteractiveSortingGame } = await import("./src/services/geminiService.ts");
       
       let result;
       switch (type) {
         case 'slides': result = await generateSlides(lessonInput, options); break;
         case 'worksheet': result = await generateWorksheet(lessonInput, options); break;
+        case 'interactiveSorting': result = await generateInteractiveSortingGame(lessonInput, options.subject, options.yearGroup); break;
         case 'readingProgram': result = await generateReadingProgram(lessonInput, options); break;
         case 'sessionPlan': result = await generateSessionPlan(lessonInput, options.subtopics, options.weeks, options); break;
         case 'lessonPlan': result = await generateLessonPlan(lessonInput, options); break;
@@ -647,6 +650,356 @@ async function startServer() {
         error: err.message || "Failed to fetch staff from API"
       });
     }
+  });
+
+  // ==========================================
+  // Connected Systems SSO and Back-channel API
+  // ==========================================
+  let currentSsoClientId = "em-client-8822";
+  let currentSsoMachineToken = "commun_mt_abc123xyz";
+  let currentSsoSchoolUrl = "https://zera-education.commun.cloud";
+
+  let ssoPrivateKey: any;
+  let ssoPublicKeyJwk: any;
+  const ssoKid = "commun-sso-key-1";
+
+  try {
+    const keypair = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+    });
+
+    ssoPrivateKey = keypair.privateKey.export({ type: 'pkcs8', format: 'pem' });
+    const publicKeyJwk = keypair.publicKey.export({ format: 'jwk' });
+    ssoPublicKeyJwk = {
+      ...publicKeyJwk,
+      kid: ssoKid,
+      use: 'sig',
+      alg: 'RS256'
+    };
+  } catch (err) {
+    console.error("Failed to generate RSA keypair", err);
+  }
+
+  // JTI List to prevent ticket replays
+  const seenJtis = new Set<string>();
+
+  // In-memory SSO event log
+  const ssoLogs: any[] = [];
+  function logSso(status: 'success' | 'failed' | 'info', message: string, details?: any) {
+    ssoLogs.unshift({
+      id: Math.random().toString(36).substr(2, 9),
+      timestamp: new Date().toISOString(),
+      status,
+      message,
+      details: details ? JSON.stringify(details, null, 2) : null
+    });
+    if (ssoLogs.length > 50) ssoLogs.pop();
+  }
+
+  // Active shadow users provisioned through SSO
+  const shadowUsers = new Map<string, any>();
+  // Pre-seed some shadow users
+  shadowUsers.set("user_sub_8801", {
+    sub: "user_sub_8801",
+    school_id: "sch_zera_01",
+    school_slug: "zera",
+    name: {
+      first_name: "Sarah",
+      last_name: "Connor",
+      preferred_name: "Sarah",
+      nric_name: "Sarah Connor"
+    },
+    email: "sarah.connor@zera.edu.my",
+    user_types: ["teacher"],
+    locale: "en-GB",
+    createdAt: new Date(Date.now() - 3600000 * 24 * 3).toISOString(),
+    active: true
+  });
+
+  // JWKS Public Key Endpoint
+  app.get("/api/sso/jwks", (req, res) => {
+    if (!ssoPublicKeyJwk) {
+      return res.status(500).json({ error: "SSO Public Key not initialized" });
+    }
+    res.json({
+      keys: [ssoPublicKeyJwk]
+    });
+  });
+
+  // Get SSO configurations
+  app.get("/api/sso/config", (req, res) => {
+    res.json({
+      client_id: currentSsoClientId,
+      machine_token: currentSsoMachineToken,
+      school_url: currentSsoSchoolUrl,
+      callback_url: `/sso/callback`,
+      jwks_url: `/api/sso/jwks`
+    });
+  });
+
+  // Update SSO configurations
+  app.post("/api/sso/config", (req, res) => {
+    const { client_id, machine_token, school_url } = req.body;
+    if (client_id) currentSsoClientId = client_id;
+    if (machine_token) currentSsoMachineToken = machine_token;
+    if (school_url) currentSsoSchoolUrl = school_url;
+    
+    logSso('info', 'SSO configuration updated', { client_id, machine_token, school_url });
+    res.json({ success: true, message: "Configurations saved successfully!" });
+  });
+
+  // Clean SSO state (logs, shadow users, seen jtis)
+  app.post("/api/sso/reset", (req, res) => {
+    seenJtis.clear();
+    ssoLogs.length = 0;
+    shadowUsers.clear();
+    
+    // re-seed
+    shadowUsers.set("user_sub_8801", {
+      sub: "user_sub_8801",
+      school_id: "sch_zera_01",
+      school_slug: "zera",
+      name: {
+        first_name: "Sarah",
+        last_name: "Connor",
+        preferred_name: "Sarah",
+        nric_name: "Sarah Connor"
+      },
+      email: "sarah.connor@zera.edu.my",
+      user_types: ["teacher"],
+      locale: "en-GB",
+      createdAt: new Date(Date.now() - 3600000 * 24 * 3).toISOString(),
+      active: true
+    });
+
+    logSso('info', 'SSO simulator state reset to factory defaults');
+    res.json({ success: true, message: "SSO simulator state reset successfully" });
+  });
+
+  // Fetch live logs
+  app.get("/api/sso/logs", (req, res) => {
+    res.json(ssoLogs);
+  });
+
+  // Get list of active shadow users
+  app.get("/api/sso/shadow-users", (req, res) => {
+    res.json(Array.from(shadowUsers.values()));
+  });
+
+  // Generate valid ticket signed with RS256 for browser SSO flow testing
+  app.post("/api/sso/generate-ticket", (req, res) => {
+    const { sub, email, first_name, last_name, user_types, clockSkewSeconds, expiredToken } = req.body;
+    
+    if (!ssoPrivateKey) {
+      return res.status(500).json({ error: "Private key not generated yet" });
+    }
+
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      const skew = Number(clockSkewSeconds || 0);
+
+      const iat = now + skew;
+      const nbf = now + skew - 2;
+      const exp = expiredToken ? (now - 120) : (now + skew + 60);
+
+      const payload = {
+        iss: currentSsoSchoolUrl,
+        aud: currentSsoClientId,
+        sub: sub || `user_sub_${Math.floor(1000 + Math.random() * 9000)}`,
+        school_id: "sch_zera_01",
+        school_slug: "zera",
+        name: {
+          first_name: first_name || "John",
+          last_name: last_name || "Doe",
+          preferred_name: first_name || "John",
+          nric_name: `${first_name || "John"} ${last_name || "Doe"}`
+        },
+        email: email || `${(first_name || "john").toLowerCase()}.${(last_name || "doe").toLowerCase()}@zera.edu.my`,
+        user_types: user_types || ["teacher"],
+        locale: "en-GB",
+        jti: "jti_" + Math.random().toString(36).substr(2, 15),
+        iat,
+        nbf,
+        exp
+      };
+
+      const token = jwt.sign(payload, ssoPrivateKey, {
+        algorithm: 'RS256',
+        header: {
+          kid: ssoKid
+        }
+      });
+
+      res.json({ ticket: token, payload });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // SSO Callback browser handoff handler.
+  // Commun redirects browser here: GET /sso/callback?ticket=<token>
+  app.get("/sso/callback", (req, res) => {
+    const { ticket } = req.query;
+    if (!ticket || typeof ticket !== 'string') {
+      logSso('failed', 'SSO Handoff failed: Missing ticket query parameter');
+      return res.status(400).send(`
+        <html>
+          <head><title>SSO Error</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+          <body style="font-family: sans-serif; background: #FEF2F2; color: #991B1B; padding: 40px; text-align: center;">
+            <h2>SSO Handoff Failed</h2>
+            <p>The "ticket" query parameter is missing from the SSO callback request.</p>
+            <a href="/" style="display: inline-block; padding: 10px 20px; background: #EF4444; color: white; border-radius: 8px; text-decoration: none; font-weight: bold; margin-top: 20px;">Return to App</a>
+          </body>
+        </html>
+      `);
+    }
+
+    try {
+      // 1. Decrypt/Decode header without verification to identify kid
+      const decodedToken = jwt.decode(ticket, { complete: true }) as any;
+      if (!decodedToken) {
+        throw new Error("Unable to decode token format (compact RS256 JWT expected)");
+      }
+
+      const headerKid = decodedToken.header?.kid;
+      if (headerKid !== ssoKid) {
+        throw new Error(`JWKS kid mismatch. Header kid: "${headerKid}", Expected kid: "${ssoKid}"`);
+      }
+
+      // 2. Cryptographic signature check with public JWK format via PEM
+      // In production, we'd fetch the public key from the school portal JWKS and cached it.
+      // Since we generate ssoPrivateKey/ssoPublicKeyJwk dynamically on startup, we verify it directly.
+      const payload = jwt.verify(ticket, ssoPrivateKey, { algorithms: ['RS256'] }) as any;
+
+      // 3. Verify Aud and Iss claims
+      if (payload.aud !== currentSsoClientId) {
+        throw new Error(`aud claim mismatch. Payload aud: "${payload.aud}", Expected client_id: "${currentSsoClientId}"`);
+      }
+      if (payload.iss !== currentSsoSchoolUrl) {
+        throw new Error(`iss claim mismatch. Payload iss: "${payload.iss}", Expected issuer URL: "${currentSsoSchoolUrl}"`);
+      }
+
+      // 4. Verify JTI anti-replay single-use constraint
+      if (seenJtis.has(payload.jti)) {
+        throw new Error(`Single-use protection triggered: The jti token claim "${payload.jti}" has already been processed (replay attack blocked)`);
+      }
+      seenJtis.add(payload.jti);
+
+      // 5. Match or Provision local shadow user
+      const existingUser = shadowUsers.get(payload.sub);
+      const isNew = !existingUser;
+
+      const matchedOrProvisionedUser = {
+        sub: payload.sub,
+        school_id: payload.school_id,
+        school_slug: payload.school_slug,
+        name: payload.name,
+        email: payload.email,
+        user_types: payload.user_types,
+        locale: payload.locale || "en-GB",
+        createdAt: existingUser?.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        active: existingUser ? existingUser.active : true
+      };
+
+      shadowUsers.set(payload.sub, matchedOrProvisionedUser);
+
+      logSso('success', `SSO handoff verified successfully for sub: "${payload.sub}" (${matchedOrProvisionedUser.name.first_name} ${matchedOrProvisionedUser.name.last_name}). ${isNew ? 'New shadow user provisioned.' : 'Existing shadow user profile updated.'}`, {
+        claims: payload,
+        matchedOrProvisionedUser
+      });
+
+      // Redirect browser back to home with the sso_user details so client React can active the authenticated state!
+      const userPayloadStr = Buffer.from(JSON.stringify(matchedOrProvisionedUser)).toString('base64');
+      res.redirect(`/?sso_user=${userPayloadStr}`);
+
+    } catch (err: any) {
+      const errMsg = err.message || "Cryptographic verification failed";
+      logSso('failed', `SSO Token Handoff Failed: ${errMsg}`, { error: errMsg, ticket: ticket.substring(0, 50) + "..." });
+      
+      return res.status(400).send(`
+        <html>
+          <head><title>SSO Ticket Verification Failed</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+          <body style="font-family: sans-serif; background: #FEF2F2; color: #991B1B; padding: 40px; text-align: center;">
+            <div style="max-width: 500px; margin: 0 auto; background: white; border-radius: 16px; padding: 30px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border: 1px solid #FCA5A5;">
+              <span style="font-size: 48px;">❌</span>
+              <h2 style="margin: 12px 0;">SSO Verification Failed</h2>
+              <p style="color: #555; text-align: left; font-size: 14px; background: #F9FAFB; padding: 12px; border-radius: 8px; border-left: 4px solid #EF4444; font-family: monospace; white-space: pre-wrap;">${errMsg}</p>
+              <p style="font-size: 13px; color: #666; margin-top: 15px;">Check the Admin Single Sign-On logs for detailed cryptographic tracing.</p>
+              <a href="/" style="display: inline-block; padding: 12px 24px; background: #EF4444; color: white; border-radius: 12px; text-decoration: none; font-weight: bold; margin-top: 20px;">Return to App</a>
+            </div>
+          </body>
+        </html>
+      `);
+    }
+  });
+
+  // BACK-CHANNEL API: /api/v1/userinfo/{sub}  (requires authorization bearer token check)
+  app.get("/api/v1/userinfo/:sub", (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      logSso('failed', `Back-channel Userinfo lookup block: Missing Bearer authorization token`, { sub: req.params.sub });
+      return res.status(401).json({ error: "Unauthorized. Missing Bearer authorization token" });
+    }
+
+    const token = authHeader.split(" ")[1];
+    if (token !== currentSsoMachineToken) {
+      logSso('failed', `Back-channel Userinfo lookup block: Invalid Bearer token "${token}" supplied`, { sub: req.params.sub });
+      return res.status(401).json({ error: "Unauthorized. Invalid Bearer token" });
+    }
+
+    const sub = req.params.sub;
+    const user = shadowUsers.get(sub);
+    
+    if (!user) {
+      logSso('failed', `Back-channel Userinfo lookup failed: Sub lookup "${sub}" was not found in database`, { sub });
+      return res.status(404).json({ error: `User with sub ID "${sub}" not found` });
+    }
+
+    logSso('success', `Back-channel identity re-sync lookup served for sub: "${sub}" under active machine token credentials`, { sub, userProfile: user });
+    res.json({
+      sub: user.sub,
+      email: user.email,
+      name: user.name,
+      active: user.active,
+      user_types: user.user_types,
+      school_id: user.school_id
+    });
+  });
+
+  // BACK-CHANNEL API: /api/v1/students  (list of students, requires bearer token check)
+  app.get("/api/v1/students", (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Unauthorized. Missing Bearer token" });
+    }
+    const token = authHeader.split(" ")[1];
+    if (token !== currentSsoMachineToken) {
+      return res.status(401).json({ error: "Unauthorized. Invalid token" });
+    }
+
+    logSso('success', `Back-channel API bulk read: Fetched student directory (students.read scope)`);
+    res.json({
+      success: true,
+      data: [
+        { id: "std_1", first_name: "Emma", last_name: "Watson", email: "emma.watson@school.edu.my", gender: "female", status: "active" },
+        { id: "std_2", first_name: "Ron", last_name: "Weasley", email: "ron.weasley@school.edu.my", gender: "male", status: "active" },
+        { id: "std_3", first_name: "Harry", last_name: "Potter", email: "harry.potter@school.edu.my", gender: "male", status: "active" }
+      ]
+    });
+  });
+
+  // Toggle user active status in simulator back-office to test active recheck failures
+  app.post("/api/sso/toggle-shadow-active", (req, res) => {
+    const { sub } = req.body;
+    const user = shadowUsers.get(sub);
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    user.active = !user.active;
+    shadowUsers.set(sub, user);
+    logSso('info', `Shadow user profile "${sub}" status toggled in simulator back-office`, { sub, active: user.active });
+    res.json({ success: true, active: user.active });
   });
 
   // Vite middleware for development

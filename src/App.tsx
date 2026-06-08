@@ -117,6 +117,7 @@ import {
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { ZeraBrandLogo } from "./components/ZeraBrandLogo";
+import { InteractiveOrganizerWorksheet } from "./components/InteractiveOrganizerWorksheet";
 import mammoth from "mammoth";
 
 const extractTextFromDocx = async (file: File): Promise<string> => {
@@ -540,6 +541,7 @@ import {
   generateWeeklyPlan,
   suggestWeeklyInput,
   relevelReadingPassage,
+  generateInteractiveSortingGame,
 } from "./services/geminiService";
 
 // Initialize Firebase
@@ -2688,6 +2690,34 @@ export default function App() {
 
   // Auth Listener
   useEffect(() => {
+    // Immediate check for incoming SSO redirected user payload override
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("sso_user")) {
+      try {
+        const ssoStr = params.get("sso_user");
+        if (ssoStr) {
+          const rawUser = JSON.parse(atob(ssoStr));
+          const ssoFakeFbUser: any = {
+            uid: rawUser.sub,
+            email: rawUser.email,
+            displayName: `${rawUser.name.first_name} ${rawUser.name.last_name}`,
+            emailVerified: true,
+            isSsoUser: true,
+            ssoProfile: rawUser
+          };
+          setUser(ssoFakeFbUser);
+          setTeacherName(`${rawUser.name.first_name} ${rawUser.name.last_name}`);
+          setUserRoles(["admin", "educator"]);
+          setAuthLoading(false);
+          
+          window.history.replaceState({}, document.title, window.location.pathname);
+          return;
+        }
+      } catch (err) {
+        console.error("SSO user payload parser error", err);
+      }
+    }
+
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       setUser(fbUser);
       if (fbUser) {
@@ -4994,10 +5024,11 @@ export default function App() {
   };
 
   const generateOnlyReadingProgram = async () => {
-    if (!lessonInput.trim()) return;
+    const titleInput = lessonInput.trim() || content?.readingProgram?.passageTitle || content?.readingProgram?.title || content?.lessonTitle || "";
+    if (!titleInput) return;
 
     // Auto theme selection based on lessonInput content
-    const lowerInput = lessonInput.toLowerCase();
+    const lowerInput = titleInput.toLowerCase();
     if (
       lowerInput.includes("space") ||
       lowerInput.includes("star") ||
@@ -5084,7 +5115,7 @@ export default function App() {
 
     setGeneratingMessage("Generating Strategic Plan...");
     setIsGenerating(true);
-    const result = await generateReadingProgram(lessonInput, {
+    const result = await generateReadingProgram(titleInput, {
       yearGroup,
       lexileLevel,
       subject,
@@ -5098,11 +5129,20 @@ export default function App() {
       } : undefined,
     });
     if (result) {
+      const targetLvl = lexileLevel || "400-500";
       const updatedReadingProgram = {
         ...result,
         readingPassage: content?.readingProgram?.readingPassage || result.readingPassage,
         passageTitle: content?.readingProgram?.passageTitle || result.passageTitle || result.title,
-        leveledPassages: content?.readingProgram?.leveledPassages || result.leveledPassages,
+        leveledPassages: content?.readingProgram?.leveledPassages || result.leveledPassages || {},
+        leveledVocabulary: {
+          ...(content?.readingProgram?.leveledVocabulary || {}),
+          [targetLvl]: result?.oneDayPlan?.vocabulary || [],
+        },
+        leveledQuestions: {
+          ...(content?.readingProgram?.leveledQuestions || {}),
+          [targetLvl]: result?.oneDayPlan?.questions || [],
+        },
       };
 
       const eduContent: EduContent = content
@@ -5349,9 +5389,74 @@ export default function App() {
     | "members"
     | "cover"
     | "classrooms"
+    | "sso"
   >("overview");
   const [allMembers, setAllMembers] = useState<any[]>([]);
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
+
+  // Connected Systems SSO and Back-office Simulator states
+  const [ssoConfig, setSsoConfig] = useState<any>({
+    client_id: "em-client-8822",
+    machine_token: "commun_mt_abc123xyz",
+    school_url: "https://zera-education.commun.cloud",
+    callback_url: "/sso/callback",
+    jwks_url: "/api/sso/jwks"
+  });
+  const [ssoSaveSuccess, setSsoSaveSuccess] = useState(false);
+  const [ssoLogs, setSsoLogs] = useState<any[]>([]);
+  const [ssoShadowUsers, setSsoShadowUsers] = useState<any[]>([]);
+  const [isSsoDataLoading, setIsSsoDataLoading] = useState(false);
+  
+  // SSO Simulator default state
+  const [simulatorUser, setSimulatorUser] = useState({
+    sub: "user_sub_5511",
+    first_name: "Benjamin",
+    last_name: "Franklin",
+    email: "benjamin.franklin@zera.edu.my",
+    user_types: "teacher", 
+    clockSkewSeconds: 0,
+    expiredToken: false
+  });
+  
+  // Back-room verification CLI command output
+  const [apiCliToken, setApiCliToken] = useState("commun_mt_abc123xyz");
+  const [apiCliSub, setApiCliSub] = useState("user_sub_8801");
+  const [apiCliEndpoint, setApiCliEndpoint] = useState<"userinfo" | "students" | "staff">("userinfo");
+  const [apiCliLogs, setApiCliLogs] = useState<any[]>([]);
+  const [isCliExecuting, setIsCliExecuting] = useState(false);
+
+  const fetchSsoData = async () => {
+    setIsSsoDataLoading(true);
+    try {
+      const [configRes, logsRes, usersRes] = await Promise.all([
+        fetch("/api/sso/config"),
+        fetch("/api/sso/logs"),
+        fetch("/api/sso/shadow-users")
+      ]);
+      if (configRes.ok) {
+        const configData = await configRes.json();
+        setSsoConfig(configData);
+      }
+      if (logsRes.ok) {
+        const logsData = await logsRes.json();
+        setSsoLogs(logsData);
+      }
+      if (usersRes.ok) {
+        const usersData = await usersRes.json();
+        setSsoShadowUsers(usersData);
+      }
+    } catch (e) {
+      console.error("Failed to fetch SSO administration states", e);
+    } finally {
+      setIsSsoDataLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (adminTab === "sso" && user) {
+      fetchSsoData();
+    }
+  }, [adminTab, user]);
 
   useEffect(() => {
     if (adminTab === "members" && user) {
@@ -5873,6 +5978,7 @@ export default function App() {
     useState(false);
   const [isSavingCloud, setIsSavingCloud] = useState(false);
   const [saveCloudSuccess, setSaveCloudSuccess] = useState(false);
+  const [showPlayfulOrganizer, setShowPlayfulOrganizer] = useState(false);
 
   const [parallelDropConfirm, setParallelDropConfirm] = useState<{
     day: string;
@@ -11071,6 +11177,7 @@ export default function App() {
                 "plans",
                 "cover",
                 "members",
+                "sso",
               ].map((tab) => (
                 <button
                   key={tab}
@@ -11088,7 +11195,9 @@ export default function App() {
                       ? "Cover Planner"
                       : tab === "classrooms"
                         ? "Classroom Allocation"
-                        : tab}
+                        : tab === "sso"
+                          ? "Connected Systems (SSO)"
+                          : tab}
                 </button>
               ))}
             </nav>
@@ -19578,11 +19687,49 @@ export default function App() {
           )}
           <main className="flex-1 p-8 overflow-y-auto bg-[#F0FDF4]/50 custom-scrollbar">
             {content?.worksheet?.sections &&
-            content.worksheet.sections.length > 0 ? (
-              <div
-                className="max-w-4xl mx-auto bg-white p-16 pt-16 shadow-2xl border-t-[32px] border-[#1B4332] min-h-[1200px] relative"
-                ref={worksheetRef}
-              >
+              content.worksheet.sections.length > 0 ? (
+              <div className="space-y-6">
+                {/* INTERACTIVE TOGGLE BANNER */}
+                <div className="flex items-center justify-center mb-6 print:hidden">
+                  <div className="bg-white p-1.5 rounded-3xl border-2 border-[#D1FAE5] flex gap-2 shadow-sm">
+                    <button
+                      onClick={() => setShowPlayfulOrganizer(false)}
+                      type="button"
+                      className={cn(
+                        "px-6 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer border-none outline-none",
+                        !showPlayfulOrganizer
+                          ? "bg-[#0d9488] text-white shadow"
+                          : "text-[#064E3B]/70 hover:bg-[#D1FAE5]/40"
+                      )}
+                    >
+                      <FileText size={14} /> Paper Assessment
+                    </button>
+                    <button
+                      onClick={() => setShowPlayfulOrganizer(true)}
+                      type="button"
+                      className={cn(
+                        "px-6 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer border-none outline-none",
+                        showPlayfulOrganizer
+                          ? "bg-[#059669] text-white shadow"
+                          : "text-[#064E3B]/70 hover:bg-[#D1FAE5]/40"
+                      )}
+                    >
+                      <Sparkles size={14} className="text-yellow-500 animate-pulse" /> Playful Interactive Organizer
+                    </button>
+                  </div>
+                </div>
+
+                {showPlayfulOrganizer ? (
+                  <InteractiveOrganizerWorksheet 
+                    lessonTitle={content?.lessonTitle || lessonInput} 
+                    onClose={() => setShowPlayfulOrganizer(false)}
+                    worksheet={content?.worksheet}
+                  />
+                ) : (
+                  <div
+                    className="max-w-4xl mx-auto bg-white p-16 pt-16 shadow-2xl border-t-[32px] border-[#1B4332] min-h-[1200px] relative font-sans text-left"
+                    ref={worksheetRef}
+                  >
                 <h1
                   contentEditable={true}
                   suppressContentEditableWarning={true}
@@ -20028,6 +20175,8 @@ export default function App() {
                   )}
                 </div>
               </div>
+            )}
+          </div>
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center text-center mt-20 opacity-30 group animate-pulse">
                 <div className="w-32 h-32 bg-[#E1F7F5] rounded-[40px] flex items-center justify-center mb-6">
@@ -20359,6 +20508,13 @@ export default function App() {
           console.error("Error generating strategic plan during passage generation:", planErr);
         }
 
+        const initialVocabulary = {
+          [initialLevel]: planResult?.oneDayPlan?.vocabulary || []
+        };
+        const initialQuestions = {
+          [initialLevel]: planResult?.oneDayPlan?.questions || []
+        };
+
         setContent((prev) => {
           const currentProgram = prev?.readingProgram || {
             title: planResult?.title || result.title || "Reading Program Outline",
@@ -20369,7 +20525,9 @@ export default function App() {
             weeklyGoals: planResult?.weeklyGoals || ["Develop contextual vocabulary.", "Identify story theme and elements.", "Synthesize passage conclusions."],
             recommendedBooks: planResult?.recommendedBooks || [],
             milestones: planResult?.milestones || [],
-            oneDayPlan: planResult?.oneDayPlan
+            oneDayPlan: planResult?.oneDayPlan,
+            leveledVocabulary: initialVocabulary,
+            leveledQuestions: initialQuestions,
           };
 
           const updatedProgram = {
@@ -20382,6 +20540,14 @@ export default function App() {
             recommendedBooks: planResult?.recommendedBooks || currentProgram.recommendedBooks,
             milestones: planResult?.milestones || currentProgram.milestones,
             oneDayPlan: planResult?.oneDayPlan || currentProgram.oneDayPlan,
+            leveledVocabulary: {
+              ...(currentProgram.leveledVocabulary || {}),
+              ...initialVocabulary,
+            },
+            leveledQuestions: {
+              ...(currentProgram.leveledQuestions || {}),
+              ...initialQuestions,
+            },
             readingPassage: result.readingPassage,
             passageTitle: result.title || "Adapted Story Title",
             leveledPassages,
@@ -20427,6 +20593,8 @@ export default function App() {
       setContent((prev) => {
         if (!prev || !prev.readingProgram) return prev;
         const currentLeveled = prev.readingProgram.leveledPassages || {};
+        const currentVocab = prev.readingProgram.leveledVocabulary || {};
+        const currentQuestions = prev.readingProgram.leveledQuestions || {};
         return {
           ...prev,
           readingProgram: {
@@ -20434,6 +20602,14 @@ export default function App() {
             leveledPassages: {
               ...currentLeveled,
               [targetLevel]: result.readingPassage,
+            },
+            leveledVocabulary: {
+              ...currentVocab,
+              [targetLevel]: result.vocabulary || [],
+            },
+            leveledQuestions: {
+              ...currentQuestions,
+              [targetLevel]: result.questions || [],
             },
           },
         };
@@ -21093,7 +21269,7 @@ export default function App() {
             {/* TAB CONTENT: CURRICULUM READING PLAN */}
             {readingProgramTab === "curriculum" && (
               <div className="space-y-6">
-                {!content.readingProgram?.recommendedBooks || content.readingProgram.recommendedBooks.length === 0 ? (
+                {!content.readingProgram?.oneDayPlan ? (
                   <div className="text-center py-20 bg-emerald-50/10 border-2 border-dashed border-[#D1FAE5] rounded-[3rem] space-y-4">
                     <BookOpen className="mx-auto text-[#059669]/30" size={48} />
                     <div>
@@ -21153,61 +21329,215 @@ export default function App() {
                       </div>
                     </div>
 
+                    {/* Lexile switcher for Curriculum/Strategic Plan */}
+                    <div className={cn("p-5 border-2 border-dashed rounded-3xl space-y-3", getThemeStyles(selectedStoryStyle).goalsBg || "bg-[#F0FDF4]/30 border-[#D1FAE5]")}>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-left">
+                        <div>
+                          <h4 className={cn("text-xs font-black uppercase tracking-wider flex items-center gap-1", getThemeStyles(selectedStoryStyle).primaryText)}>
+                            <Sparkles className="w-3.5 h-3.5 text-emerald-600" /> Vocabulary & Question Study Level
+                          </h4>
+                          <p className={cn("text-[11px] font-semibold", getThemeStyles(selectedStoryStyle).descText)}>
+                            Different key vocabulary terms and comprehension questions are designed for each Lexile level to ensure perfect reading comprehension fit.
+                          </p>
+                        </div>
+                        <span className="bg-emerald-600 text-white text-[10px] font-black uppercase px-2.5 py-1 rounded-full whitespace-nowrap self-start">
+                          Active: {selectedSuiteLevel}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {[
+                          { id: "BR99-100", name: "BR99-100L" },
+                          { id: "100-200", name: "100-200L" },
+                          { id: "200-300", name: "200-300L" },
+                          { id: "300-400", name: "300-400L" },
+                          { id: "400-500", name: "400-500L" },
+                          { id: "500-600", name: "500-600L" },
+                          { id: "600-700", name: "600-700L" },
+                          { id: "700-800", name: "700-800L" },
+                          { id: "800-900", name: "800-900L" },
+                          { id: "900-1050", name: "900-1050L" },
+                        ].map((lvl) => {
+                          const isSelected = selectedSuiteLevel === lvl.id;
+                          const vocabGenerated = !!content.readingProgram?.leveledVocabulary?.[lvl.id];
+                          const passageGenerated = !!content.readingProgram?.leveledPassages?.[lvl.id];
+                          
+                          return (
+                            <button
+                              key={lvl.id}
+                              onClick={() => setSelectedSuiteLevel(lvl.id)}
+                              className={cn(
+                                "px-3 py-1.5 rounded-xl border text-[10px] font-black uppercase tracking-tight transition-all active:scale-95 cursor-pointer flex items-center gap-1",
+                                isSelected
+                                  ? "bg-emerald-650 text-white border-transparent bg-emerald-600"
+                                  : getThemeStyles(selectedStoryStyle).containerBg === "bg-[#FDFBF7]"
+                                  ? "bg-white border-stone-200 text-stone-600 hover:bg-stone-50"
+                                  : "bg-slate-900/50 border-stone-850 text-slate-300 hover:bg-slate-900"
+                              )}
+                            >
+                              {lvl.name}
+                              {vocabGenerated ? (
+                                <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" title="Custom level vocabulary & questions ready" />
+                              ) : passageGenerated ? (
+                                <span className="w-1 h-1 rounded-full bg-amber-400 animate-bounce" title="Click adapt below to render custom level vocabulary" />
+                              ) : (
+                                <span className="w-1 h-1 rounded-full bg-stone-300/60" title="Empty" />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
                     {/* Vocabulary & Discussion Questions */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                       {/* Vocabulary Hub */}
                       <div className={cn("p-8 space-y-4 text-left shadow-sm transition-all duration-300", getThemeStyles(selectedStoryStyle).borderStyle || "border-2 rounded-[2.5rem]", getThemeStyles(selectedStoryStyle).goalsBg)}>
                         <h3 className={cn("text-md font-black uppercase tracking-wider border-b pb-2 flex items-center gap-2", getThemeStyles(selectedStoryStyle).primaryText)}>
-                          <Book className="w-4 h-4 text-[#059669]" /> Key Vocabulary from Passage
+                          <Book className="w-4 h-4 text-[#059669]" /> Key Vocabulary from Passage ({selectedSuiteLevel})
                         </h3>
                         <p className={cn("text-[11px] font-semibold leading-relaxed mb-4", getThemeStyles(selectedStoryStyle).containerBg === "bg-[#FDFBF7]" ? "text-stone-500" : "text-slate-400")}>
                           Interactive terms compiled directly from the story narrative with simplified learning meanings and classroom usage.
                         </p>
-                        <div className="space-y-4 max-h-[350px] overflow-y-auto custom-scrollbar pr-2">
-                          {content.readingProgram.oneDayPlan.vocabulary.map((v, vi) => (
-                            <div key={vi} className="p-4 bg-white/70 hover:bg-white border border-[#D1FAE5] rounded-2xl transition-all space-y-2 text-stone-800">
-                              <span className="text-sm font-black text-[#064E3B]">{v.word}</span>
-                              <div className="space-y-1 text-xs">
-                                <p className="font-semibold text-stone-600">
-                                  <strong className="text-[9px] font-black uppercase text-stone-400 block tracking-wider">Meaning</strong>
-                                  {v.definition}
-                                </p>
-                                {v.contextSentence && (
-                                  <p className="font-bold text-[#059669] bg-stone-50/50 p-2 rounded-xl italic">
-                                    <strong className="text-[9px] font-black uppercase text-[#059669]/60 not-italic block tracking-wider">Context</strong>
-                                    "{v.contextSentence}"
+                        
+                        {content.readingProgram.leveledVocabulary?.[selectedSuiteLevel] ? (
+                          <div className="space-y-4 max-h-[350px] overflow-y-auto custom-scrollbar pr-2">
+                            {content.readingProgram.leveledVocabulary[selectedSuiteLevel].map((v, vi) => (
+                              <div key={vi} className="p-4 bg-white/70 hover:bg-white border border-[#D1FAE5] rounded-2xl transition-all space-y-2 text-stone-800 animate-in fade-in duration-205">
+                                <span className="text-sm font-black text-[#064E3B]">{v.word}</span>
+                                <div className="space-y-1 text-xs">
+                                  <p className="font-semibold text-stone-600">
+                                    <strong className="text-[9px] font-black uppercase text-stone-400 block tracking-wider">Meaning</strong>
+                                    {v.definition}
                                   </p>
-                                )}
+                                  {v.contextSentence && (
+                                    <p className="font-bold text-[#059669] bg-stone-50/50 p-2 rounded-xl italic">
+                                      <strong className="text-[9px] font-black uppercase text-[#059669]/60 not-italic block tracking-wider">Context</strong>
+                                      "{v.contextSentence}"
+                                    </p>
+                                  )}
+                                </div>
                               </div>
+                            ))}
+                          </div>
+                        ) : content.readingProgram.oneDayPlan && selectedSuiteLevel === (lexileLevel || "400-500") ? (
+                          <div className="space-y-4 max-h-[350px] overflow-y-auto custom-scrollbar pr-2">
+                            {content.readingProgram.oneDayPlan.vocabulary.map((v, vi) => (
+                              <div key={vi} className="p-4 bg-white/70 hover:bg-white border border-[#D1FAE5] rounded-2xl transition-all space-y-2 text-stone-800 animate-in fade-in duration-205">
+                                <span className="text-sm font-black text-[#064E3B]">{v.word}</span>
+                                <div className="space-y-1 text-xs">
+                                  <p className="font-semibold text-stone-600">
+                                    <strong className="text-[9px] font-black uppercase text-stone-400 block tracking-wider">Meaning</strong>
+                                    {v.definition}
+                                  </p>
+                                  {v.contextSentence && (
+                                    <p className="font-bold text-[#059669] bg-stone-50/50 p-2 rounded-xl italic">
+                                      <strong className="text-[9px] font-black uppercase text-[#059669]/60 not-italic block tracking-wider">Context</strong>
+                                      "{v.contextSentence}"
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="py-8 px-4 flex flex-col items-center justify-center text-center gap-3 border-2 border-dashed border-stone-200 rounded-2xl bg-white/20 font-sans">
+                            <Sparkles className="text-emerald-500 animate-pulse" size={20} />
+                            <div>
+                              <p className="text-xs font-black text-stone-700 uppercase tracking-tight">Vocabulary Adapts to Level</p>
+                              <p className="text-[10px] text-stone-500 mt-0.5 leading-relaxed">
+                                Custom vocabulary for {selectedSuiteLevel} is generated when you adapt the passage.
+                              </p>
                             </div>
-                          ))}
-                        </div>
+                            <button
+                              disabled={isReleveling}
+                              onClick={async () => {
+                                setIsReleveling(true);
+                                try {
+                                  await handleGenerateSuiteLevelForProgram(selectedSuiteLevel);
+                                } catch (e: any) {
+                                  alert(`Error: ${e.message}`);
+                                } finally {
+                                  setIsReleveling(false);
+                                }
+                              }}
+                              className="text-[10px] font-black uppercase bg-[#0d9488] text-white px-3 py-1.5 rounded-lg transition-all cursor-pointer hover:bg-[#0f766e]"
+                            >
+                              {isReleveling ? "Adapting..." : `Generate ${selectedSuiteLevel} Vocabulary`}
+                            </button>
+                          </div>
+                        )}
                       </div>
 
                       {/* Discussion Questions */}
                       <div className={cn("p-8 space-y-4 text-left shadow-md transition-all duration-300", getThemeStyles(selectedStoryStyle).borderStyle || "border-2 rounded-[2.5rem]", getThemeStyles(selectedStoryStyle).milestoneBg)}>
                         <h3 className={cn("text-md font-black uppercase tracking-wider border-b pb-2 flex items-center gap-2", getThemeStyles(selectedStoryStyle).primaryText)}>
-                          <GraduationCap className="w-4 h-4 text-[#059669]" /> Comprehension Questions & Prompts
+                          <GraduationCap className="w-4 h-4 text-[#059669]" /> Comprehension Questions & Prompts ({selectedSuiteLevel})
                         </h3>
                         <p className={cn("text-[11px] font-semibold leading-relaxed mb-4", getThemeStyles(selectedStoryStyle).containerBg === "bg-[#FDFBF7]" ? "text-stone-500" : "text-slate-400")}>
                           Critical comprehension triggers designed around studying findings, outcomes, and elements within the adapted passage text.
                         </p>
-                        <div className="space-y-4 max-h-[350px] overflow-y-auto custom-scrollbar pr-2">
-                          {content.readingProgram.oneDayPlan.questions.map((q, qi) => (
-                            <div key={qi} className="p-4 bg-white/75 hover:bg-white border border-[#D1FAE5] rounded-2xl transition-all space-y-2 text-stone-800">
-                              <p className="text-xs font-black text-stone-800 leading-normal flex gap-2">
-                                <span className="text-[#059669] font-black">{qi + 1}.</span>
-                                <span>{q.question}</span>
-                              </p>
-                              {q.answer && (
-                                <p className="text-[11px] text-stone-600 bg-emerald-50/20 p-2.5 rounded-xl border border-emerald-100/50 font-medium leading-relaxed">
-                                  <strong className="text-[9px] font-black uppercase tracking-wider text-[#059669]/60 block mb-0.5">Recommended Response</strong>
-                                  {q.answer}
+                        
+                        {content.readingProgram.leveledQuestions?.[selectedSuiteLevel] ? (
+                          <div className="space-y-4 max-h-[350px] overflow-y-auto custom-scrollbar pr-2">
+                            {content.readingProgram.leveledQuestions[selectedSuiteLevel].map((q, qi) => (
+                              <div key={qi} className="p-4 bg-white/75 hover:bg-white border border-[#D1FAE5] rounded-2xl transition-all space-y-2 text-stone-800 animate-in fade-in duration-205">
+                                <p className="text-xs font-black text-stone-800 leading-normal flex gap-2">
+                                  <span className="text-[#059669] font-black">{qi + 1}.</span>
+                                  <span>{q.question}</span>
                                 </p>
-                              )}
+                                {q.answer && (
+                                  <p className="text-[11px] text-stone-600 bg-emerald-50/20 p-2.5 rounded-xl border border-emerald-100/50 font-medium leading-relaxed">
+                                    <strong className="text-[9px] font-black uppercase tracking-wider text-[#059669]/60 block mb-0.5">Recommended Response</strong>
+                                    {q.answer}
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : content.readingProgram.oneDayPlan && selectedSuiteLevel === (lexileLevel || "400-500") ? (
+                          <div className="space-y-4 max-h-[350px] overflow-y-auto custom-scrollbar pr-2">
+                            {content.readingProgram.oneDayPlan.questions.map((q, qi) => (
+                              <div key={qi} className="p-4 bg-white/75 hover:bg-white border border-[#D1FAE5] rounded-2xl transition-all space-y-2 text-stone-800 animate-in fade-in duration-205">
+                                <p className="text-xs font-black text-stone-800 leading-normal flex gap-2">
+                                  <span className="text-[#059669] font-black">{qi + 1}.</span>
+                                  <span>{q.question}</span>
+                                </p>
+                                {q.answer && (
+                                  <p className="text-[11px] text-stone-600 bg-emerald-50/20 p-2.5 rounded-xl border border-emerald-100/50 font-medium leading-relaxed">
+                                    <strong className="text-[9px] font-black uppercase tracking-wider text-[#059669]/60 block mb-0.5">Recommended Response</strong>
+                                    {q.answer}
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="py-8 px-4 flex flex-col items-center justify-center text-center gap-3 border-2 border-dashed border-stone-200 rounded-2xl bg-white/20 font-sans">
+                            <Sparkles className="text-indigo-400 animate-pulse" size={20} />
+                            <div>
+                              <p className="text-xs font-black text-stone-700 uppercase tracking-tight">Questions Adapt to Level</p>
+                              <p className="text-[10px] text-stone-500 mt-0.5 leading-relaxed">
+                                Custom comprehension questions for {selectedSuiteLevel} aren't generated yet. Adapt the passage to unlock tailored questions!
+                              </p>
                             </div>
-                          ))}
-                        </div>
+                            <button
+                              disabled={isReleveling}
+                              onClick={async () => {
+                                setIsReleveling(true);
+                                try {
+                                  await handleGenerateSuiteLevelForProgram(selectedSuiteLevel);
+                                } catch (e: any) {
+                                  alert(`Error: ${e.message}`);
+                                } finally {
+                                  setIsReleveling(false);
+                                }
+                              }}
+                              className="text-[10px] font-black uppercase bg-[#059669] text-white px-3 py-1.5 rounded-lg transition-all cursor-pointer hover:bg-[#047857]"
+                            >
+                              {isReleveling ? "Adapting..." : `Generate ${selectedSuiteLevel} Questions`}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
 

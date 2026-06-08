@@ -109,6 +109,8 @@ export interface ReadingProgram {
   readingPassage?: string;
   passageTitle?: string;
   leveledPassages?: Record<string, string>;
+  leveledVocabulary?: Record<string, OneDayVocab[]>;
+  leveledQuestions?: Record<string, { question: string; answer?: string }[]>;
   oneDayPlan?: OneDayPlan;
 }
 
@@ -162,6 +164,24 @@ export interface EduContent {
     description?: string;
     methodology?: string;
     sections: WorksheetSection[];
+    interactiveSortingGame?: {
+      title: string;
+      activityNumber: string;
+      instruction: string;
+      categories: {
+        id: string;
+        name: string;
+        color: string;
+      }[];
+      items: {
+        id: string;
+        name: string;
+        category: string;
+        description?: string;
+        iconName?: string;
+      }[];
+      footerNote?: string;
+    };
   };
   readingProgram?: ReadingProgram;
   lessonPlan?: LessonPlan;
