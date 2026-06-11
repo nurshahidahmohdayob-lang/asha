@@ -15,7 +15,7 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
   // JSON parsing
   app.use(express.json({ limit: '50mb' }));
@@ -43,7 +43,7 @@ async function startServer() {
     }
 
     try {
-      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateEduContent, suggestWeeklyInput, generateEduNotes, relevelReadingPassage, generateInteractiveSortingGame } = await import("./src/services/geminiService.ts");
+      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateEduContent, suggestWeeklyInput, generateEduNotes, relevelReadingPassage, generateInteractiveSortingGame, askAI, generatePosterImage } = await import("./src/services/geminiService.ts");
       
       let result;
       switch (type) {
@@ -58,6 +58,8 @@ async function startServer() {
         case 'suggest': result = await suggestWeeklyInput(lessonInput as any, options, options.weekNum); break;
         case 'all': result = await generateEduContent(lessonInput, options); break;
         case 'relevelPassage': result = await relevelReadingPassage(lessonInput, options.targetLexile, options.subject, options.yearGroup); break;
+        case 'chat': result = await askAI(lessonInput, options.history || []); break;
+        case 'image': result = await generatePosterImage(lessonInput); break;
         default: throw new Error(`Unknown generation type: ${type}`);
       }
       

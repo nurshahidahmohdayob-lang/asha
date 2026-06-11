@@ -164,6 +164,9 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
       model: "gemini-3-flash-preview",
       contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
       config: {
+        // Slide generation is structured, not deep-reasoning — cap "thinking"
+        // to cut latency significantly (benchmarked faster, lighter on the model).
+        thinkingConfig: { thinkingBudget: 128 },
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -333,7 +336,7 @@ export async function generateReadingProgram(lessonInput: string, options: EduOp
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: { parts: contents.map(c => ({ text: c })) },
+      contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -440,7 +443,11 @@ export async function generateSessionPlan(topic: string, subtopics: string, week
       
       TOPIC: ${topic}
       SUBTOPICS: ${subtopics}
-      
+      ${options.metadataHints?.description ? `
+      TEACHER INSTRUCTIONS (HIGHEST PRIORITY):
+      - The teacher has given the following specific instructions for this term program. Follow them closely when building every week of the plan:
+      "${options.metadataHints.description}"
+      ` : ''}
       STANDARDS & FRAMEWORK:
       - Use the provided subject "${options.subject}" exactly as given.
       - Base the content strictly on the Cambridge International Curriculum.
@@ -476,7 +483,7 @@ export async function generateSessionPlan(topic: string, subtopics: string, week
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: { parts: contents.map(c => ({ text: c })) },
+      contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -529,9 +536,18 @@ export async function generateSessionPlan(topic: string, subtopics: string, week
 export async function generateLessonPlan(lessonInput: string, options: EduOptions): Promise<LessonPlan> {
   try {
     const contents: any[] = [];
+    if (options.fileContext) {
+      contents.push({ inlineData: options.fileContext });
+    }
     const weekCount = options.topics?.length || 6;
     const mainPrompt = `As an expert Cambridge Educator, create a professional, detailed ${weekCount}-WEEK Lesson Plan for a ${options.yearGroup} class.
-      
+      ${options.fileContext ? `
+      UPLOADED CURRICULUM DOCUMENTS (HIGHEST PRIORITY):
+      - The attached file(s) contain the official Scheme of Work and/or subject Framework for this class.
+      - Treat the attached document(s) as the PRIMARY SOURCE OF TRUTH. Derive the units, topics, strands, learning objectives, sequence/progression, and assessment guidance directly from them.
+      - Match the weekly breakdown to the order and content of the uploaded scheme of work. Use its exact unit titles, objective codes, and terminology wherever provided.
+      - Only fall back to general Cambridge curriculum knowledge to fill gaps the document does not cover.
+      ` : ''}
       STANDARDS & FRAMEWORK:
       - Use the provided subject "${options.subject}" exactly as given. Do not substitute it with a similar subject (e.g. do not change Digital Literacy to Computer Science).
       - Base the content strictly on the Cambridge International Curriculum (CAIE/Cambridge Primary/Lower Secondary).
@@ -539,7 +555,7 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
       - Incorporate methodology consistent with Cambridge Schemes of Work (SoW).
       - Reference relevant subject codes and strand initials from the following list: ${CAMBRIDGE_CURRICULUM_INFO}
       - Follow the official framework, scheme of work, and textbook/reference materials.
-      
+
       ${weekCount}-WEEK TERM OVERVIEW:
       The teacher may have provided some specific units/topics. For any week left blank or marked 'Auto-assign', you MUST generate a logical, curriculum-appropriate progression based on the overall subject and description.
       
@@ -578,7 +594,7 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: { parts: contents.map(c => ({ text: c })) },
+      contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -697,7 +713,7 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: { parts: contents.map(c => ({ text: c })) },
+      contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -739,7 +755,9 @@ export async function generateEduContent(lessonInput: string, options: EduOption
     ]);
 
     return {
-      lessonTitle: lessonInput,
+      // Use the AI-generated worksheet title as the display title so the raw
+      // user prompt never surfaces in the assessment / slides / exports.
+      lessonTitle: worksheet?.title || lessonInput,
       subject: options.subject,
       gradeLevel: options.yearGroup,
       slides: slidesRes.slides,
@@ -817,6 +835,73 @@ export async function generateEduNotes(lessonInput: string, options: EduOptions)
   } catch (err: any) {
     if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
       return callAiProxy('notes', lessonInput, options);
+    }
+    throw err;
+  }
+}
+
+// Streaming version of generateEduNotes — emits markdown progressively so the
+// handout appears as it is written (far faster perceived speed). Outputs plain
+// Markdown (no JSON wrapper), which is also genuinely quicker to generate.
+export async function generateEduNotesStream(
+  lessonInput: string,
+  options: EduOptions,
+  onChunk: (fullText: string) => void,
+): Promise<{ notes: string }> {
+  const parts: any[] = [];
+  if (options.fileContext) {
+    parts.push({ inlineData: options.fileContext });
+  }
+
+  const mainPrompt = `As an expert Cambridge Educator, generate a professional, comprehensive, and well-structured Student Revision Handout for the EXACT topic: "${lessonInput}".
+      Subject: ${options.subject}, Year Group: ${options.yearGroup}.
+
+      STRICT TOPICAL BOUNDARY (CRITICAL):
+      - ONLY generate information related to "${lessonInput}".
+      - DO NOT include unrelated grammar, punctuation, or different subject matter.
+
+      CONTENT DEPTH & ELABORATION:
+      - Requested Focus: "${options.metadataHints?.description || "Comprehensive overview"}".
+      - Provide a detailed academic explanation: for key concepts explain the "What", the "Why", and give 2-3 clear examples.
+      - Align with the academic rigor of Cambridge International Framework Stage ${options.yearGroup || ''}.
+
+      FORMATTING:
+      - Use standard Markdown headings (# Title, ## Section, ### Sub-section), **bold** for key terms, and bullet points for lists.
+      - Do NOT use decorative symbols like ~ or =.
+
+      STRUCTURE:
+      1. Formal Title: ${lessonInput}
+      2. Comprehensive Learning Objectives
+      3. Detailed Conceptual Breakdown (the most substantial part)
+      4. Vocabulary Table (Term | Detailed Definition | Example Sentence)
+      5. Practical Applications / Examples
+      6. Student Revision Checklist
+
+      OUTPUT: Return ONLY the clean Markdown handout — no JSON, no code fences, no preamble or closing remarks.`;
+
+  parts.push({ text: mainPrompt });
+
+  try {
+    const stream = await ai.models.generateContentStream({
+      model: "gemini-3-flash-preview",
+      contents: { parts },
+    });
+    let full = "";
+    for await (const chunk of stream) {
+      const t = chunk.text;
+      if (t) {
+        full += t;
+        onChunk(full);
+      }
+    }
+    if (!full) throw new Error("Empty response");
+    return { notes: full };
+  } catch (err: any) {
+    // No client key / streaming unavailable → fall back to the non-streaming proxy.
+    if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
+      const res = await callAiProxy('notes', lessonInput, options);
+      if (res?.notes) onChunk(res.notes);
+      return res;
     }
     throw err;
   }
@@ -1000,4 +1085,89 @@ export async function generateInteractiveSortingGame(
     }
     throw err;
   }
+}
+
+export interface ChatTurn {
+  role: 'user' | 'model';
+  text: string;
+}
+
+// General-purpose assistant: ask a question, get an answer (ChatGPT-style).
+// `history` lets the conversation stay contextual across turns.
+export async function askAI(question: string, history: ChatTurn[] = []): Promise<string> {
+  try {
+    const systemInstruction = `You are Zera Assistant, a friendly and knowledgeable AI helper built into the Zera Education suite for teachers and school staff.
+- Answer clearly, accurately, and concisely.
+- Use Markdown formatting (headings, bold, bullet/numbered lists, tables, and code blocks) whenever it makes the answer easier to read.
+- For teaching, lesson, assessment, or curriculum questions, give practical, classroom-ready guidance and align with Cambridge International standards where relevant.
+- If you are unsure or a request is outside your knowledge, say so honestly.`;
+
+    const contents = [
+      ...history
+        .filter((h) => h && h.text)
+        .map((h) => ({
+          role: h.role === 'model' ? 'model' : 'user',
+          parts: [{ text: h.text }],
+        })),
+      { role: 'user', parts: [{ text: question }] },
+    ];
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents,
+      config: { systemInstruction },
+    });
+
+    const text = response.text;
+    if (!text) throw new Error("Empty response");
+    return text;
+  } catch (err: any) {
+    if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
+      return callAiProxy('chat', question, { history });
+    }
+    throw err;
+  }
+}
+
+// Generate a poster / picture image from a text prompt. Returns a data URL.
+export async function generatePosterImage(prompt: string): Promise<{ image: string; text: string }> {
+  const fullPrompt = `Create a visually striking, print-ready educational POSTER image about: "${prompt}".
+Requirements:
+- A bold, clear, legible title and any supporting text rendered accurately (no gibberish text).
+- Organized, balanced layout with vibrant, harmonious colors.
+- Age-appropriate, classroom-friendly illustration style with rich detail.
+- Portrait poster composition suitable for printing.`;
+
+  const models = ["gemini-2.5-flash-image", "gemini-3-pro-image-preview"];
+  let lastErr: any;
+  for (const model of models) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: fullPrompt,
+        config: { responseModalities: ["IMAGE", "TEXT"] },
+      });
+      const parts = response.candidates?.[0]?.content?.parts || [];
+      let image = "";
+      let text = "";
+      for (const p of parts) {
+        if (p.inlineData?.data) {
+          image = `data:${p.inlineData.mimeType || "image/png"};base64,${p.inlineData.data}`;
+        } else if (p.text) {
+          text += p.text;
+        }
+      }
+      if (image) return { image, text };
+      lastErr = new Error("The model did not return an image. Please try again.");
+    } catch (err: any) {
+      lastErr = err;
+      const msg = (err?.message || "").toLowerCase();
+      // Quota / rate-limit won't be fixed by trying the next model — stop early.
+      if (msg.includes("429") || msg.includes("quota") || msg.includes("rate")) break;
+    }
+  }
+  if (typeof window !== 'undefined' && (lastErr?.message?.includes('API Key') || lastErr?.message?.includes('configured'))) {
+    return callAiProxy('image', prompt, {});
+  }
+  throw lastErr || new Error("Image generation failed");
 }
