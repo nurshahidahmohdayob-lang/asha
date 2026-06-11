@@ -206,4 +206,18 @@ export interface AppTheme {
   patternType: 'dots' | 'waves' | 'stars' | 'clouds' | 'school';
   emoji: string;
   bgImage?: string;
+  /** Which slide design template to render — each is a visually distinct
+   *  layout, not just a recolor. Defaults to 'blob'. */
+  designType?:
+    | 'band'
+    | 'doodle'
+    | 'paper'
+    | 'blob'
+    | 'gradient'
+    | 'clouds'
+    | 'chalk'
+    | 'minimal';
+  /** Title color override for designs where the title sits on a colored
+   *  surface (e.g. the band header). Falls back to accentColor. */
+  titleColor?: string;
 }

@@ -97,6 +97,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import ReactMarkdown from "react-markdown";
+import { renderToStaticMarkup } from "react-dom/server";
 import pptxgen from "pptxgenjs";
 import {
   Document,
@@ -119,6 +120,7 @@ import html2canvas from "html2canvas";
 import { ZeraBrandLogo } from "./components/ZeraBrandLogo";
 import { InteractiveOrganizerWorksheet } from "./components/InteractiveOrganizerWorksheet";
 import mammoth from "mammoth";
+import JSZip from "jszip";
 
 const extractTextFromDocx = async (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -159,6 +161,40 @@ const extractTextFromExcel = async (file: File): Promise<string> => {
     reader.onerror = reject;
     reader.readAsArrayBuffer(file);
   });
+};
+
+// Extract readable text from a PowerPoint (.pptx) — a zip of slide XML files.
+const extractTextFromPptx = async (file: File): Promise<string> => {
+  const arrayBuffer = await file.arrayBuffer();
+  const zip = await JSZip.loadAsync(arrayBuffer);
+  const decodeEntities = (s: string) =>
+    s
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'");
+
+  const slideNames = Object.keys(zip.files)
+    .filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+    .sort((a, b) => {
+      const na = parseInt(a.match(/slide(\d+)\.xml/)?.[1] || "0", 10);
+      const nb = parseInt(b.match(/slide(\d+)\.xml/)?.[1] || "0", 10);
+      return na - nb;
+    });
+
+  let out = "";
+  for (let i = 0; i < slideNames.length; i++) {
+    const xml = await zip.files[slideNames[i]].async("string");
+    const runs = xml.match(/<a:t[^>]*>([\s\S]*?)<\/a:t>/g) || [];
+    const slideText = runs
+      .map((t) => decodeEntities(t.replace(/<a:t[^>]*>|<\/a:t>/g, "")))
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (slideText) out += `Slide ${i + 1}: ${slideText}\n\n`;
+  }
+  return out.trim();
 };
 
 const extractTextFromTextFile = async (file: File): Promise<string> => {
@@ -238,6 +274,24 @@ const prepareFileForGemini = async (
     }
   }
 
+  // 3b. PowerPoint presentation (.pptx)
+  if (
+    fileName.endsWith(".pptx") ||
+    mimeType ===
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  ) {
+    try {
+      const extractedText = await extractTextFromPptx(file);
+      const base64Text = btoa(unescape(encodeURIComponent(extractedText)));
+      return {
+        mimeType: "text/plain",
+        data: base64Text,
+      };
+    } catch (err) {
+      console.error("Error reading PowerPoint document:", err);
+    }
+  }
+
   // 4. Default / Text Fallback (Plain Text, Markdown, html, JSON, code, etc.)
   try {
     const text = await extractTextFromTextFile(file);
@@ -260,6 +314,1140 @@ const prepareFileForGemini = async (
       reader.onerror = reject;
       reader.readAsDataURL(file);
     });
+  }
+};
+
+// Self-contained, offline, interactive HTML for the assessment + playful
+// organizer. The placeholders /*__WS__*/null and /*__TITLE__*/null are replaced
+// with the worksheet JSON and title at download time (see downloadAssessmentHTML).
+const ASSESSMENT_HTML_TEMPLATE = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Interactive Assessment</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Baloo 2','Comic Sans MS','Segoe UI',system-ui,sans-serif;background:linear-gradient(160deg,#f5f3ff 0%,#faf5ff 50%,#fdf2f8 100%);color:#312e4e;padding:24px 14px 60px;min-height:100vh;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .wrap{max-width:880px;margin:0 auto}
+  .head{background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;border-radius:28px;padding:26px 24px;box-shadow:0 16px 40px rgba(124,58,237,.28);text-align:center;position:relative;overflow:hidden}
+  .head .deco{font-size:20px;letter-spacing:6px;opacity:.55;margin-bottom:6px}
+  .head h1{font-size:30px;font-weight:800;line-height:1.15;margin-bottom:6px;text-shadow:0 2px 0 rgba(0,0,0,.12)}
+  .head p{opacity:.92;font-size:14px;font-weight:600}
+  .id{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:16px}
+  .id label{background:rgba(255,255,255,.18);border:2px solid rgba(255,255,255,.45);border-radius:16px;padding:8px 12px;font-size:12px;font-weight:700;display:flex;align-items:center;gap:8px}
+  .id input{border:none;background:#fff;border-radius:10px;padding:6px 10px;font-size:13px;font-weight:700;color:#4c1d95;font-family:inherit;width:140px;outline:none}
+  .tabs{display:flex;gap:8px;justify-content:center;margin:22px auto 6px;background:#fff;padding:8px;border-radius:24px;border:2px solid #ede9fe;box-shadow:0 6px 18px rgba(124,58,237,.08);max-width:680px;flex-wrap:wrap}
+  .tab{flex:1;min-width:150px;border:none;cursor:pointer;border-radius:16px;padding:12px 10px;font-family:inherit;font-weight:800;font-size:13px;color:#6d28d9;background:transparent;transition:.18s;display:flex;align-items:center;justify-content:center;gap:8px}
+  .tab.on{background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;box-shadow:0 6px 16px rgba(124,58,237,.3)}
+  .panel{display:none;margin-top:18px}
+  .panel.on{display:block;animation:fade .3s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .card{background:#fff;border:2px solid #ede9fe;border-radius:22px;padding:20px 20px 22px;margin-bottom:16px;box-shadow:0 8px 22px rgba(124,58,237,.06)}
+  .card h2{font-size:18px;color:#6d28d9;font-weight:800;margin-bottom:4px}
+  .card .ins{font-style:italic;color:#7c6fa6;font-size:13px;font-weight:600;margin-bottom:12px}
+  .passage{background:#faf5ff;border:2px dashed #ddd6fe;border-radius:16px;padding:14px;font-size:14px;line-height:1.6;color:#44406b;white-space:pre-wrap;margin-bottom:8px}
+  .q{margin:12px 0;border:2px solid #e9e3ff;border-radius:14px;padding:13px 15px;background:#fffdfb;break-inside:avoid;page-break-inside:avoid}
+  .q .qt{font-weight:700;font-size:14.5px;margin-bottom:8px;color:#3b3663}
+  .q .opts{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+  .paperopt{font-size:13.5px;color:#4b466e;font-weight:600;padding:7px 11px;border:1.5px solid #ede9fe;border-radius:10px;background:#fff}
+  .ansline{border-bottom:2px dotted #b9a9f0;height:26px;margin-top:8px}
+  /* ===== Interactive Organizer ===== */
+  .orgintro{background:linear-gradient(110deg,#fb7185,#f59e0b 38%,#22c55e 70%,#0ea5e9);color:#fff;border-radius:24px;padding:20px 24px;margin-bottom:22px;text-align:center;box-shadow:0 14px 32px rgba(0,0,0,.14);position:relative;overflow:hidden}
+  .orgintro h2{font-size:21px;font-weight:800;display:flex;gap:9px;align-items:center;justify-content:center;text-shadow:0 2px 0 rgba(0,0,0,.14)}
+  .orgintro p{font-size:13px;font-weight:600;opacity:.96;margin-top:5px}
+  #orgBody>.card:nth-of-type(7n+1){--ac:#7c3aed;--acl:#f3eaff}
+  #orgBody>.card:nth-of-type(7n+2){--ac:#0284c7;--acl:#e0f2fe}
+  #orgBody>.card:nth-of-type(7n+3){--ac:#059669;--acl:#d1fae5}
+  #orgBody>.card:nth-of-type(7n+4){--ac:#d97706;--acl:#fef3c7}
+  #orgBody>.card:nth-of-type(7n+5){--ac:#db2777;--acl:#fce7f3}
+  #orgBody>.card:nth-of-type(7n+6){--ac:#0d9488;--acl:#ccfbf1}
+  #orgBody>.card:nth-of-type(7n+7){--ac:#4f46e5;--acl:#e0e7ff}
+  .card.org{position:relative;background:#fff;border:2px solid var(--acl,#ede9fe);border-top:7px solid var(--ac,#7c3aed);border-radius:22px;padding:0 22px 24px;margin-bottom:20px;box-shadow:0 12px 28px rgba(0,0,0,.07);overflow:hidden}
+  .card.org h2{display:inline-flex;align-items:center;gap:9px;font-size:16px;color:#fff;background:var(--ac,#7c3aed);padding:10px 20px 10px 16px;border-radius:0 0 18px 0;margin:0 0 16px -22px;box-shadow:0 6px 14px rgba(0,0,0,.16);letter-spacing:.2px}
+  .qtext{font-weight:700;font-size:15px;margin:4px 0 14px;color:#3b3663}
+  .opt{border:2px solid var(--acl,#e9e3ff);background:#fff;border-radius:14px;padding:12px 15px;font-family:inherit;font-size:14px;font-weight:700;color:#403a63;cursor:pointer;text-align:left;transition:.15s;display:flex;align-items:center;gap:11px;width:100%}
+  .opt:hover{border-color:var(--ac,#a855f7);transform:translateY(-2px);box-shadow:0 6px 14px rgba(0,0,0,.08)}
+  .opt .dot{width:20px;height:20px;border-radius:50%;border:3px solid var(--ac,#c4b5fd);opacity:.45;flex:none;transition:.15s}
+  .opt.selected{border-color:var(--ac,#7c3aed);background:var(--acl,#f3eaff)}
+  .opt.selected .dot{background:var(--ac,#7c3aed);border-color:var(--ac,#7c3aed);opacity:1;box-shadow:0 0 0 4px var(--acl,#ede9fe)}
+  .grid2{display:flex;gap:10px;flex-wrap:wrap}
+  .grid2 .opt{flex:1;min-width:120px;justify-content:center}
+  body.reveal .opt[data-correct="1"]{border-color:#16a34a;background:#dcfce7;color:#15803d}
+  body.reveal .opt[data-correct="1"] .dot{background:#16a34a;border-color:#16a34a;opacity:1}
+  body.reveal .opt.selected[data-correct="0"]{border-color:#dc2626;background:#fee2e2;color:#b91c1c}
+  .fillrow{font-size:16px;font-weight:700;line-height:2.1;color:#3b3663}
+  .blank{display:inline-block;min-width:96px;border-bottom:3px solid var(--ac,#a855f7);text-align:center;color:var(--ac,#7c3aed);padding:0 10px;font-weight:800}
+  .cols{display:flex;gap:16px;flex-wrap:wrap}
+  .col{flex:1;min-width:170px;display:flex;flex-direction:column;gap:10px}
+  .term,.def{position:relative;border:2px solid var(--acl,#e9e3ff);background:#fff;border-radius:14px;padding:12px 14px;font-size:13.5px;font-weight:700;color:#403a63;cursor:pointer;transition:.15s}
+  .term:hover,.def:hover{border-color:var(--ac,#a855f7);transform:translateY(-1px)}
+  .term{border-left:6px solid var(--ac,#a855f7)}
+  .term.active{border-color:var(--ac,#7c3aed);background:var(--acl,#f3eaff);box-shadow:0 0 0 4px var(--acl,#ede9fe)}
+  .term.paired,.def.paired{opacity:.6}
+  .badge{display:inline-block;font-size:11px;font-weight:800;margin-left:8px;padding:2px 8px;border-radius:8px;background:var(--ac,#6d28d9);color:#fff}
+  .term.ok,.def.ok{border-color:#16a34a;background:#dcfce7}
+  .term.bad,.def.bad{border-color:#dc2626;background:#fee2e2}
+  .pool{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px;min-height:20px;padding:11px;background:var(--acl,#faf8ff);border-radius:16px}
+  .item{border:2px solid var(--ac,#e9e3ff);background:#fff;border-radius:999px;padding:9px 16px;font-size:13.5px;font-weight:800;color:#403a63;cursor:pointer;transition:.15s;user-select:none;box-shadow:0 3px 8px rgba(0,0,0,.06)}
+  .item:hover{transform:translateY(-2px) rotate(-1.5deg)}
+  .item.active{background:var(--acl,#f3eaff);box-shadow:0 0 0 4px var(--acl,#ede9fe)}
+  .item.ok{border-color:#16a34a;background:#dcfce7;color:#15803d}
+  .item.bad{border-color:#dc2626;background:#fee2e2;color:#b91c1c}
+  .buckets{display:flex;gap:14px;flex-wrap:wrap}
+  .bucket{flex:1;min-width:150px;border:3px dashed var(--ac,#c4b5fd);border-radius:20px;padding:14px 12px;min-height:106px;background:var(--acl,#faf8ff);cursor:pointer;transition:.15s}
+  .bucket:hover{filter:brightness(.97);transform:translateY(-1px)}
+  .bucket .bt{font-size:12.5px;font-weight:800;color:var(--ac,#6d28d9);margin-bottom:10px;text-align:center}
+  .bucket .drop{display:flex;gap:7px;flex-wrap:wrap;justify-content:center}
+  textarea.reflect{width:100%;min-height:96px;border:2px solid var(--acl,#e9e3ff);border-radius:14px;padding:13px;font-family:inherit;font-size:14px;font-weight:600;color:#3b3663;resize:vertical;outline:none;background:#fff}
+  textarea.reflect:focus{border-color:var(--ac,#a855f7);box-shadow:0 0 0 4px var(--acl,#ede9fe)}
+  /* ===== Interactive Template — selectable worksheet themes ===== */
+  .tplpick{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:18px}
+  .tplpick button{cursor:pointer;border:2px solid #e9d5ff;background:#fff;border-radius:14px;padding:8px 13px;font-family:inherit;font-weight:800;font-size:12px;color:#6d28d9;display:flex;align-items:center;gap:6px;transition:.15s}
+  .tplpick button:hover{border-color:#a855f7;transform:translateY(-1px)}
+  .tplpick button.on{background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;border-color:transparent;box-shadow:0 6px 14px rgba(124,58,237,.28)}
+  /* ===== Doodle Print — hand-drawn black & white printables ===== */
+  .tpl-doodle{position:relative;background:#fff;border:3px solid #111;border-radius:36px;padding:24px 26px 14px;color:#111;box-shadow:0 14px 34px rgba(0,0,0,.08)}
+  .tpl-doodle .dscrib{position:absolute;font-weight:900;color:#111;pointer-events:none;z-index:1}
+  .tpl-doodle .s1{top:86px;left:46%;font-size:22px;transform:rotate(14deg)}
+  .tpl-doodle .s2{top:122px;left:52%;font-size:16px;transform:rotate(-10deg)}
+  .tpl-doodle .s3{top:70px;left:56%;font-size:18px;transform:rotate(24deg)}
+  .dbrand{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:900;letter-spacing:2px;text-transform:uppercase;border:2px solid #111;border-radius:999px;padding:3px 12px;margin-bottom:10px}
+  .tpl-doodle-head{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-bottom:14px}
+  .dtitle-wrap{flex:1 1 300px;position:relative}
+  .dtitle{font-size:40px;line-height:.95;font-weight:900;text-transform:uppercase;letter-spacing:.5px;max-width:440px}
+  .dmascot{font-size:32px;margin-top:8px;filter:grayscale(1) contrast(1.2)}
+  .dmeta{flex:1 1 240px;max-width:330px}
+  .dmeta-row{display:flex;align-items:flex-end;gap:8px;font-size:14px;font-weight:800;margin:10px 0}
+  .dmeta-row i{flex:1;border-bottom:2px dotted #111;height:16px}
+  .dbox{position:relative;display:inline-block;width:100%;background:#fff;border:3px solid #111;padding:16px 16px 14px;margin:14px 0 6px;break-inside:avoid;page-break-inside:avoid;vertical-align:top}
+  .dbox.v0{border-radius:36px 20px 40px 18px/20px 40px 18px 36px}
+  .dbox.v1{border-radius:10px;transform:rotate(-.5deg);margin-top:24px}
+  .dbox.v1:before{content:"";position:absolute;top:-13px;left:50%;width:112px;height:24px;transform:translateX(-50%) rotate(-2deg);background:radial-gradient(circle,#111 2.4px,transparent 3px) 4px 4px/15px 15px,#fff;border:2.5px solid #111;border-radius:3px}
+  .dbox.v2{border-radius:18px;border-style:dashed;border-width:3.5px}
+  .dbox.v3{border-radius:8px;transform:rotate(.6deg);box-shadow:8px 8px 0 -3px #fff,8px 8px 0 0 #111;width:calc(100% - 9px)}
+  .dbox.v4{border-radius:24px;margin-top:20px}
+  .dbox.v4:before{content:"";position:absolute;top:-11px;left:24px;width:74px;height:20px;transform:rotate(-3deg);background:#fff;border:2.5px solid #111;border-radius:2px}
+  .dq{font-weight:800;font-size:15px;text-align:center;margin-bottom:10px}
+  .dline{height:28px;border-bottom:2px dotted #111}
+  .dopt{display:flex;align-items:center;gap:10px;width:100%;border:2.5px solid #111;background:#fff;border-radius:30px 12px 26px 14px/14px 26px 12px 30px;padding:7px 14px 7px 8px;font-family:inherit;font-size:13.5px;font-weight:800;color:#111;cursor:pointer;transition:.12s;text-align:left;margin:6px 0}
+  .dopt:hover{transform:rotate(-.6deg) translateY(-1px)}
+  .dopt .dl{width:26px;height:26px;border-radius:50%;border:2.5px solid #111;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;flex:none;background:#fff;color:#111}
+  .dopt.ticked{background:#111;color:#fff}
+  .dsec{display:table;margin:18px auto 2px;background:#111;color:#fff;font-weight:900;font-size:13px;text-transform:uppercase;letter-spacing:1.5px;padding:7px 18px;border-radius:999px;transform:rotate(-1deg);break-after:avoid;page-break-after:avoid}
+  .dins{font-size:12.5px;font-weight:700;font-style:italic;text-align:center;margin:6px 0 2px}
+  .dnote{border:3px dotted #111;border-radius:18px;padding:12px 16px;font-size:13.5px;font-weight:700;font-style:italic;text-align:center;margin-bottom:6px}
+  .dpass{border:3px solid #111;border-radius:24px 18px 26px 16px/16px 26px 18px 24px;padding:14px 18px;font-size:14px;line-height:1.65;white-space:pre-wrap;margin:12px 0 4px}
+  .dcols{column-count:2;column-gap:20px;margin-top:4px}
+  .dcols.one{column-count:1}
+  .dnum{display:inline-flex;width:28px;height:28px;border:2.5px solid #111;border-radius:50% 45% 55% 48%/48% 55% 45% 50%;align-items:center;justify-content:center;font-weight:900;font-size:13px;flex:none;background:#fff}
+  .dq.withnum{display:flex;align-items:center;gap:9px;text-align:left}
+  .dfoot{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:2px dashed #111;margin-top:18px;padding-top:10px;font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase}
+  .dframe{display:none}
+  /* — design 2: Notebook (spiral page, ruled single column) — */
+  .d-notebook{border-radius:10px;padding-left:64px}
+  .tpl-doodle.d-notebook:before{content:"";position:absolute;top:26px;bottom:26px;left:14px;width:20px;background:radial-gradient(circle at 10px 10px,#fff 4.2px,#111 5px 6.6px,transparent 7.4px) 0 0/20px 46px repeat-y}
+  .tpl-doodle.d-notebook:after{content:"";position:absolute;top:14px;bottom:14px;left:48px;border-left:2px dashed #111;opacity:.45;pointer-events:none}
+  .d-notebook .tpl-doodle-head{flex-direction:column;align-items:center;text-align:center;gap:10px}
+  .d-notebook .dtitle-wrap{flex:none}
+  .d-notebook .dbrand{display:table;margin:0 auto 8px}
+  .d-notebook .dtitle{max-width:none;border-bottom:5px solid #111;padding-bottom:8px;display:inline-block}
+  .d-notebook .dmascot{margin-top:2px}
+  .d-notebook .dmeta{flex:none;max-width:none;width:100%;display:flex;gap:18px;flex-wrap:wrap}
+  .d-notebook .dmeta .dmeta-row{flex:1;min-width:140px;margin:4px 0}
+  .d-notebook .dbox{border-radius:14px}
+  .d-notebook .dq{text-align:left}
+  /* — design 3: Scrapbook (taped clippings, dotted inner frame) — */
+  .d-scrap{border-radius:14px}
+  .tpl-doodle.d-scrap:after{content:"";position:absolute;inset:9px;border:2.5px dotted #111;border-radius:20px;pointer-events:none}
+  .d-scrap .dtitle{display:inline-block;background:#111;color:#fff;padding:10px 20px;font-size:30px;border-radius:8px;transform:rotate(-2deg);box-shadow:5px 5px 0 #fff,7px 7px 0 #111;max-width:none}
+  .d-scrap .dbrand{margin-bottom:14px}
+  .d-scrap .dcols .dbox:nth-child(odd){transform:rotate(-1.1deg)}
+  .d-scrap .dcols .dbox:nth-child(even){transform:rotate(1.1deg)}
+  /* — design 4: Comic (bold panels, speech-bubble title) — */
+  .d-comic{border-radius:8px;border-width:4px}
+  .d-comic .dtitle{background:#111;color:#fff;display:inline-block;padding:12px 20px;font-size:28px;border-radius:16px;position:relative;max-width:none}
+  .d-comic .dtitle:after{content:"";position:absolute;left:36px;bottom:-15px;border:9px solid transparent;border-top-color:#111}
+  .d-comic .dmascot{margin-top:14px}
+  .d-comic .dmeta{border-radius:6px;box-shadow:5px 5px 0 #111}
+  .d-comic .dsec{border-radius:4px;transform:skew(-6deg)}
+  .d-comic .dnote,.d-comic .dpass{border-style:solid;border-radius:6px}
+  .dbox.v5{border-radius:4px;border-width:3.5px;box-shadow:6px 6px 0 #111;width:calc(100% - 7px)}
+  .d-comic .dopt{border-radius:6px}
+  .d-comic .dline{border-bottom-style:solid;border-bottom-width:2px}
+  @media(max-width:640px){.dcols{column-count:1}.dtitle{font-size:32px}.d-notebook{padding-left:46px}}
+  .bar{position:sticky;bottom:14px;display:flex;gap:10px;justify-content:center;margin-top:18px;z-index:5}
+  .btn{border:none;cursor:pointer;border-radius:18px;padding:14px 22px;font-family:inherit;font-weight:800;font-size:14px;box-shadow:0 8px 22px rgba(0,0,0,.12);transition:.15s}
+  .btn:hover{transform:translateY(-2px)}
+  .btn.check{background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff}
+  .btn.reset{background:#fff;color:#6d28d9;border:2px solid #ddd6fe}
+  .btn.print{background:#fff;color:#6d28d9;border:2px solid #ddd6fe}
+  .result{display:none;background:linear-gradient(135deg,#ffffff,#fef9ff);border:3px solid #f5d0fe;border-radius:24px;padding:26px;text-align:center;margin-bottom:18px;box-shadow:0 16px 34px rgba(124,58,237,.12)}
+  .result.show{display:block;animation:fade .3s ease}
+  .result .stars{font-size:42px;letter-spacing:6px}
+  .result .score{font-size:25px;font-weight:800;color:#7c3aed;margin:8px 0}
+  .result .msg{font-size:14px;font-weight:700;color:#7c6fa6}
+  .burst{position:fixed;inset:0;pointer-events:none;overflow:hidden;z-index:50}
+  .burst span{position:absolute;top:-40px;font-size:26px;animation:fall linear forwards}
+  @keyframes fall{to{transform:translateY(108vh) rotate(540deg);opacity:.2}}
+  .foot{text-align:center;color:#a99fce;font-size:12px;font-weight:700;margin-top:22px}
+  @page{margin:12mm}
+  @media print{
+    /* min-height:0 — body's 100vh otherwise forces a blank trailing page */
+    html,body{background:#fff;padding:0;margin:0;min-height:0}
+    .wrap{max-width:none}
+    .tabs,.bar,.id,.btn,.print,.foot,.deco,.burst,.tplpick{display:none!important}
+    /* print ONLY the tab that is currently open; kill the fade-in so the
+       snapshot is never caught at opacity 0 */
+    .panel{display:none!important}
+    .panel.on{display:block!important;animation:none!important}
+    .head{box-shadow:none;border-radius:0;padding:14px 20px}
+    .head h1{font-size:22px}
+    .head p{font-size:12px}
+    /* let sections flow & fill the page; strip card chrome so frames don't break across pages */
+    .card{box-shadow:none;border:none;background:none;padding:0;margin:0 0 6px;break-inside:auto}
+    .card h2{break-after:avoid;page-break-after:avoid}
+    /* keep each question together with its answer line / options */
+    .q{break-inside:avoid;page-break-inside:avoid;border-color:#b9a9f0}
+    .paperopt{border-color:#c9bff0}
+    /* Doodle printable: hide the app header so only the worksheet prints,
+       drop the sheet's own border and draw a complete frame on EVERY page
+       instead (position:fixed repeats per printed page). */
+    body.ptpl .head{display:none!important}
+    body.ptpl .dframe{display:block;position:fixed;inset:0;border:3px solid #111;border-radius:22px;pointer-events:none;z-index:9}
+    .dfoot{border-top:none;margin-top:8px;padding-top:4px;font-size:9px}
+    body.ptpl .dframe.d-notebook{border-radius:10px}
+    /* notebook holes + margin line move onto the per-page frame so they run
+       the full height of every printed page */
+    .tpl-doodle.d-notebook:before,.tpl-doodle.d-notebook:after{display:none}
+    body.ptpl .dframe.d-notebook:before{content:"";position:absolute;top:18px;bottom:18px;left:11px;width:20px;background:radial-gradient(circle at 10px 10px,#fff 4.2px,#111 5px 6.6px,transparent 7.4px) 0 0/20px 46px repeat-y}
+    body.ptpl .dframe.d-notebook:after{content:"";position:absolute;top:8px;bottom:8px;left:45px;border-left:2px dashed #111;opacity:.45}
+    body.ptpl .dframe.d-scrap{border-radius:14px;border-style:dashed}
+    body.ptpl .dframe.d-comic{border-radius:8px;border-width:4px}
+    .tpl-doodle{box-shadow:none;border:none;border-radius:0;padding:12px 20px 0}
+    .tpl-doodle.d-notebook{padding-left:60px}
+    .tpl-doodle-head{margin-bottom:8px}
+    .tpl-doodle.d-scrap:after{display:none}
+    /* print the 2-column collage as a grid — CSS multicol fragments badly
+       across pages (huge column gaps, orphaned boxes on a trailing page) */
+    .dcols{display:grid;grid-template-columns:1fr 1fr;column-gap:18px;align-items:start}
+    .dcols.one{display:block}
+    .dcols .dsec,.dcols .dins{grid-column:1/-1}
+    .dbox{margin:8px 0 2px}
+    .dbox.v1{margin-top:18px}
+    .dbox.v4{margin-top:16px}
+    .dnote{margin-bottom:4px}
+    .dbox.v3{box-shadow:8px 8px 0 -3px #fff,8px 8px 0 0 #111}
+    .dbox.v5{box-shadow:6px 6px 0 #111}
+    .dline{height:24px}
+    .dsec{margin:14px auto 2px}
+  }
+</style>
+</head>
+<body>
+<div class="burst" id="burst"></div>
+<div class="wrap">
+  <div class="head">
+    <div class="deco">✏️ ✨ \u{1F9E9} \u{1F4DA} \u{1F31F} \u{1F52C} \u{1F3A8} ✨ ✏️</div>
+    <h1 id="title">Assessment</h1>
+    <p>Interactive Learning Pack — complete the paper task or play the organizer!</p>
+    <div class="id">
+      <label>\u{1F9D1}‍\u{1F393} Name <input id="sName" placeholder="Your name" /></label>
+      <label>\u{1F4C5} Date <input id="sDate" placeholder="Today" /></label>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab on" id="tabPaper" onclick="showTab('paper')">\u{1F4DD} Paper Assessment</button>
+    <button class="tab" id="tabTpl" onclick="showTab('template')">\u{1F3A8} Interactive Template</button>
+    <button class="tab" id="tabOrg" onclick="showTab('org')">✨ Interactive Organizer</button>
+  </div>
+
+  <div class="panel on" id="paper"></div>
+  <div class="bar" id="paperBar">
+    <button class="btn print" onclick="window.print()">\u{1F5A8}️ Print Paper Assessment</button>
+  </div>
+
+  <div class="panel" id="template">
+    <div id="tplPicker" class="tplpick"></div>
+    <div id="dframe" class="dframe"></div>
+    <div id="tplBody"></div>
+    <div class="bar">
+      <button class="btn print" onclick="window.print()">\u{1F5A8}️ Print Worksheet</button>
+    </div>
+  </div>
+
+  <div class="panel" id="org">
+    <div class="orgintro">
+      <h2>\u{1F9E9} Interactive Learning Organizer</h2>
+      <p>Tap, match &amp; sort each colourful activity — then press “Check My Answers” to earn your stars! ⭐</p>
+    </div>
+    <div class="result" id="result"></div>
+    <div id="orgBody"></div>
+    <div class="bar">
+      <button class="btn check" onclick="checkAll()">✅ Check My Answers</button>
+      <button class="btn reset" onclick="resetOrg()">\u{1F501} Reset</button>
+      <button class="btn print" onclick="window.print()">\u{1F5A8}️ Print Organizer</button>
+    </div>
+  </div>
+
+  <div class="foot">Generated by Zera Education · Works offline · Open in any browser</div>
+</div>
+
+<script>
+var WS = /*__WS__*/null;
+var TITLE = /*__TITLE__*/null;
+if(!WS){WS={title:"Assessment",description:"",readingPassage:"",sections:[]};}
+if(!TITLE){TITLE=WS.title||"Assessment";}
+
+function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+function shuffle(a){a=a.slice();for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=a[i];a[i]=a[j];a[j]=t;}return a;}
+function byId(id){return document.getElementById(id);}
+
+document.title="Interactive Assessment — "+TITLE;
+byId("title").textContent=TITLE;
+byId("sDate").value=new Date().toLocaleDateString();
+
+/* ---------- Paper assessment ---------- */
+(function renderPaper(){
+  var h="";
+  h+='<div class="card"><h2>'+esc(WS.title||TITLE)+'</h2>';
+  if(WS.description){h+='<div class="ins">'+esc(WS.description)+'</div>';}
+  if(WS.readingPassage&&WS.readingPassage.trim()){h+='<div class="passage">'+esc(WS.readingPassage)+'</div>';}
+  h+='</div>';
+  (WS.sections||[]).forEach(function(sec){
+    h+='<div class="card"><h2>'+esc(sec.title||"Task")+'</h2>';
+    if(sec.instructions){h+='<div class="ins">'+esc(sec.instructions)+'</div>';}
+    (sec.questions||[]).forEach(function(q,i){
+      h+='<div class="q"><div class="qt">'+(i+1)+'. '+esc(q.text)+'</div>';
+      if(q.options&&q.options.length){
+        h+='<div class="opts">';
+        q.options.forEach(function(o){h+='<div class="paperopt">□ '+esc(o)+'</div>';});
+        h+='</div>';
+      }else{h+='<div class="ansline"></div><div class="ansline"></div>';}
+      h+='</div>';
+    });
+    h+='</div>';
+  });
+  byId("paper").innerHTML=h;
+})();
+
+/* ---------- Interactive Template — pick a worksheet design ---------- */
+var TPL_THEMES=[
+  {name:"Collage",icon:"✏️",cls:"d-collage",mascot:"\u{1F431}✏️",cols:2,frames:[0,1,2,3,4],num:false,scribs:true},
+  {name:"Notebook",icon:"\u{1F4D3}",cls:"d-notebook",mascot:"\u{1F989} \u{1F4DA}",cols:1,frames:[0,2,4],num:true,scribs:false},
+  {name:"Scrapbook",icon:"✂️",cls:"d-scrap",mascot:"\u{1F430} ✂️",cols:2,frames:[1,3,4],num:false,scribs:true},
+  {name:"Comic",icon:"\u{1F4A5}",cls:"d-comic",mascot:"⚡",cols:2,frames:[5],num:true,scribs:false}
+];
+var tplTheme=0;
+
+function renderPicker(){
+  var p=byId("tplPicker"),h="";
+  for(var i=0;i<TPL_THEMES.length;i++){
+    h+='<button onclick="setTplTheme('+i+')"'+(i===tplTheme?' class="on"':'')+'>'+TPL_THEMES[i].icon+' '+esc(TPL_THEMES[i].name)+'</button>';
+  }
+  p.innerHTML=h;
+}
+
+function setTplTheme(i){ tplTheme=i; renderPicker(); renderTemplate(); }
+
+/* Hand-drawn black & white printable layouts (doodle frames, dotted
+   fill-in lines) — modelled on classic kids' printable worksheets.
+   Each design swaps the page structure, frames and title treatment. */
+function renderTemplate(){
+  var t=TPL_THEMES[tplTheme]||TPL_THEMES[0];
+  var h='<div class="tpl-doodle '+t.cls+'">';
+  if(t.scribs){h+='<span class="dscrib s1">✦</span><span class="dscrib s2">♡</span><span class="dscrib s3">✴</span>';}
+  h+='<div class="tpl-doodle-head">';
+  h+='<div class="dtitle-wrap"><div class="dbrand">★ Zera Printables</div><div class="dtitle">'+esc(WS.title||TITLE)+'</div><div class="dmascot">'+t.mascot+'</div></div>';
+  h+='<div class="dbox v0 dmeta"><div class="dmeta-row">My name is <i></i></div><div class="dmeta-row">Date <i></i></div><div class="dmeta-row">My class <i></i></div></div>';
+  h+='</div>';
+  if(WS.description){h+='<div class="dnote">'+esc(WS.description)+'</div>';}
+  if(WS.readingPassage&&WS.readingPassage.trim()){h+='<div class="dpass">'+esc(WS.readingPassage)+'</div>';}
+  h+='<div class="dcols'+(t.cols===1?" one":"")+'">';
+  var v=0,qn=0;
+  (WS.sections||[]).forEach(function(sec){
+    h+='<div class="dsec">'+esc(sec.title||"Activity")+'</div>';
+    if(sec.instructions){h+='<div class="dins">'+esc(sec.instructions)+'</div>';}
+    (sec.questions||[]).forEach(function(q){
+      qn++;
+      h+='<div class="dbox v'+t.frames[v%t.frames.length]+'">';
+      if(t.num){h+='<div class="dq withnum"><span class="dnum">'+qn+'</span><span>'+esc(q.text)+'</span></div>';}
+      else{h+='<div class="dq">'+esc(q.text)+'</div>';}
+      if(q.options&&q.options.length){
+        q.options.forEach(function(o,oi){h+='<button class="dopt" onclick="tplTick(this)"><span class="dl">'+String.fromCharCode(65+oi)+'</span><span>'+esc(o)+'</span></button>';});
+      }else{
+        h+='<div class="dline"></div><div class="dline"></div><div class="dline"></div>';
+      }
+      h+='</div>';
+      v++;
+    });
+  });
+  h+='</div>';
+  h+='<div class="dfoot"><span>✏️ Zera Education printable</span><span>'+esc(WS.title||TITLE)+'</span><span>★ Great work!</span></div>';
+  h+='</div>';
+  byId("tplBody").innerHTML=h;
+  byId("dframe").className="dframe "+t.cls;
+}
+
+renderPicker();
+renderTemplate();
+
+function tplTick(btn){ btn.classList.toggle("ticked"); }
+
+/* ---------- Build organizer data (mirrors the in-app organizer) ---------- */
+function buildOrganizer(ws,title){
+  var qList=[];
+  (ws.sections||[]).forEach(function(sec){(sec.questions||[]).forEach(function(q){var c={};for(var k in q){c[k]=q[k];}c.sectionTitle=sec.title||"Assessment Task";qList.push(c);});});
+  var withOpts=qList.filter(function(q){return q.options&&q.options.length>0;});
+  var qMcq=withOpts[0]||{text:"What is the core learning focus of our lesson on "+(title||"this topic")+"?",options:["Gaining active inquiry skills","Memorizing facts without understanding","Waiting for the timer to tick","Leaving homework incomplete"],sectionTitle:"Brain Power Quiz"};
+  var qCircle=withOpts[1]||{text:"Identify the true purpose of "+(title||"this worksheet")+":",options:["To explore and test ideas through interactive exercises","To guess randomly without thinking","To close the worksheet immediately"],sectionTitle:"Circle the Fact"};
+  var qTF=null;
+  for(var i=0;i<qList.length;i++){var t=(qList[i].text||"").toLowerCase();if(qList[i].type==="true-false"||t.indexOf("true")>=0||t.indexOf("false")>=0){qTF=qList[i];break;}}
+  if(!qTF){qTF={text:'Working on interactive organizers about "'+(title||"our lesson")+'" helps solidify our active learning memory!',isTrue:true,sectionTitle:"Fact Analyzer"};}
+  var qFill=null;
+  for(var j=0;j<qList.length;j++){if(qList[j].type==="fill-in-the-blanks"||(qList[j].text||"").indexOf("____")>=0){qFill=qList[j];break;}}
+  if(!qFill){qFill={text:"We always use our critical thinking caps to ____ any educational challenge we find.",options:["solve","ignore","sleep through","skip"],sectionTitle:"Vocabulary Fit"};}
+  var raw=qFill.text||"",tb=raw,ta="";
+  if(raw.indexOf("____")>=0){var parts=raw.split(/____+/);tb=parts[0]||"";ta=parts[1]||"";}else{tb=raw+" is a very ";ta=" concept.";}
+  var qShort=null;
+  for(var k2=0;k2<qList.length;k2++){if(qList[k2].type==="short-answer"||!qList[k2].options||qList[k2].options.length===0){qShort=qList[k2];break;}}
+  if(!qShort){qShort={text:'In your own words, what was the most exciting fact you learned about "'+(title||"our topic")+'" today?',sectionTitle:"Reflection Journal"};}
+  var keywords=[
+    {term:"Topic Focus",def:'The central theme of our study: "'+(title||"Mastery")+'".'},
+    {term:"Inquiry",def:"Asking smart questions and searching for proof to explain how things work."},
+    {term:"Application",def:"Using rules to find solutions to interesting challenges."}
+  ];
+  return {qMcq:qMcq,qCircle:qCircle,qTF:qTF,qFill:{tb:tb,ta:ta,expected:(qFill.options&&qFill.options[0])||"solve",choices:(qFill.options||["solve","ignore","sleep through","skip"]),title:qFill.sectionTitle},qShort:qShort,keywords:keywords};
+}
+
+var ORG=buildOrganizer(WS,TITLE);
+var graders=[];   /* each returns true/false; null entries are ungraded */
+var connState={active:null,pairs:{}};
+var sortState={active:null};
+
+function makeCard(emoji,title,inner){
+  return '<div class="card org"><h2>'+emoji+' '+esc(title)+'</h2>'+inner+'</div>';
+}
+
+function pickOpt(btn){
+  var group=btn.parentNode;
+  var opts=group.querySelectorAll(".opt");
+  for(var i=0;i<opts.length;i++){opts[i].classList.remove("selected");}
+  btn.classList.add("selected");
+}
+
+/* We rebuild graders cleanly here for reliability */
+function buildOrgUI(){
+  var host=byId("orgBody");
+  host.innerHTML="";
+  graders=[];
+  connState={active:null,pairs:{}};
+  sortState={active:null};
+
+  /* helper to append a choice card and register a grader */
+  function choiceCard(emoji,title,question,options,correctIdx,grid){
+    var shown=shuffle(options.map(function(o,i){return {text:o,correct:i===correctIdx};}));
+    var inner='<div class="qtext">'+esc(question)+'</div><div class="'+(grid?"grid2":"opts")+'">';
+    shown.forEach(function(o){inner+='<button class="opt" data-correct="'+(o.correct?"1":"0")+'" onclick="pickOpt(this)"><span class="dot"></span><span>'+esc(o.text)+'</span></button>';});
+    inner+='</div>';
+    var card=document.createElement("div");
+    card.innerHTML=makeCard(emoji,title,inner);
+    var node=card.firstChild;
+    host.appendChild(node);
+    graders.push(function(){var s=node.querySelector(".opt.selected");return !!(s&&s.getAttribute("data-correct")==="1");});
+  }
+
+  /* 1. MCQ */
+  choiceCard("\u{1F3C6}",ORG.qMcq.sectionTitle||"Multiple Choice",ORG.qMcq.text,ORG.qMcq.options,0,false);
+  /* 2. Circle the fact */
+  choiceCard("⭕",ORG.qCircle.sectionTitle||"Circle the Fact",ORG.qCircle.text,ORG.qCircle.options,0,false);
+  /* 3. True / False */
+  var tfCorrect=(ORG.qTF.isTrue!==undefined?ORG.qTF.isTrue:true)?0:1;
+  choiceCard("\u{1F44D}",ORG.qTF.sectionTitle||"Fact or Fiction",ORG.qTF.statement||ORG.qTF.text,["TRUE","FALSE"],tfCorrect,true);
+
+  /* 4. Fill in the blank */
+  (function(){
+    var f=ORG.qFill;
+    var shown=shuffle(f.choices.map(function(o){return {text:o,correct:o===f.expected};}));
+    var inner='<div class="fillrow">'+esc(f.tb)+' <span class="blank" id="fillBlank">______</span> '+esc(f.ta)+'</div>';
+    inner+='<div class="grid2" style="margin-top:12px">';
+    shown.forEach(function(o){inner+='<button class="opt" data-correct="'+(o.correct?"1":"0")+'" onclick="pickFill(this)"><span class="dot"></span><span>'+esc(o.text)+'</span></button>';});
+    inner+='</div>';
+    var card=document.createElement("div");card.innerHTML=makeCard("✏️",f.title||"Fill the Blank",inner);
+    var node=card.firstChild;host.appendChild(node);
+    graders.push(function(){var s=node.querySelector(".opt.selected");return !!(s&&s.getAttribute("data-correct")==="1");});
+  })();
+
+  /* 5. Concept Connectors */
+  (function(){
+    var kws=ORG.keywords;
+    var left=kws.map(function(k,i){return {id:"L"+i,text:k.term};});
+    var right=shuffle(kws.map(function(k,i){return {id:"R"+i,key:i,text:k.def};}));
+    var inner='<div class="qtext">Tap a term, then tap its matching meaning.</div><div class="cols"><div class="col" id="connL"></div><div class="col" id="connR"></div></div>';
+    var card=document.createElement("div");card.innerHTML=makeCard("\u{1F517}","Concept Connectors",inner);
+    var node=card.firstChild;host.appendChild(node);
+    var lc=node.querySelector("#connL"),rc=node.querySelector("#connR");
+    left.forEach(function(l,i){var b=document.createElement("div");b.className="term";b.setAttribute("data-key",i);b.innerHTML='<span>'+esc(l.text)+'</span><span class="badge" style="display:none"></span>';b.onclick=function(){connPickTerm(b);};lc.appendChild(b);});
+    right.forEach(function(r){var b=document.createElement("div");b.className="def";b.setAttribute("data-key",r.key);b.textContent=r.text;b.onclick=function(){connPickDef(b);};rc.appendChild(b);});
+    graders.push(function(){
+      var terms=node.querySelectorAll(".term");var ok=true;
+      terms.forEach(function(t){
+        var paired=connState.pairs[t.getAttribute("data-key")];
+        var good=(paired!==undefined&&String(paired)===t.getAttribute("data-key"));
+        t.classList.remove("ok","bad");t.classList.add(good?"ok":"bad");
+        if(!good)ok=false;
+      });
+      return ok;
+    });
+  })();
+
+  /* 6. Category Sorting */
+  (function(){
+    var pool=shuffle([
+      {label:"Active Understanding",tag:"core"},
+      {label:"Inquiry Evidence",tag:"core"},
+      {label:"Silly Distractors",tag:"extra"},
+      {label:"Random Doodles",tag:"extra"}
+    ]);
+    var inner='<div class="qtext">Tap an item, then tap the box it belongs in.</div>';
+    inner+='<div class="pool" id="sortPool"></div>';
+    inner+='<div class="buckets"><div class="bucket" data-tag="core" onclick="sortDrop(this)"><div class="bt">✨ Essential / Core</div><div class="drop"></div></div>';
+    inner+='<div class="bucket" data-tag="extra" onclick="sortDrop(this)"><div class="bt">⭐ Extra / Distractor</div><div class="drop"></div></div></div>';
+    var card=document.createElement("div");card.innerHTML=makeCard("\u{1F9FA}","Category Sorting Break",inner);
+    var node=card.firstChild;host.appendChild(node);
+    var poolEl=node.querySelector("#sortPool");
+    pool.forEach(function(it){var b=document.createElement("div");b.className="item";b.setAttribute("data-tag",it.tag);b.textContent=it.label;b.onclick=function(){sortPick(b);};poolEl.appendChild(b);});
+    graders.push(function(){
+      var items=node.querySelectorAll(".bucket .item");var poolLeft=node.querySelectorAll("#sortPool .item").length;
+      if(items.length===0)return false;var ok=poolLeft===0;
+      items.forEach(function(it){var b=it.closest(".bucket");var good=b.getAttribute("data-tag")===it.getAttribute("data-tag");it.classList.remove("ok","bad");it.classList.add(good?"ok":"bad");if(!good)ok=false;});
+      return ok;
+    });
+  })();
+
+  /* 7. Reflection (ungraded) */
+  (function(){
+    var inner='<div class="qtext">'+esc(ORG.qShort.text)+'</div><textarea class="reflect" placeholder="Write your answer like a real scholar..."></textarea>';
+    var card=document.createElement("div");card.innerHTML=makeCard("✍️",ORG.qShort.sectionTitle||"Reflection",inner);
+    host.appendChild(card.firstChild);
+  })();
+}
+
+function connPickTerm(el){
+  if(el.classList.contains("paired"))return;
+  var all=el.parentNode.querySelectorAll(".term");for(var i=0;i<all.length;i++)all[i].classList.remove("active");
+  el.classList.add("active");connState.active=el;
+}
+function connPickDef(def){
+  if(!connState.active||def.classList.contains("paired"))return;
+  var t=connState.active;var tk=t.getAttribute("data-key"),dk=def.getAttribute("data-key");
+  connState.pairs[tk]=dk;
+  t.classList.remove("active");t.classList.add("paired");def.classList.add("paired");
+  var badge=t.querySelector(".badge");badge.style.display="inline-block";badge.textContent="→ "+def.textContent.slice(0,18)+(def.textContent.length>18?"…":"");
+  connState.active=null;
+}
+function sortPick(el){
+  if(el.classList.contains("placed-lock"))return;
+  var actives=document.querySelectorAll(".item.active");for(var i=0;i<actives.length;i++)actives[i].classList.remove("active");
+  el.classList.add("active");sortState.active=el;
+}
+function sortDrop(bucket){
+  if(!sortState.active)return;
+  bucket.querySelector(".drop").appendChild(sortState.active);
+  sortState.active.classList.remove("active");sortState.active=null;
+}
+
+function pickFill(btn){
+  pickOpt(btn);
+  var blank=byId("fillBlank");if(blank)blank.textContent=btn.querySelector("span:last-child").textContent;
+}
+
+function showTab(which){
+  document.body.classList.toggle("ptpl",which==="template");
+  byId("paper").classList.toggle("on",which==="paper");
+  byId("template").classList.toggle("on",which==="template");
+  byId("org").classList.toggle("on",which==="org");
+  byId("tabPaper").classList.toggle("on",which==="paper");
+  byId("tabTpl").classList.toggle("on",which==="template");
+  byId("tabOrg").classList.toggle("on",which==="org");
+  byId("paperBar").style.display = which==="paper" ? "" : "none";
+}
+
+function celebrate(){
+  var b=byId("burst");b.innerHTML="";var ems=["⭐","\u{1F389}","✨","\u{1F31F}","\u{1F38A}"];
+  for(var i=0;i<26;i++){var s=document.createElement("span");s.textContent=ems[i%ems.length];s.style.left=(Math.random()*100)+"%";s.style.animationDuration=(2+Math.random()*2)+"s";s.style.animationDelay=(Math.random()*0.6)+"s";b.appendChild(s);}
+  setTimeout(function(){b.innerHTML="";},4200);
+}
+
+function checkAll(){
+  document.body.classList.add("reveal");
+  var total=0,correct=0;
+  for(var i=0;i<graders.length;i++){var r=graders[i]();if(r===null)continue;total++;if(r)correct++;}
+  var pct=total?correct/total:0;var stars=Math.max(1,Math.round(pct*5));
+  var sHtml="";for(var s=0;s<5;s++){sHtml+=s<stars?"⭐":"☆";}
+  var msg=pct===1?"Perfect! You are a superstar! \u{1F31F}":pct>=0.6?"Great work — keep it up! \u{1F4AA}":"Good try! Review and play again. \u{1F4DA}";
+  var res=byId("result");
+  res.innerHTML='<div class="stars">'+sHtml+'</div><div class="score">'+correct+' / '+total+' correct</div><div class="msg">'+msg+'</div>';
+  res.classList.add("show");
+  res.scrollIntoView({behavior:"smooth",block:"center"});
+  if(pct===1)celebrate();
+}
+
+function resetOrg(){
+  document.body.classList.remove("reveal");
+  byId("result").classList.remove("show");
+  buildOrgUI();
+}
+
+buildOrgUI();
+</script>
+</body>
+</html>`;
+
+// Slide design templates — every designType is a visually DISTINCT slide
+// layout (band header, hand-drawn sketch, taped paper, gradient, chalkboard…)
+// rather than a recolor of the same chrome. Rendered behind content (z-10).
+const renderSlideDecor = (
+  theme: AppTheme,
+  slideIdx: number,
+  slideCount: number,
+) => {
+  const accent = theme.accentColor || "#059669";
+  const secondary =
+    theme.secondaryColor && theme.secondaryColor.startsWith("#")
+      ? theme.secondaryColor
+      : accent;
+  const design = theme.designType || "blob";
+  const chip = (bg: string, fg: string, border?: string) => (
+    <div
+      className="absolute bottom-3.5 right-5 text-[11px] font-black tracking-wider px-3 py-1 rounded-full shadow-md"
+      style={{ backgroundColor: bg, color: fg, border }}
+    >
+      {theme.emoji} {slideIdx + 1}/{slideCount}
+    </div>
+  );
+  return (
+    <div
+      className="absolute inset-0 overflow-hidden pointer-events-none select-none"
+      aria-hidden="true"
+    >
+      {design === "band" && (
+        <>
+          <div
+            className="absolute top-0 left-0 right-0 h-[23%]"
+            style={{
+              background: `linear-gradient(100deg, ${accent}, ${accent}E6)`,
+              borderRadius: "0 0 30px 30px",
+            }}
+          />
+          <div
+            className="absolute left-10 right-10 h-1.5 rounded-full"
+            style={{ top: "calc(23% + 7px)", backgroundColor: secondary }}
+          />
+          <div
+            className="absolute top-4 right-6 w-10 h-10 rounded-full"
+            style={{ border: "4px solid #FFFFFF55" }}
+          />
+          <div
+            className="absolute top-9 right-14 w-4 h-4 rounded-full"
+            style={{ backgroundColor: `${secondary}AA` }}
+          />
+          <div
+            className="absolute -bottom-12 -right-12 w-48 h-48 rounded-full"
+            style={{ backgroundColor: `${secondary}26` }}
+          />
+          <span
+            className="absolute bottom-1 left-5 text-6xl"
+            style={{ opacity: 0.12 }}
+          >
+            {theme.emoji}
+          </span>
+          {chip(secondary, "#1A2E22")}
+        </>
+      )}
+      {design === "doodle" && (
+        <>
+          <div
+            className="absolute inset-3"
+            style={{
+              border: "3px solid #111",
+              borderRadius: "36px 20px 40px 18px/20px 40px 18px 36px",
+            }}
+          />
+          <span
+            className="absolute top-5 right-12 text-2xl"
+            style={{ color: "#111", transform: "rotate(14deg)" }}
+          >
+            ✦
+          </span>
+          <span
+            className="absolute top-12 right-24 text-base"
+            style={{ color: "#111", transform: "rotate(-12deg)" }}
+          >
+            ♡
+          </span>
+          <span
+            className="absolute bottom-10 left-10 text-xl"
+            style={{ color: "#111", transform: "rotate(-18deg)" }}
+          >
+            ✴
+          </span>
+          <span
+            className="absolute top-1/2 right-7 text-lg"
+            style={{ color: "#111", transform: "rotate(22deg)" }}
+          >
+            ✏️
+          </span>
+          <div
+            className="absolute bottom-7 right-28 w-20 h-2.5 rounded-full"
+            style={{
+              background:
+                "repeating-linear-gradient(90deg,#111 0 7px,transparent 7px 13px)",
+            }}
+          />
+          {chip("#111111", "#FFFFFF")}
+        </>
+      )}
+      {design === "paper" && (
+        <>
+          <div
+            className="absolute -bottom-14 -left-14 w-56 h-56 rounded-full"
+            style={{ backgroundColor: `${accent}30` }}
+          />
+          <div
+            className="absolute -top-10 -right-16 w-48 h-48 rounded-full"
+            style={{ backgroundColor: `${accent}22` }}
+          />
+          <div
+            className="absolute rounded-3xl bg-white shadow-xl"
+            style={{
+              left: "3.5%",
+              right: "3.5%",
+              top: "4%",
+              bottom: "10%",
+              transform: "rotate(-0.6deg)",
+              border: `1px solid ${accent}1F`,
+            }}
+          />
+          <div
+            className="absolute left-1/2 -translate-x-1/2 w-28 h-7"
+            style={{
+              top: "1.5%",
+              backgroundColor: `${secondary}B3`,
+              borderRadius: 4,
+              transform: "translateX(-50%) rotate(-3deg)",
+              border: `1px solid ${secondary}`,
+            }}
+          />
+          <div
+            className="absolute w-16 h-6"
+            style={{
+              right: "2%",
+              top: "14%",
+              backgroundColor: `${secondary}80`,
+              borderRadius: 4,
+              transform: "rotate(45deg)",
+            }}
+          />
+          {chip(accent, "#FFFFFF")}
+        </>
+      )}
+      {design === "gradient" && (
+        <>
+          <div
+            className="absolute inset-0"
+            style={{
+              background: `linear-gradient(125deg, transparent 0%, ${secondary}59 55%, ${secondary}A6 100%)`,
+            }}
+          />
+          <div
+            className="absolute -top-20 -right-20 w-72 h-72 rounded-full"
+            style={{ backgroundColor: "#FFFFFF1A" }}
+          />
+          <div
+            className="absolute rounded-3xl"
+            style={{
+              left: "3%",
+              right: "3%",
+              top: "5%",
+              bottom: "11%",
+              backgroundColor: "#FFFFFF12",
+              border: "1.5px solid #FFFFFF3D",
+            }}
+          />
+          <span
+            className="absolute top-8 right-16 text-3xl"
+            style={{ color: "#FFFFFF", opacity: 0.55, transform: "rotate(-12deg)" }}
+          >
+            ✦
+          </span>
+          <span
+            className="absolute top-1/3 right-8 text-lg"
+            style={{ color: "#FFFFFF", opacity: 0.4, transform: "rotate(15deg)" }}
+          >
+            ✧
+          </span>
+          <span
+            className="absolute bottom-16 left-10 text-xl"
+            style={{ color: "#FFFFFF", opacity: 0.35, transform: "rotate(-20deg)" }}
+          >
+            ✦
+          </span>
+          {chip("#FFFFFF", theme.bgColor)}
+        </>
+      )}
+      {design === "clouds" && (
+        <>
+          <div
+            className="absolute top-5 right-10 w-24 h-24 rounded-full"
+            style={{
+              backgroundColor: secondary,
+              opacity: 0.9,
+              boxShadow: `0 0 70px 24px ${secondary}59`,
+            }}
+          />
+          <svg
+            className="absolute top-0 left-0 w-full h-[26%]"
+            viewBox="0 0 1440 200"
+            preserveAspectRatio="none"
+          >
+            <ellipse cx="190" cy="40" rx="180" ry="58" fill="#FFFFFF" opacity="0.9" />
+            <ellipse cx="360" cy="14" rx="130" ry="46" fill="#FFFFFF" opacity="0.75" />
+            <ellipse cx="820" cy="0" rx="150" ry="42" fill="#FFFFFF" opacity="0.6" />
+          </svg>
+          <svg
+            className="absolute bottom-0 left-0 w-full h-[20%]"
+            viewBox="0 0 1440 140"
+            preserveAspectRatio="none"
+          >
+            <ellipse cx="380" cy="150" rx="700" ry="90" fill={accent} opacity="0.18" />
+            <ellipse cx="1180" cy="170" rx="720" ry="110" fill={accent} opacity="0.12" />
+          </svg>
+          <span
+            className="absolute top-1/2 left-8 text-xl"
+            style={{ opacity: 0.5 }}
+          >
+            🪁
+          </span>
+          {chip(accent, "#FFFFFF")}
+        </>
+      )}
+      {design === "chalk" && (
+        <>
+          <div
+            className="absolute inset-4 rounded-2xl"
+            style={{ border: "2.5px dashed #FFFFFF66" }}
+          />
+          <span
+            className="absolute top-7 right-12 text-2xl font-bold"
+            style={{ color: "#FFFFFF", opacity: 0.4, transform: "rotate(8deg)" }}
+          >
+            ✓
+          </span>
+          <span
+            className="absolute bottom-12 right-28 text-sm font-bold tracking-[0.3em]"
+            style={{ color: "#FFFFFF", opacity: 0.3, transform: "rotate(-4deg)" }}
+          >
+            abc
+          </span>
+          <span
+            className="absolute top-1/2 left-7 text-base font-bold tracking-widest"
+            style={{ color: "#FFFFFF", opacity: 0.25, transform: "rotate(-90deg)" }}
+          >
+            123
+          </span>
+          <span
+            className="absolute top-6 left-1/2 text-lg"
+            style={{ color: secondary, opacity: 0.6 }}
+          >
+            ★
+          </span>
+          <div
+            className="absolute bottom-0 left-0 right-0 h-10"
+            style={{ background: "linear-gradient(0deg,#FFFFFF14,transparent)" }}
+          />
+          {chip("#FFFFFF22", "#FFFFFF", "1.5px solid #FFFFFF55")}
+        </>
+      )}
+      {design === "minimal" && (
+        <>
+          <div
+            className="absolute top-5 left-12 right-12 h-px"
+            style={{ backgroundColor: `${secondary}59` }}
+          />
+          <div
+            className="absolute bottom-10 left-12 right-12 h-px"
+            style={{ backgroundColor: `${secondary}40` }}
+          />
+          <span
+            className="absolute top-7 right-10 font-black"
+            style={{ fontSize: 96, lineHeight: 1, color: accent, opacity: 0.05 }}
+          >
+            {String(slideIdx + 1).padStart(2, "0")}
+          </span>
+          <div
+            className="absolute bottom-4 left-12 text-[10px] font-bold tracking-[0.25em] uppercase"
+            style={{ color: `${secondary}B3` }}
+          >
+            Zera Education
+          </div>
+          <div
+            className="absolute bottom-4 right-12 text-[10px] font-black"
+            style={{ color: accent }}
+          >
+            {slideIdx + 1} / {slideCount}
+          </div>
+        </>
+      )}
+      {design === "blob" && (
+        <>
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                `radial-gradient(circle at 88% -12%, ${accent}30 0%, transparent 46%),` +
+                `radial-gradient(circle at -10% 112%, ${secondary}40 0%, transparent 48%)`,
+            }}
+          />
+          <svg
+            className="absolute -top-28 -right-24 w-[26rem] h-[26rem]"
+            viewBox="0 0 200 200"
+          >
+            <path
+              d="M44.8,-67.2C58.2,-59.4,69.2,-46.9,75.3,-32.3C81.4,-17.7,82.5,-1,78.6,14C74.7,29,65.8,42.4,54,52.3C42.2,62.2,27.6,68.5,11.7,72.7C-4.2,76.9,-21.3,78.9,-35.4,73C-49.5,67,-60.6,53.1,-67.9,37.8C-75.2,22.5,-78.7,5.8,-76.2,-9.8C-73.7,-25.4,-65.2,-39.8,-53.3,-48.1C-41.4,-56.4,-26.1,-58.5,-11,-62.4C4.1,-66.4,31.4,-75,44.8,-67.2Z"
+              transform="translate(100 100)"
+              fill={accent}
+              opacity="0.15"
+            />
+          </svg>
+          <div
+            className="absolute top-8 right-12 w-16 h-16 rounded-full"
+            style={{ border: `5px solid ${accent}`, opacity: 0.32 }}
+          />
+          <div
+            className="absolute bottom-14 left-8 w-9 h-9 rounded-full"
+            style={{ backgroundColor: secondary, opacity: 0.4 }}
+          />
+          <div
+            className="absolute top-1/3 right-6 w-2.5 h-2.5 rounded-full"
+            style={{ backgroundColor: accent, opacity: 0.35 }}
+          />
+          <div
+            className="absolute top-10 left-1/3 w-2 h-2 rotate-45"
+            style={{ backgroundColor: secondary, opacity: 0.45 }}
+          />
+          <div
+            className="absolute bottom-8 left-1/3 w-2 h-2 rounded-full"
+            style={{ backgroundColor: accent, opacity: 0.3 }}
+          />
+          <span
+            className="absolute bottom-14 right-32 text-2xl"
+            style={{ color: accent, opacity: 0.3, transform: "rotate(18deg)" }}
+          >
+            ✦
+          </span>
+          <span
+            className="absolute top-16 right-32 text-xl"
+            style={{ color: secondary, opacity: 0.45, transform: "rotate(-12deg)" }}
+          >
+            ★
+          </span>
+          {chip(accent, "#FFFFFF")}
+        </>
+      )}
+    </div>
+  );
+};
+
+// Mini live preview of a slide design for the template picker — shows the
+// design's actual signature (band, sketch frame, taped paper…) plus mock
+// title/text lines, so templates are recognizable at a glance.
+const renderThemeThumb = (t: AppTheme) => {
+  const accent = t.accentColor;
+  const secondary =
+    t.secondaryColor && t.secondaryColor.startsWith("#")
+      ? t.secondaryColor
+      : t.accentColor;
+  const design = t.designType || "blob";
+  const lines = (titleColor: string, textColor: string, top = "40%") => (
+    <div className="absolute left-[10%] right-[26%] space-y-1" style={{ top }}>
+      <div
+        className="h-1.5 w-3/5 rounded-full"
+        style={{ backgroundColor: titleColor }}
+      />
+      <div
+        className="h-1 w-full rounded-full"
+        style={{ backgroundColor: textColor, opacity: 0.35 }}
+      />
+      <div
+        className="h-1 w-3/4 rounded-full"
+        style={{ backgroundColor: textColor, opacity: 0.35 }}
+      />
+    </div>
+  );
+  switch (design) {
+    case "band":
+      return (
+        <>
+          <div
+            className="absolute top-0 left-0 right-0 h-[32%]"
+            style={{ backgroundColor: accent, borderRadius: "0 0 8px 8px" }}
+          />
+          <div
+            className="absolute left-[8%] right-[8%] h-0.5 rounded-full"
+            style={{ top: "36%", backgroundColor: secondary }}
+          />
+          <div
+            className="absolute top-[10%] left-[10%] h-1.5 w-2/5 rounded-full"
+            style={{ backgroundColor: "#FFFFFF" }}
+          />
+          {lines(accent, t.textColor, "48%")}
+        </>
+      );
+    case "doodle":
+      return (
+        <>
+          <div
+            className="absolute inset-1"
+            style={{
+              border: "1.5px solid #111",
+              borderRadius: "12px 6px 14px 5px/6px 14px 5px 12px",
+            }}
+          />
+          <span
+            className="absolute top-1 right-2 text-[9px]"
+            style={{ color: "#111" }}
+          >
+            ✦
+          </span>
+          {lines("#111111", "#111111")}
+        </>
+      );
+    case "paper":
+      return (
+        <>
+          <div
+            className="absolute bg-white rounded-md shadow"
+            style={{
+              left: "6%",
+              right: "6%",
+              top: "9%",
+              bottom: "12%",
+              transform: "rotate(-1deg)",
+            }}
+          />
+          <div
+            className="absolute left-1/2 w-7 h-2 rounded-sm"
+            style={{
+              top: "3%",
+              backgroundColor: secondary,
+              transform: "translateX(-50%) rotate(-3deg)",
+            }}
+          />
+          {lines(accent, t.textColor)}
+        </>
+      );
+    case "gradient":
+      return (
+        <>
+          <div
+            className="absolute inset-0"
+            style={{
+              background: `linear-gradient(125deg, transparent, ${secondary}A6)`,
+            }}
+          />
+          <div
+            className="absolute rounded-md"
+            style={{
+              inset: "8% 6% 14% 6%",
+              backgroundColor: "#FFFFFF1A",
+              border: "1px solid #FFFFFF4D",
+            }}
+          />
+          <span
+            className="absolute top-1 right-2 text-[9px]"
+            style={{ color: "#fff", opacity: 0.7 }}
+          >
+            ✦
+          </span>
+          {lines("#FFFFFF", "#FFFFFF")}
+        </>
+      );
+    case "clouds":
+      return (
+        <>
+          <div
+            className="absolute top-1 right-2 w-5 h-5 rounded-full"
+            style={{ backgroundColor: secondary }}
+          />
+          <div
+            className="absolute -top-1 left-1 w-10 h-4 rounded-full bg-white/90"
+          />
+          <div
+            className="absolute top-1.5 left-7 w-8 h-3 rounded-full bg-white/70"
+          />
+          <div
+            className="absolute -bottom-3 -left-2 w-3/4 h-6 rounded-[50%]"
+            style={{ backgroundColor: `${accent}30` }}
+          />
+          {lines(accent, t.textColor)}
+        </>
+      );
+    case "chalk":
+      return (
+        <>
+          <div
+            className="absolute inset-1 rounded-md"
+            style={{ border: "1.5px dashed #FFFFFF66" }}
+          />
+          <span
+            className="absolute top-1 right-2.5 text-[9px] font-bold"
+            style={{ color: "#fff", opacity: 0.6 }}
+          >
+            ✓
+          </span>
+          {lines("#FFFFFF", "#FFFFFF")}
+        </>
+      );
+    case "minimal":
+      return (
+        <>
+          <div
+            className="absolute top-2 left-[10%] right-[10%] h-px"
+            style={{ backgroundColor: `${secondary}66` }}
+          />
+          <div
+            className="absolute bottom-3 left-[10%] right-[10%] h-px"
+            style={{ backgroundColor: `${secondary}4D` }}
+          />
+          <span
+            className="absolute top-2 right-2 font-black"
+            style={{ fontSize: 22, lineHeight: 1, color: accent, opacity: 0.1 }}
+          >
+            01
+          </span>
+          {lines(accent, t.textColor)}
+        </>
+      );
+    default:
+      return (
+        <>
+          <div
+            className="absolute -top-3 -right-3 w-12 h-12 rounded-full"
+            style={{ backgroundColor: `${accent}33` }}
+          />
+          <div
+            className="absolute -bottom-4 -left-3 w-12 h-12 rounded-full"
+            style={{ backgroundColor: `${secondary}40` }}
+          />
+          <div
+            className="absolute top-2 right-3 w-3.5 h-3.5 rounded-full"
+            style={{ border: `2px solid ${accent}`, opacity: 0.5 }}
+          />
+          {lines(accent, t.textColor)}
+        </>
+      );
   }
 };
 
@@ -542,7 +1730,10 @@ import {
   suggestWeeklyInput,
   relevelReadingPassage,
   generateInteractiveSortingGame,
+  askAI,
+  generatePosterImage,
 } from "./services/geminiService";
+import type { ChatTurn } from "./services/geminiService";
 
 // Initialize Firebase
 const firebaseApp = initializeApp(firebaseConfig);
@@ -2203,6 +3394,73 @@ export default function App() {
   };
 
   const [lessonInput, setLessonInput] = useState("");
+  // --- Zera Assistant chat (ChatGPT-style Q&A + poster/image generation) ---
+  type ChatMessage = { role: "user" | "model"; text: string; image?: string };
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatImageMode, setChatImageMode] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+
+  // Heuristic: does this message ask for a picture/poster?
+  const looksLikeImageRequest = (q: string) =>
+    /\b(poster|picture|image|photo|illustration|infographic|flyer|banner|drawing|draw me|diagram in picture|picture format)\b/i.test(
+      q,
+    );
+
+  const sendChat = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const q = chatInput.trim();
+    if (!q || chatLoading) return;
+    const wantsImage = chatImageMode || looksLikeImageRequest(q);
+    const history: ChatTurn[] = chatMessages.map((m) => ({
+      role: m.role,
+      text: m.text,
+    }));
+    setChatMessages((prev) => [...prev, { role: "user", text: q }]);
+    setChatInput("");
+    setChatLoading(true);
+    try {
+      if (wantsImage) {
+        const res = await generatePosterImage(q);
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            role: "model",
+            text: res.text || "Here's your poster — tap to download.",
+            image: res.image,
+          },
+        ]);
+      } else {
+        const answer = await askAI(q, history);
+        setChatMessages((prev) => [...prev, { role: "model", text: answer }]);
+      }
+    } catch (err: any) {
+      const raw = err?.message || "";
+      const quota = /429|quota|rate/i.test(raw);
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          role: "model",
+          text: wantsImage
+            ? quota
+              ? "⚠️ Image generation hit the Gemini free-tier quota. Please wait a bit and try again, or upgrade the API plan for higher image limits."
+              : "⚠️ Sorry, I couldn't generate that image. " + raw
+            : "⚠️ Sorry, I couldn't get an answer. " +
+              (raw || "Please check the AI key configuration and try again."),
+        },
+      ]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [chatMessages, chatLoading, chatOpen]);
   const [yearGroup, setYearGroup] = useState("Year 3");
   const [subject, setSubject] = useState("");
   const [lexileLevel, setLexileLevel] = useState("400-500");
@@ -2337,6 +3595,8 @@ export default function App() {
   const [readingPassageOnly, setReadingPassageOnly] = useState(false);
   const [sessionTopic, setSessionTopic] = useState("");
   const [sessionSubtopics, setSessionSubtopics] = useState("");
+  // Free-form teacher instructions for the Full Term Program generator
+  const [sessionInstructions, setSessionInstructions] = useState("");
   const [sessionWeeks, setSessionWeeks] = useState<number>(1);
   const [termWeeks, setTermWeeks] = useState<number>(10);
   const [lpUnit, setLpUnit] = useState<string[]>(Array(1).fill(""));
@@ -2965,39 +4225,49 @@ export default function App() {
     setIsGenerating(true);
     setIsGeneratingNotes(true);
     try {
-      const { generateEduNotes } = await import("./services/geminiService");
+      const { generateEduNotesStream } = await import(
+        "./services/geminiService"
+      );
       const lessonInput =
         content.handoutMetadata?.subtopic ||
         content.handoutMetadata?.topic ||
         content.lessonTitle ||
         content.subject ||
         "";
-      const result = await generateEduNotes(lessonInput, {
-        yearGroup:
-          content.handoutMetadata?.yearGroup ||
-          content.gradeLevel ||
-          content.metadata.yearGroup ||
-          "",
-        subject:
-          content.handoutMetadata?.subject ||
-          content.subject ||
-          content.metadata.subject ||
-          "",
-        numSlides: 0,
-        numQuestions: 0,
-        questionTypes: [],
-        lexileLevel: "None",
-        metadataHints: {
-          description:
-            content.handoutMetadata?.description ||
-            content.slidesMetadata?.description ||
+      // Stream the handout in so it appears progressively instead of waiting
+      // for the entire (long) document to finish generating.
+      const result = await generateEduNotesStream(
+        lessonInput,
+        {
+          yearGroup:
+            content.handoutMetadata?.yearGroup ||
+            content.gradeLevel ||
+            content.metadata.yearGroup ||
             "",
-          methodology:
-            content.handoutMetadata?.methodology ||
-            content.slidesMetadata?.methodology ||
+          subject:
+            content.handoutMetadata?.subject ||
+            content.subject ||
+            content.metadata.subject ||
             "",
+          numSlides: 0,
+          numQuestions: 0,
+          questionTypes: [],
+          lexileLevel: "None",
+          metadataHints: {
+            description:
+              content.handoutMetadata?.description ||
+              content.slidesMetadata?.description ||
+              "",
+            methodology:
+              content.handoutMetadata?.methodology ||
+              content.slidesMetadata?.methodology ||
+              "",
+          },
         },
-      });
+        (full) => {
+          setContent((prev) => (prev ? { ...prev, studentNotes: full } : prev));
+        },
+      );
 
       if (result && result.notes) {
         setContent((prev) => ({
@@ -4734,7 +6004,12 @@ export default function App() {
 
       setContent((prev) => {
         const base = prev || {
-          lessonTitle: topicToSave,
+          // Prefer an AI-derived title (worksheet title or first slide title)
+          // over the raw user prompt so the prompt never shows as the heading.
+          lessonTitle:
+            content?.worksheet?.title ||
+            result.slides?.[0]?.title ||
+            topicToSave,
           subject: subject,
           gradeLevel: yearGroup,
           slides: [],
@@ -4839,7 +6114,7 @@ export default function App() {
       const eduContent: EduContent = content
         ? { ...content, worksheet: worksheetData }
         : {
-            lessonTitle: lessonInput.trim() || result.title,
+            lessonTitle: result.title || lessonInput.trim(),
             subject,
             gradeLevel: yearGroup,
             slides: [],
@@ -5191,6 +6466,9 @@ export default function App() {
           class: lpClass,
           preparedBy: lpPreparedBy,
           checkedBy: lpCheckedBy,
+          metadataHints: sessionInstructions.trim()
+            ? { description: sessionInstructions.trim() }
+            : undefined,
         },
       );
       if (result) {
@@ -5230,9 +6508,22 @@ export default function App() {
       lpDescription.trim() ||
       `Produce a comprehensive 6-week Cambridge curriculum-aligned lesson plan for ${yearGroup} ${lpSubject || subject}. Focus on active learning and progressive skill development.`;
 
-    setGeneratingMessage("Generating Lesson Plan...");
+    setGeneratingMessage(
+      lpFileContext
+        ? "Reading scheme of work & generating Lesson Plan..."
+        : "Generating Lesson Plan...",
+    );
     setIsGenerating(true);
     try {
+      let lpFileData: { mimeType: string; data: string } | undefined;
+      if (lpFileContext) {
+        try {
+          lpFileData = await prepareFileForGemini(lpFileContext.data);
+        } catch (err) {
+          console.error("Scheme of work file processing error:", err);
+        }
+      }
+
       const result = await generateLessonPlan(focus, {
         yearGroup,
         lexileLevel,
@@ -5249,6 +6540,7 @@ export default function App() {
         checkedBy: lpCheckedBy,
         unit: lpUnit.map((u) => u.trim() || undefined),
         topics: lpWeeklyTopics.map((t) => t.trim() || undefined),
+        fileContext: lpFileData,
       });
       if (result) {
         const eduContent: EduContent = content
@@ -6383,6 +7675,12 @@ export default function App() {
   const [lpClass, setLpClass] = useState("");
   const [lpPreparedBy, setLpPreparedBy] = useState("");
   const [lpCheckedBy, setLpCheckedBy] = useState("");
+  // Uploaded Scheme of Work / subject Framework used to drive lesson plan generation
+  const [lpFileContext, setLpFileContext] = useState<{
+    mimeType: string;
+    data: any;
+    name: string;
+  } | null>(null);
 
   // Synchronize dynamic Week Selection and Lesson Plan Date
   useEffect(() => {
@@ -17306,7 +18604,7 @@ export default function App() {
   };
 
   const renderSlidesView = () => {
-    if (!content || !content.slides) {
+    if (!content || !content.slides || content.slides.length === 0) {
       return (
         <div className="flex-1 flex flex-col bg-[#F0FDF4] overflow-hidden">
           {renderWorkspaceFlowNavigator()}
@@ -18206,18 +19504,18 @@ export default function App() {
 
               <div className="space-y-4">
                 <h3 className="text-xs font-black uppercase text-[#7C7A65]">
-                  Slide Template
+                  Slide Design
                 </h3>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 gap-2.5">
                   {allThemes.map((t) => (
                     <button
                       key={t.id}
                       title={t.name}
                       onClick={() => setActiveTheme(t)}
                       className={cn(
-                        "w-full aspect-square rounded-lg border-2 transition-all flex items-center justify-center text-lg shadow-sm relative group overflow-hidden",
+                        "relative w-full aspect-video rounded-xl border-2 overflow-hidden transition-all shadow-sm group hover:scale-[1.03] active:scale-95",
                         activeTheme.id === t.id
-                          ? "border-[#059669] shadow-md scale-102 ring-2 ring-[#059669]/20"
+                          ? "border-[#059669] shadow-md ring-2 ring-[#059669]/25"
                           : "border-[#D1FAE5] hover:border-[#059669]",
                       )}
                       style={{
@@ -18229,23 +19527,22 @@ export default function App() {
                         backgroundPosition: "center",
                       }}
                     >
-                      {!t.bgImage && (
-                        <span className="group-hover:scale-125 transition-transform">
-                          {t.emoji}
-                        </span>
-                      )}
-                      {t.bgImage && (
-                        <div className="absolute inset-0 bg-black/10 flex items-center justify-center">
-                          <span className="text-xs shadow-text-white drop-shadow-md text-white font-bold">
-                            {t.emoji}
-                          </span>
-                        </div>
-                      )}
+                      {!t.bgImage && renderThemeThumb(t)}
+                      <span
+                        className={cn(
+                          "absolute bottom-1 left-1 max-w-[92%] truncate text-[8px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-full shadow-sm",
+                          activeTheme.id === t.id
+                            ? "bg-[#059669] text-white"
+                            : "bg-white/90 text-[#064E3B]",
+                        )}
+                      >
+                        {t.emoji} {t.name}
+                      </span>
                     </button>
                   ))}
 
                   <label
-                    className="w-full aspect-square rounded-lg border-2 border-dashed border-[#059669]/30 bg-[#F0FDF4] flex flex-col items-center justify-center gap-1 hover:bg-[#D1FAE5] hover:border-[#059669] transition-all cursor-pointer shadow-sm group active:scale-95"
+                    className="w-full aspect-video rounded-xl border-2 border-dashed border-[#059669]/30 bg-[#F0FDF4] flex flex-col items-center justify-center gap-1 hover:bg-[#D1FAE5] hover:border-[#059669] transition-all cursor-pointer shadow-sm group active:scale-95"
                     title="Upload custom presentation theme background"
                   >
                     <FileUp
@@ -18353,11 +19650,11 @@ export default function App() {
                     setSelectedSlideElement(null);
                   }}
                   className={cn(
-                    "w-full aspect-video max-w-4xl bg-white shadow-2xl rounded-2xl overflow-hidden flex flex-col relative border-8 border-[#FACC15]/20 ring-1 ring-[#059669]",
-                    activeTheme.patternType === "dots" &&
-                      "bg-[radial-gradient(#e5e7eb_1px,transparent_1px)] [background-size:20px_20px]",
+                    "w-full aspect-video max-w-4xl bg-white shadow-2xl rounded-2xl overflow-hidden flex flex-col relative border-8",
                   )}
                   style={{
+                    borderColor: `${activeTheme.accentColor}1F`,
+                    boxShadow: `0 0 0 1px ${activeTheme.accentColor}55, 0 25px 50px -12px rgb(0 0 0 / 0.25)`,
                     backgroundColor:
                       currentSlide.backgroundColor || activeTheme.bgColor,
                     color: activeTheme.textColor,
@@ -18372,11 +19669,22 @@ export default function App() {
                     backgroundPosition: "center",
                   }}
                 >
-                  {/* Slide Content */}
-                  <div
-                    className="absolute left-0 top-0 w-4 h-full"
-                    style={{ backgroundColor: activeTheme.accentColor }}
-                  />
+                  {/* Themed background art (skipped over wallpaper images,
+                      where only the accent spine is kept) */}
+                  {currentSlide.backgroundWallpaper ||
+                  (currentSlide.backgroundWallpaper !== "" &&
+                    activeTheme.bgImage) ? (
+                    <div
+                      className="absolute left-0 top-0 w-2 h-full"
+                      style={{ backgroundColor: activeTheme.accentColor }}
+                    />
+                  ) : (
+                    renderSlideDecor(
+                      activeTheme,
+                      currentSlideIdx,
+                      content.slides.length,
+                    )
+                  )}
 
                   <div className="p-12 pt-6 flex flex-col gap-6 flex-1 relative pointer-events-none select-text">
                     <h3
@@ -18421,6 +19729,7 @@ export default function App() {
                       style={{
                         color:
                           currentSlide.titleSettings?.color ||
+                          activeTheme.titleColor ||
                           activeTheme.accentColor,
                         fontFamily: currentSlide.titleSettings?.family
                           ? `'${currentSlide.titleSettings.family}', sans-serif`
@@ -18457,7 +19766,10 @@ export default function App() {
                               "font-bold flex gap-3 text-current group/bullet pointer-events-none",
                             )}
                           >
-                            <span className="text-[#059669] block mt-1.5 flex-shrink-0 animate-pulse pointer-events-none">
+                            <span
+                              className="block mt-1.5 flex-shrink-0 animate-pulse pointer-events-none"
+                              style={{ color: activeTheme.accentColor }}
+                            >
                               •
                             </span>
                             <span
@@ -19328,7 +20640,7 @@ export default function App() {
                     >
                       <input
                         type="file"
-                        accept=".pdf,.txt,.docx,.png,.jpg,.jpeg,.doc"
+                        accept=".pdf,.txt,.docx,.png,.jpg,.jpeg,.doc,.pptx"
                         onChange={(e) => {
                           const file = e.target.files?.[0];
                           if (file) {
@@ -19349,7 +20661,7 @@ export default function App() {
                         Drop or click file
                       </span>
                       <span className="text-[9px] font-medium text-[#064E3B]/60 italic leading-snug">
-                        Doc, PDF, TXT, or Image
+                        Doc, PDF, PPTX, TXT, or Image
                       </span>
                     </div>
                   ) : (
@@ -19669,6 +20981,12 @@ export default function App() {
                       <Download size={16} /> Download DOCX
                     </button>
                     <button
+                      onClick={downloadAssessmentHTML}
+                      className="w-full py-3 bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white rounded-xl text-xs font-black uppercase tracking-widest hover:opacity-90 transition-all shadow-md flex items-center justify-center gap-2"
+                    >
+                      <Sparkles size={16} /> Download Interactive HTML
+                    </button>
+                    <button
                       onClick={() => generateOnlySlides(true)}
                       disabled={isGenerating}
                       className="w-full py-3 bg-[#059669] text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-[#047857] transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
@@ -19714,7 +21032,7 @@ export default function App() {
                           : "text-[#064E3B]/70 hover:bg-[#D1FAE5]/40"
                       )}
                     >
-                      <Sparkles size={14} className="text-yellow-500 animate-pulse" /> Playful Interactive Organizer
+                      <Sparkles size={14} className="text-yellow-500 animate-pulse" /> Interactive Organizer
                     </button>
                   </div>
                 </div>
@@ -20357,6 +21675,80 @@ export default function App() {
       link.click();
       URL.revokeObjectURL(url);
     }
+  };
+
+  // Download the handout as a styled, self-contained, print-ready HTML file.
+  const downloadNotesHTML = (markdown: string, title: string) => {
+    if (!markdown || !markdown.trim()) {
+      alert("There are no handout notes to download yet.");
+      return;
+    }
+    // Reuse the app's own Markdown renderer for identical output.
+    const bodyHtml = renderToStaticMarkup(
+      <ReactMarkdown>{markdown}</ReactMarkdown>,
+    );
+    const safeTitle = (title || "Handout").replace(/[<>&]/g, "");
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>${safeTitle}</title>
+<style>
+  *{box-sizing:border-box}
+  body{font-family:'Segoe UI',Calibri,system-ui,sans-serif;color:#1f2937;background:#f3f7f4;margin:0;padding:28px 14px 60px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .sheet{max-width:820px;margin:0 auto;background:#fff;border:2px solid #D1FAE5;border-radius:20px;box-shadow:0 10px 30px rgba(5,150,105,.08);overflow:hidden}
+  .hdr{background:linear-gradient(135deg,#059669,#047857);color:#fff;padding:24px 30px}
+  .hdr .kick{font-size:11px;font-weight:800;letter-spacing:3px;text-transform:uppercase;opacity:.85}
+  .hdr h1{margin:4px 0 0;font-size:26px;font-weight:800;line-height:1.2}
+  .body{padding:26px 32px 34px;font-size:15px;line-height:1.7}
+  .body h1{font-size:24px;color:#064E3B;border-bottom:3px solid #D1FAE5;padding-bottom:6px;margin:22px 0 12px}
+  .body h2{font-size:20px;color:#059669;margin:22px 0 10px}
+  .body h3{font-size:17px;color:#047857;margin:18px 0 8px}
+  .body p{margin:10px 0}
+  .body strong{color:#064E3B}
+  .body ul,.body ol{margin:10px 0 10px 8px;padding-left:22px}
+  .body li{margin:5px 0}
+  .body code{background:#F0FDF4;border:1px solid #D1FAE5;border-radius:6px;padding:1px 6px;font-size:.9em}
+  .body pre{background:#F0FDF4;border:1px solid #D1FAE5;border-radius:12px;padding:14px;overflow:auto}
+  .body blockquote{border-left:4px solid #059669;background:#F8FFFB;margin:12px 0;padding:8px 16px;color:#374151}
+  .body table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px}
+  .body th,.body td{border:1.5px solid #D1FAE5;padding:8px 12px;text-align:left;vertical-align:top}
+  .body th{background:#ECFDF5;color:#064E3B;font-weight:800}
+  .body tr:nth-child(even) td{background:#F8FFFB}
+  .body hr{border:none;border-top:2px dashed #D1FAE5;margin:18px 0}
+  .foot{text-align:center;color:#94a3b8;font-size:12px;font-weight:700;margin-top:20px}
+  .noprint{text-align:center;margin:18px auto 0;max-width:820px}
+  .noprint button{cursor:pointer;border:none;background:#059669;color:#fff;font-weight:800;font-size:13px;padding:11px 20px;border-radius:14px;box-shadow:0 6px 16px rgba(5,150,105,.25)}
+  @page{margin:14mm}
+  @media print{
+    body{background:#fff;padding:0}
+    .sheet{border:none;box-shadow:none;border-radius:0}
+    .noprint{display:none}
+    .body h1,.body h2,.body h3{break-after:avoid}
+    .body table,.body pre,.body blockquote,.body li{break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="hdr"><div class="kick">Student Handout · Zera Education</div><h1>${safeTitle}</h1></div>
+    <div class="body">${bodyHtml}</div>
+  </div>
+  <div class="noprint"><button onclick="window.print()">🖨️ Print / Save as PDF</button></div>
+  <div class="foot">Generated by Zera Education · Works offline</div>
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${(title || "Handout").replace(/[^a-z0-9]/gi, "_")}.html`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const updateHandoutMetadata = (
@@ -21974,7 +23366,29 @@ export default function App() {
                         className="group-hover:scale-110 transition-transform"
                       />
                       <span className="text-[10px] font-black uppercase tracking-widest">
-                        Download
+                        Word
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() =>
+                        downloadNotesHTML(
+                          content.studentNotes || "",
+                          content.handoutMetadata?.subtopic ||
+                            content.handoutMetadata?.topic ||
+                            content.lessonTitle ||
+                            "Handout",
+                        )
+                      }
+                      className="flex items-center gap-2 px-4 py-1.5 bg-[#F0FDF4] text-[#064E3B] rounded-xl hover:bg-[#D1FAE5] transition-all border border-[#059669]/40 group"
+                      title="Export as printable HTML"
+                    >
+                      <Download
+                        size={14}
+                        className="group-hover:scale-110 transition-transform"
+                      />
+                      <span className="text-[10px] font-black uppercase tracking-widest">
+                        HTML
                       </span>
                     </button>
 
@@ -22872,6 +24286,19 @@ export default function App() {
                         className="w-full h-24 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold resize-none outline-none focus:border-[#059669]"
                       />
                     </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
+                        Instructions (optional)
+                      </label>
+                      <textarea
+                        value={sessionInstructions}
+                        onChange={(e) =>
+                          setSessionInstructions(e.target.value)
+                        }
+                        placeholder="Tell the AI exactly what you want before it generates — e.g. emphasise hands-on experiments, include weekly assessments, align to a specific textbook, pacing notes..."
+                        className="w-full h-24 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold resize-none outline-none focus:border-[#059669]"
+                      />
+                    </div>
                     <div className="grid grid-cols-1 gap-3">
                       <div className="space-y-1">
                         <div className="flex items-center justify-between">
@@ -22913,6 +24340,80 @@ export default function App() {
                       </button>
                     </div>
                   </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
+                    Scheme of Work / Framework (optional)
+                  </label>
+                  {!lpFileContext ? (
+                    <div
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const file = e.dataTransfer.files?.[0];
+                        if (file) {
+                          setLpFileContext({
+                            name: file.name,
+                            mimeType: file.type || "application/octet-stream",
+                            data: file,
+                          });
+                        }
+                      }}
+                      className="border-2 border-dashed border-[#D1FAE5] hover:border-[#059669] transition-all rounded-2xl p-4 text-center cursor-pointer bg-[#FDFBF7] flex flex-col items-center justify-center gap-1.5 relative group"
+                    >
+                      <input
+                        type="file"
+                        accept=".pdf,.txt,.docx,.doc,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.pptx"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            setLpFileContext({
+                              name: file.name,
+                              mimeType:
+                                file.type || "application/octet-stream",
+                              data: file,
+                            });
+                          }
+                        }}
+                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                      />
+                      <FileUp
+                        className="text-[#059669] group-hover:scale-110 transition-transform"
+                        size={24}
+                      />
+                      <span className="text-xs font-black text-[#064E3B] uppercase">
+                        Upload scheme of work
+                      </span>
+                      <span className="text-[9px] font-medium text-[#064E3B]/60 italic leading-snug">
+                        Doc, PDF, Excel, TXT, or Image — the plan will follow it
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-2xl relative shadow-sm">
+                      <div className="flex items-center gap-2 truncate max-w-[80%]">
+                        <FileText
+                          className="text-[#059669] shrink-0"
+                          size={16}
+                        />
+                        <span className="text-xs font-black text-[#0A4F29] truncate uppercase">
+                          {lpFileContext.name}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => setLpFileContext(null)}
+                        className="p-1 hover:bg-emerald-100 rounded-full transition-colors text-[#064E3B]"
+                        type="button"
+                        title="Remove File"
+                      >
+                        <X size={14} className="stroke-[3]" />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <button
@@ -23425,6 +24926,11 @@ export default function App() {
         "#",
         "",
       );
+      const secondaryColor = (
+        activeTheme.secondaryColor && activeTheme.secondaryColor.startsWith("#")
+          ? activeTheme.secondaryColor
+          : activeTheme.accentColor || "#059669"
+      ).replace("#", "");
       const textColor = (activeTheme.textColor || "#2D3436").replace("#", "");
       const bgColor = (activeTheme.bgColor || "#FFF9E5").replace("#", "");
 
@@ -23455,19 +24961,305 @@ export default function App() {
           s.background = { color: slideBGColor };
         }
 
-        // Side highlight bar
-        s.addShape(pres.ShapeType.rect, {
-          x: 0,
-          y: 0,
-          w: 0.15,
-          h: "100%",
-          fill: { color: accentColor },
-        });
+        // Themed background art (mirrors the in-app slide design).
+        // Skipped when a wallpaper image is the background.
+        const hasWallpaper = !!(
+          slide.backgroundWallpaper ||
+          (slide.backgroundWallpaper !== "" && activeTheme.bgImage)
+        );
+        const design = activeTheme.designType || "blob";
+        if (!hasWallpaper) {
+          if (design === "band") {
+            s.addShape(pres.ShapeType.roundRect, {
+              x: -0.1,
+              y: -0.3,
+              w: 10.2,
+              h: 1.6,
+              rectRadius: 0.25,
+              fill: { color: accentColor },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.rect, {
+              x: 0.5,
+              y: 1.42,
+              w: 9.0,
+              h: 0.06,
+              fill: { color: secondaryColor },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.ellipse, {
+              x: 8.6,
+              y: 4.5,
+              w: 2.2,
+              h: 2.2,
+              fill: { color: secondaryColor, transparency: 80 },
+              line: { type: "none" },
+            });
+          } else if (design === "doodle") {
+            s.addShape(pres.ShapeType.roundRect, {
+              x: 0.16,
+              y: 0.16,
+              w: 9.68,
+              h: 5.3,
+              rectRadius: 0.18,
+              fill: { type: "none" },
+              line: { color: "111111", width: 2.75 },
+            });
+            s.addShape(pres.ShapeType.star5, {
+              x: 9.0,
+              y: 0.45,
+              w: 0.35,
+              h: 0.35,
+              fill: { color: "111111" },
+              line: { type: "none" },
+            });
+          } else if (design === "paper") {
+            s.addShape(pres.ShapeType.ellipse, {
+              x: -1.2,
+              y: 4.2,
+              w: 3.2,
+              h: 3.2,
+              fill: { color: accentColor, transparency: 78 },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.roundRect, {
+              x: 0.35,
+              y: 0.26,
+              w: 9.3,
+              h: 4.85,
+              rectRadius: 0.18,
+              rotate: 359,
+              fill: { color: "FFFFFF" },
+              line: { color: accentColor, width: 0.75, transparency: 70 },
+              shadow: {
+                type: "outer",
+                blur: 6,
+                offset: 2,
+                angle: 90,
+                opacity: 0.25,
+                color: "000000",
+              },
+            });
+            s.addShape(pres.ShapeType.rect, {
+              x: 4.45,
+              y: 0.06,
+              w: 1.1,
+              h: 0.3,
+              rotate: 357,
+              fill: { color: secondaryColor, transparency: 25 },
+              line: { type: "none" },
+            });
+          } else if (design === "gradient") {
+            s.addShape(pres.ShapeType.ellipse, {
+              x: 5.6,
+              y: 2.4,
+              w: 6.5,
+              h: 6.5,
+              fill: { color: secondaryColor, transparency: 45 },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.roundRect, {
+              x: 0.3,
+              y: 0.28,
+              w: 9.4,
+              h: 4.75,
+              rectRadius: 0.18,
+              fill: { color: "FFFFFF", transparency: 90 },
+              line: { color: "FFFFFF", width: 1.25, transparency: 60 },
+            });
+            s.addShape(pres.ShapeType.star5, {
+              x: 8.9,
+              y: 0.45,
+              w: 0.4,
+              h: 0.4,
+              fill: { color: "FFFFFF", transparency: 45 },
+              line: { type: "none" },
+            });
+          } else if (design === "clouds") {
+            s.addShape(pres.ShapeType.ellipse, {
+              x: 8.45,
+              y: 0.3,
+              w: 1.05,
+              h: 1.05,
+              fill: { color: secondaryColor },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.cloud, {
+              x: 0.3,
+              y: 0.15,
+              w: 2.2,
+              h: 1.0,
+              fill: { color: "FFFFFF", transparency: 10 },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.cloud, {
+              x: 5.4,
+              y: 0.05,
+              w: 1.5,
+              h: 0.65,
+              fill: { color: "FFFFFF", transparency: 30 },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.ellipse, {
+              x: -1.5,
+              y: 4.85,
+              w: 13.0,
+              h: 2.4,
+              fill: { color: accentColor, transparency: 82 },
+              line: { type: "none" },
+            });
+          } else if (design === "chalk") {
+            s.addShape(pres.ShapeType.roundRect, {
+              x: 0.22,
+              y: 0.22,
+              w: 9.56,
+              h: 5.18,
+              rectRadius: 0.15,
+              fill: { type: "none" },
+              line: {
+                color: "FFFFFF",
+                width: 1.75,
+                transparency: 50,
+                dashType: "dash",
+              },
+            });
+            s.addShape(pres.ShapeType.star5, {
+              x: 4.8,
+              y: 0.35,
+              w: 0.32,
+              h: 0.32,
+              fill: { color: secondaryColor, transparency: 35 },
+              line: { type: "none" },
+            });
+          } else if (design === "minimal") {
+            s.addShape(pres.ShapeType.rect, {
+              x: 0.5,
+              y: 0.22,
+              w: 9.0,
+              h: 0.012,
+              fill: { color: secondaryColor, transparency: 40 },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.rect, {
+              x: 0.5,
+              y: 5.28,
+              w: 9.0,
+              h: 0.012,
+              fill: { color: secondaryColor, transparency: 55 },
+              line: { type: "none" },
+            });
+            s.addText("ZERA EDUCATION", {
+              x: 0.5,
+              y: 5.32,
+              w: 3.0,
+              h: 0.25,
+              fontSize: 8,
+              bold: true,
+              charSpacing: 4,
+              color: secondaryColor,
+              align: pres.AlignH.left,
+            });
+          } else {
+            // blob (default)
+            s.addShape(pres.ShapeType.ellipse, {
+              x: 8.0,
+              y: -1.8,
+              w: 3.8,
+              h: 3.8,
+              fill: { color: accentColor, transparency: 84 },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.ellipse, {
+              x: -1.6,
+              y: 3.9,
+              w: 3.6,
+              h: 3.6,
+              fill: { color: secondaryColor, transparency: 76 },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.ellipse, {
+              x: 8.65,
+              y: 0.45,
+              w: 0.7,
+              h: 0.7,
+              fill: { type: "none" },
+              line: { color: accentColor, width: 3, transparency: 60 },
+            });
+            s.addShape(pres.ShapeType.star5, {
+              x: 8.0,
+              y: 1.3,
+              w: 0.4,
+              h: 0.4,
+              rotate: 345,
+              fill: { color: secondaryColor, transparency: 45 },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.ellipse, {
+              x: 0.55,
+              y: 4.55,
+              w: 0.38,
+              h: 0.38,
+              fill: { color: secondaryColor, transparency: 55 },
+              line: { type: "none" },
+            });
+          }
+          // slide number pill (minimal prints its own footer instead)
+          if (design !== "minimal") {
+            const chipBg =
+              design === "gradient" || design === "chalk"
+                ? "FFFFFF"
+                : design === "band"
+                  ? secondaryColor
+                  : design === "doodle"
+                    ? "111111"
+                    : accentColor;
+            const chipFg =
+              design === "gradient" || design === "chalk"
+                ? bgColor
+                : design === "band"
+                  ? "1A2E22"
+                  : "FFFFFF";
+            s.addText(`${idx + 1} / ${content.slides.length}`, {
+              x: 8.8,
+              y: 5.12,
+              w: 0.95,
+              h: 0.32,
+              shape: pres.ShapeType.roundRect,
+              rectRadius: 0.16,
+              fill: { color: chipBg },
+              fontSize: 10,
+              bold: true,
+              color: chipFg,
+              align: pres.AlignH.center,
+            });
+          } else {
+            s.addText(`${idx + 1} / ${content.slides.length}`, {
+              x: 8.5,
+              y: 5.32,
+              w: 1.0,
+              h: 0.25,
+              fontSize: 9,
+              bold: true,
+              color: accentColor,
+              align: pres.AlignH.right,
+            });
+          }
+        } else {
+          // wallpaper slides keep a simple side highlight bar
+          s.addShape(pres.ShapeType.rect, {
+            x: 0,
+            y: 0,
+            w: 0.15,
+            h: "100%",
+            fill: { color: accentColor },
+          });
+        }
 
         // Slide Title
         const titleFontSize = slide.title.length > 40 ? 22 : 28;
         const slideTitleColor =
-          slide.titleSettings?.color?.replace("#", "") || accentColor;
+          slide.titleSettings?.color?.replace("#", "") ||
+          (activeTheme.titleColor || activeTheme.accentColor).replace("#", "");
         const slideTitleFont = slide.titleSettings?.family || "Arial Black";
 
         s.addText(slide.title, {
@@ -23916,6 +25708,53 @@ export default function App() {
     a.click();
   };
 
+  // Download the paper assessment AND the playful interactive organizer as a
+  // single self-contained, offline-capable, interactive HTML file.
+  const downloadAssessmentHTML = () => {
+    if (!content?.worksheet) {
+      alert("No assessment available to download yet.");
+      return;
+    }
+
+    // Prefer the AI-generated worksheet title; never fall back to the raw prompt.
+    const title = content.worksheet.title || content.lessonTitle || "Assessment";
+    // Trim to the fields the standalone player needs, then escape "<" so any
+    // user text containing "</script>" cannot break out of the embedded script.
+    const wsPayload = {
+      title: content.worksheet.title || "",
+      description: content.worksheet.description || "",
+      readingPassage: content.worksheet.readingPassage || "",
+      sections: (content.worksheet.sections || []).map((s) => ({
+        title: s.title || "",
+        instructions: s.instructions || "",
+        questions: (s.questions || []).map((q) => ({
+          text: q.text || "",
+          type: q.type || "short-answer",
+          options: q.options || undefined,
+        })),
+      })),
+    };
+    const wsJson = JSON.stringify(wsPayload).replace(/</g, "\\u003c");
+    const titleJson = JSON.stringify(title).replace(/</g, "\\u003c");
+
+    // Use function replacements so "$" sequences in user text are not treated
+    // as special replacement patterns by String.replace.
+    const html = ASSESSMENT_HTML_TEMPLATE.replace(
+      "/*__WS__*/null",
+      () => wsJson,
+    ).replace("/*__TITLE__*/null", () => titleJson);
+
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${title.replace(/[\\/:*?"<>|]+/g, "").replace(/\s+/g, "_")}_Interactive.html`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const [selectedImageSlot, setSelectedImageSlot] = useState<string | null>(
     null,
   );
@@ -24246,6 +26085,198 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ===== Zera Assistant — ChatGPT-style Q&A ===== */}
+      {!chatOpen && (
+        <button
+          onClick={() => setChatOpen(true)}
+          title="Ask Zera Assistant"
+          className="fixed bottom-5 right-5 z-[60] w-14 h-14 rounded-full bg-gradient-to-br from-[#059669] to-[#047857] text-white shadow-2xl shadow-[#059669]/40 flex items-center justify-center hover:scale-105 active:scale-95 transition-all"
+        >
+          <Sparkles size={24} />
+        </button>
+      )}
+      {chatOpen && (
+        <div className="fixed bottom-5 right-5 z-[60] w-[min(94vw,400px)] h-[min(80vh,620px)] bg-white rounded-3xl shadow-2xl border-2 border-[#D1FAE5] flex flex-col overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-[#059669] to-[#047857] text-white">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+                <Sparkles size={16} />
+              </div>
+              <div>
+                <div className="font-black text-sm leading-tight">
+                  Zera Assistant
+                </div>
+                <div className="text-[10px] opacity-80 font-bold">
+                  Ask me anything
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-1">
+              {chatMessages.length > 0 && (
+                <button
+                  onClick={() => setChatMessages([])}
+                  title="New chat"
+                  className="text-[10px] font-black uppercase px-2 py-1 rounded-lg bg-white/15 hover:bg-white/25 transition-all"
+                >
+                  New
+                </button>
+              )}
+              <button
+                onClick={() => setChatOpen(false)}
+                className="p-1.5 rounded-lg hover:bg-white/20 transition-all"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+
+          <div
+            ref={chatScrollRef}
+            className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3 bg-[#F8FFFB]"
+          >
+            {chatMessages.length === 0 && !chatLoading && (
+              <div className="h-full flex flex-col items-center justify-center text-center gap-3 px-2">
+                <div className="w-14 h-14 rounded-2xl bg-[#D1FAE5] text-[#059669] flex items-center justify-center">
+                  <Sparkles size={28} />
+                </div>
+                <p className="text-sm font-black text-[#064E3B]">
+                  How can I help you today?
+                </p>
+                <div className="flex flex-col gap-2 w-full mt-1">
+                  {[
+                    "Make a poster about the water cycle",
+                    "Explain photosynthesis for Year 4",
+                    "Write a rubric for a persuasive essay",
+                  ].map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setChatInput(s)}
+                      className="text-left text-xs font-bold text-[#064E3B] bg-white border-2 border-[#D1FAE5] rounded-xl px-3 py-2 hover:border-[#059669] transition-all"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {chatMessages.map((m, i) => (
+              <div
+                key={i}
+                className={
+                  "flex " +
+                  (m.role === "user" ? "justify-end" : "justify-start")
+                }
+              >
+                <div
+                  className={
+                    m.role === "user"
+                      ? "max-w-[85%] bg-[#059669] text-white rounded-2xl rounded-br-md px-3.5 py-2.5 text-sm font-medium whitespace-pre-wrap break-words"
+                      : "max-w-[88%] bg-white border-2 border-[#D1FAE5] text-[#1f2937] rounded-2xl rounded-bl-md px-3.5 py-2.5 text-sm prose prose-sm prose-emerald !max-w-none break-words prose-p:my-1.5 prose-headings:my-2 prose-li:my-0.5 prose-pre:my-2 prose-pre:text-xs"
+                  }
+                >
+                  {m.role === "user" ? (
+                    m.text
+                  ) : (
+                    <>
+                      {m.image && (
+                        <div className="mb-2">
+                          <img
+                            src={m.image}
+                            alt="Generated poster"
+                            className="w-full rounded-xl border-2 border-[#D1FAE5]"
+                          />
+                          <a
+                            href={m.image}
+                            download="zera-poster.png"
+                            className="mt-2 inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-[#059669] hover:underline"
+                          >
+                            <Download size={13} /> Download poster
+                          </a>
+                        </div>
+                      )}
+                      {m.text && <ReactMarkdown>{m.text}</ReactMarkdown>}
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+            {chatLoading && (
+              <div className="flex justify-start">
+                <div className="bg-white border-2 border-[#D1FAE5] rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-2">
+                  <Loader2 size={16} className="animate-spin text-[#059669]" />
+                  <span className="text-xs font-bold text-[#064E3B]/60">
+                    {chatImageMode ||
+                    looksLikeImageRequest(
+                      chatMessages[chatMessages.length - 1]?.text || "",
+                    )
+                      ? "Creating your poster…"
+                      : "Thinking…"}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <form
+            onSubmit={sendChat}
+            className="p-3 border-t-2 border-[#D1FAE5] bg-white"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <button
+                type="button"
+                onClick={() => setChatImageMode((v) => !v)}
+                title="Toggle poster/image generation"
+                className={
+                  chatImageMode
+                    ? "flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded-lg bg-[#059669] text-white transition-all"
+                    : "flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded-lg bg-[#F0FDF4] text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] transition-all"
+                }
+              >
+                <Wand2 size={13} />{" "}
+                {chatImageMode ? "Image Mode: ON" : "Image / Poster"}
+              </button>
+              {chatImageMode && (
+                <span className="text-[9px] font-bold text-[#064E3B]/50">
+                  Describe the poster to create
+                </span>
+              )}
+            </div>
+            <div className="flex items-end gap-2">
+              <textarea
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    sendChat();
+                  }
+                }}
+                rows={1}
+                placeholder={
+                  chatImageMode
+                    ? "Describe a poster to generate…"
+                    : "Ask a question, or describe a poster…"
+                }
+                className="flex-1 resize-none max-h-28 p-2.5 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-medium outline-none focus:border-[#059669]"
+              />
+              <button
+                type="submit"
+                disabled={!chatInput.trim() || chatLoading}
+                className="w-10 h-10 shrink-0 rounded-xl bg-[#059669] text-white flex items-center justify-center hover:bg-[#047857] disabled:opacity-40 transition-all"
+                title="Send"
+              >
+                {chatLoading ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : (
+                  <ArrowRight size={18} />
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       <style>{`
         .custom-scrollbar::-webkit-scrollbar {
