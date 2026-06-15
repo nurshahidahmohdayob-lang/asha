@@ -4601,6 +4601,11 @@ export default function App() {
   ]);
   const [isLevelingWorksheet, setIsLevelingWorksheet] = useState(false);
   const [wsLevelProgress, setWsLevelProgress] = useState("");
+  // In-app viewer for the generated interactive assessment HTML
+  const [interactiveDoc, setInteractiveDoc] = useState<{
+    html: string;
+    title: string;
+  } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
   const [generatingMessage, setGeneratingMessage] = useState("Generating...");
@@ -27367,43 +27372,10 @@ export default function App() {
       () => wsJson,
     ).replace("/*__TITLE__*/null", () => titleJson);
 
-    // Download the assessment as a self-contained HTML file the user can open
-    // (and keep). This works in every browser/pop-up configuration — no blank
-    // tab, no pop-up blocker. Opening it shows all the interactive designs.
-    const downloadHtml = () => {
-      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${title
-        .replace(/[\\/:*?"<>|]+/g, "")
-        .replace(/\s+/g, "_")}_Interactive.html`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
-    };
-
-    // Prefer opening in a new tab; fall back to a download if the browser
-    // blocks the pop-up or refuses to render the written document.
-    let opened = false;
-    try {
-      const w = window.open("", "_blank");
-      if (w && w.document) {
-        w.document.open();
-        w.document.write(html);
-        w.document.close();
-        opened = true;
-      }
-    } catch {
-      opened = false;
-    }
-    if (!opened) {
-      downloadHtml();
-      alert(
-        "Your interactive assessment was downloaded (pop-ups are blocked) — open the saved HTML file to view it.",
-      );
-    }
+    // Show the interactive assessment in an in-app full-screen viewer. This
+    // always works — no new tab, no pop-up blocker. The viewer has its own
+    // buttons to open in a new tab, print, or download the file.
+    setInteractiveDoc({ html, title });
   };
 
   // Differentiated assessment: reword the current worksheet (same topic, same
@@ -27824,6 +27796,91 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ===== Interactive Assessment viewer (in-app, no pop-up needed) ===== */}
+      {interactiveDoc && (
+        <div className="fixed inset-0 z-[9998] bg-black/60 flex flex-col">
+          <div className="bg-[#064E3B] text-white px-5 py-3 flex items-center justify-between gap-3 shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <Sparkles size={18} className="text-[#FACC15] shrink-0" />
+              <span className="font-black uppercase tracking-wide text-sm truncate">
+                {interactiveDoc.title}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => {
+                  try {
+                    const f = document.getElementById(
+                      "assessmentFrame",
+                    ) as HTMLIFrameElement | null;
+                    f?.contentWindow?.focus();
+                    f?.contentWindow?.print();
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+                className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-colors"
+                title="Print"
+              >
+                <Printer size={14} /> Print
+              </button>
+              <button
+                onClick={() => {
+                  const blob = new Blob([interactiveDoc.html], {
+                    type: "text/html;charset=utf-8",
+                  });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `${interactiveDoc.title
+                    .replace(/[\\/:*?"<>|]+/g, "")
+                    .replace(/\s+/g, "_")}_Interactive.html`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  setTimeout(() => URL.revokeObjectURL(url), 60000);
+                }}
+                className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-colors"
+                title="Download HTML file"
+              >
+                <Download size={14} /> Download
+              </button>
+              <button
+                onClick={() => {
+                  try {
+                    const w = window.open("", "_blank");
+                    if (w && w.document) {
+                      w.document.open();
+                      w.document.write(interactiveDoc.html);
+                      w.document.close();
+                    }
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+                className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-colors"
+                title="Open in a new browser tab"
+              >
+                <ExternalLink size={14} /> New Tab
+              </button>
+              <button
+                onClick={() => setInteractiveDoc(null)}
+                className="px-3 py-1.5 bg-red-500 hover:bg-red-600 rounded-lg text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-colors"
+                title="Close"
+              >
+                <X size={14} /> Close
+              </button>
+            </div>
+          </div>
+          <iframe
+            id="assessmentFrame"
+            title="Interactive Assessment"
+            srcDoc={interactiveDoc.html}
+            className="flex-1 w-full bg-white"
+          />
+        </div>
+      )}
 
       {/* ===== Zera Assistant — ChatGPT-style Q&A ===== */}
       {!chatOpen && (
