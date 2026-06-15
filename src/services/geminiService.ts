@@ -337,7 +337,7 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
     }
 
     contents.push(mainPrompt);
-    contents.push(`Format: JSON object with "title", "readingPassage" (The main content if readingPassageOnly, or the context story if includeStory), "description" (A concise single-sentence summary), "methodology" (MUST include Cambridge Subject Code), and "sections" (array of {title, instructions, questions: array of {text, type, options}}). If readingPassageOnly is true, sections should contain exactly one placeholder entry if necessary to satisfy the schema, and no questions.`);
+    contents.push(`Format: JSON object with "title", "readingPassage" (The main content if readingPassageOnly, or the context story if includeStory), "description" (ONE sentence, max 25 words), "methodology" (ONE to TWO sentences, max 45 words, MUST include the Cambridge Subject Code — do NOT write a paragraph), and "sections" (array of {title, instructions, questions: array of {text, type, options}}). Keep every question concise and direct. If readingPassageOnly is true, sections should contain exactly one placeholder entry if necessary to satisfy the schema, and no questions.`);
     contents.push(`QUESTION "type" FIELD — set it to one of these exact lowercase values based on the question, and follow the encoding rules for each:
 - "multiple-choice": put 3-4 answer choices in "options".
 - "true-false": put exactly ["True","False"] in "options".
@@ -349,10 +349,12 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
 - "cut-and-paste": a cut-and-paste task. Describe the target slots/categories inside "text", and put the individual items the student cuts out and pastes in "options".
 Only use the types that appear in the "Allowed Types" list above.`);
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+    const response = await generateContentWithRetry({
       contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
       config: {
+        // Worksheet generation is structured, not deep-reasoning — cap "thinking"
+        // to cut latency significantly (the slide call uses the same approach).
+        thinkingConfig: { thinkingBudget: 128 },
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
