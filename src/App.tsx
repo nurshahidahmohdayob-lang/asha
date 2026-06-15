@@ -353,15 +353,16 @@ const ASSESSMENT_HTML_TEMPLATE = `<!DOCTYPE html>
   .paperopt{font-size:13.5px;color:#4b466e;font-weight:600;padding:7px 11px;border:1.5px solid #ede9fe;border-radius:10px;background:#fff}
   .ansline{border-bottom:2px dotted #b9a9f0;height:26px;margin-top:8px}
   .adraw{height:170px;border:2px dashed #b9a9f0;border-radius:14px;margin-top:8px}
-  .bank{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0}
-  .chip{border:1.5px solid #b9a9f0;border-radius:999px;padding:5px 13px;font-size:13px;font-weight:700;color:#4b466e;background:#faf8ff}
-  .sortgrid{display:flex;gap:12px;margin-top:8px}
-  .sortcol{flex:1;border:2px dashed #b9a9f0;border-radius:12px;min-height:96px;background:#fff}
-  .pasterow{display:flex;gap:12px;margin:8px 0}
-  .pasteslot{flex:1;border:2px dashed #b9a9f0;border-radius:12px;min-height:64px;background:#fff}
-  .cuthdr{font-size:12px;font-weight:800;color:#7c6fa6;margin:10px 0 6px;text-transform:uppercase;letter-spacing:1px}
-  .cutpool{display:flex;flex-wrap:wrap;gap:9px}
-  .cutcard{border:2px dashed #b9a9f0;border-radius:10px;padding:7px 14px;font-size:13px;font-weight:700;color:#4b466e;background:#fff}
+  .pcats{display:flex;gap:12px;margin-top:8px}
+  .pcat{flex:1;border:2.5px solid #8b5cf6;border-radius:12px;overflow:hidden;min-height:170px;display:flex;flex-direction:column}
+  .pcat:nth-child(2){border-color:#22c55e}.pcat:nth-child(3){border-color:#ef4444}.pcat:nth-child(4){border-color:#f59e0b}
+  .pcat-h{color:#fff;font-weight:800;text-transform:uppercase;text-align:center;padding:7px 6px;font-size:13px;background:#8b5cf6}
+  .pcat:nth-child(2) .pcat-h{background:#22c55e}.pcat:nth-child(3) .pcat-h{background:#ef4444}.pcat:nth-child(4) .pcat-h{background:#f59e0b}
+  .pcutdiv{display:flex;align-items:center;gap:10px;margin:12px 0 8px}
+  .pcutdiv:before,.pcutdiv:after{content:"";flex:1;border-top:2px dashed #b9a9f0}
+  .pcutdiv span{font-weight:800;text-transform:uppercase;font-size:11.5px;letter-spacing:1px;color:#fff;background:#7c3aed;border-radius:999px;padding:4px 14px}
+  .pcutgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
+  .pcutc{border:2px dashed #b9a9f0;border-radius:10px;padding:12px 7px;text-align:center;font-size:12px;font-weight:700;color:#4b466e;min-height:58px;display:flex;align-items:center;justify-content:center}
   /* ===== Interactive Template — selectable worksheet themes ===== */
   .tplpick{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:18px}
   .tplpick button{cursor:pointer;border:2px solid #e9d5ff;background:#fff;border-radius:14px;padding:8px 13px;font-family:inherit;font-weight:800;font-size:12px;color:#6d28d9;display:flex;align-items:center;gap:6px;transition:.15s}
@@ -399,15 +400,51 @@ const ASSESSMENT_HTML_TEMPLATE = `<!DOCTYPE html>
   .dopt .dl{width:26px;height:26px;border-radius:50%;border:2.5px solid #111;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;flex:none;background:#fff;color:#111}
   .dopt.ticked{background:#111;color:#fff}
   .ddraw{height:175px;border:2.5px dashed #111;border-radius:14px;margin-top:4px}
-  .dbank{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
-  .dchip{border:2.5px solid #111;border-radius:999px;padding:5px 14px;font-size:13px;font-weight:800;background:#fff}
-  .dsortgrid{display:flex;gap:14px;margin-top:6px}
-  .dsortcol{flex:1;border:2.5px dashed #111;border-radius:12px;min-height:110px;background:#fff}
-  .dpaste{display:flex;gap:14px;margin:6px 0}
-  .dslot{flex:1;border:2.5px dashed #111;border-radius:12px;min-height:74px;background:#fff}
-  .dcuthdr{font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:1px;margin:10px 0 6px}
-  .dpool{display:flex;flex-wrap:wrap;gap:10px}
-  .dcard{border:2.5px dashed #111;border-radius:10px;padding:8px 15px;font-size:13px;font-weight:800;background:#fff}
+  .dcats{display:flex;gap:14px;margin-top:4px}
+  .dcat{flex:1;border:3px solid #111;border-radius:14px;overflow:hidden;min-height:190px;display:flex;flex-direction:column}
+  .dcat-h{background:#111;color:#fff;font-weight:900;text-transform:uppercase;text-align:center;padding:8px 6px;font-size:14px;letter-spacing:.5px}
+  .dcutdiv{display:flex;align-items:center;gap:10px;margin:14px 0 9px}
+  .dcutdiv:before,.dcutdiv:after{content:"";flex:1;border-top:2.5px dashed #111}
+  .dcutdiv span{font-weight:900;text-transform:uppercase;font-size:12px;letter-spacing:1px;border:2.5px solid #111;border-radius:999px;padding:4px 16px;background:#fff}
+  .dcutgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .dcutc{border:2.5px dashed #111;border-radius:12px;padding:14px 8px;text-align:center;font-weight:800;font-size:12px;min-height:62px;display:flex;align-items:center;justify-content:center}
+  @media(max-width:640px){.dcutgrid{grid-template-columns:repeat(2,1fr)}}
+  /* ===== Bright — vibrant full-colour worksheet ===== */
+  .bright{position:relative;background:#fff;border:6px solid #2563eb;border-radius:26px;padding:24px 26px 0;font-family:'Baloo 2','Comic Sans MS','Segoe UI',sans-serif;color:#1f2937}
+  .b-head{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-bottom:14px}
+  .b-tw{flex:1 1 300px}
+  .b-logo{height:26px;width:auto;display:block;margin-bottom:8px}
+  .b-title{font-size:40px;font-weight:900;line-height:.95;letter-spacing:-1px;text-transform:uppercase}
+  .b-title .x{color:#1d4ed8}.b-title .y{color:#16a34a}
+  .b-sub{display:inline-block;margin-top:9px;background:#fde047;color:#854d0e;font-weight:800;font-size:14px;padding:6px 16px;border-radius:10px}
+  .b-mascot{font-size:38px;align-self:center}
+  .b-meta{display:flex;gap:14px;flex-wrap:wrap;background:#eff6ff;border:2px dashed #93c5fd;border-radius:14px;padding:9px 15px;font-size:13px;font-weight:800;color:#1e3a5f;margin-bottom:14px}
+  .b-meta span{display:flex;align-items:flex-end;gap:6px;flex:1;min-width:130px}
+  .b-meta i{flex:1;border-bottom:2px dotted #60a5fa;height:14px}
+  .b-pass{background:#fff7ed;border:2px solid #fdba74;border-radius:14px;padding:13px 16px;font-size:14px;line-height:1.6;white-space:pre-wrap;color:#7c2d12;margin-bottom:14px}
+  .b-sec{border:3px solid var(--bc);border-radius:18px;margin:14px 0;overflow:hidden;break-inside:avoid}
+  .b-sech{background:var(--bc);color:#fff;font-weight:900;font-size:15px;text-transform:uppercase;letter-spacing:.5px;padding:10px 16px;display:flex;align-items:center;gap:8px}
+  .b-secb{padding:13px 16px}
+  .b-ins{font-size:12.5px;font-style:italic;color:#64748b;font-weight:700;margin-bottom:10px}
+  .b-q{display:flex;gap:11px;align-items:flex-start;margin:14px 0;break-inside:avoid;page-break-inside:avoid}
+  .b-qn{flex:none;width:30px;height:30px;border-radius:50%;background:var(--bc);color:#fff;font-weight:900;display:flex;align-items:center;justify-content:center;font-size:15px}
+  .b-qb{flex:1;min-width:0}
+  .b-qt{font-weight:800;font-size:14.5px;margin-bottom:8px}
+  .b-line{height:26px;border-bottom:2px dotted #9ca3af}
+  .b-opt{display:flex;align-items:center;gap:10px;width:100%;border:2.5px solid var(--bc);background:#fff;border-radius:999px;padding:7px 15px 7px 7px;font-weight:800;font-size:13.5px;color:#1f2937;cursor:pointer;margin:6px 0;text-align:left;transition:.12s}
+  .b-opt .l{width:26px;height:26px;border-radius:50%;border:2.5px solid var(--bc);color:var(--bc);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;flex:none;background:#fff}
+  .b-opt.on{background:var(--bc);color:#fff}.b-opt.on .l{background:#fff;color:var(--bc)}
+  .b-draw{height:175px;border:2.5px dashed var(--bc);border-radius:14px;background:#fafafa}
+  .b-cats{display:flex;gap:14px}
+  .b-cat{flex:1;border:3px solid var(--c2);border-radius:14px;overflow:hidden;min-height:185px;display:flex;flex-direction:column}
+  .b-cat-h{color:#fff;font-weight:900;text-transform:uppercase;text-align:center;padding:8px 6px;font-size:14px;background:var(--c2)}
+  .b-cutdiv{display:flex;align-items:center;gap:10px;margin:14px 0 9px}
+  .b-cutdiv:before,.b-cutdiv:after{content:"";flex:1;border-top:2.5px dashed #c4b5fd}
+  .b-cutdiv span{font-weight:900;text-transform:uppercase;font-size:12px;letter-spacing:1px;color:#fff;background:#7c3aed;border-radius:999px;padding:5px 16px}
+  .b-cutgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .b-cutc{border:2.5px dashed #94a3b8;border-radius:12px;padding:14px 8px;text-align:center;font-weight:800;font-size:12px;min-height:62px;display:flex;align-items:center;justify-content:center;background:#fff}
+  .b-foot{background:linear-gradient(90deg,#fef3c7,#fde68a);border-top:3px solid #f59e0b;margin:16px -26px 0;padding:11px 18px;font-weight:800;font-size:13px;color:#854d0e;text-align:center}
+  @media(max-width:640px){.b-title{font-size:30px}.b-cutgrid{grid-template-columns:repeat(2,1fr)}}
   .dbox.dwide{column-span:all;break-inside:avoid}
   .dsec{display:table;margin:18px auto 2px;background:#111;color:#fff;font-weight:900;font-size:13px;text-transform:uppercase;letter-spacing:1.5px;padding:7px 18px;border-radius:999px;transform:rotate(-1deg);break-after:avoid;page-break-after:avoid}
   .dins{font-size:12.5px;font-weight:700;font-style:italic;text-align:center;margin:6px 0 2px}
@@ -480,6 +517,10 @@ const ASSESSMENT_HTML_TEMPLATE = `<!DOCTYPE html>
        instead (position:fixed repeats per printed page). */
     body.ptpl .head{display:none!important}
     body.ptpl .dframe{display:block;position:fixed;inset:0;border:3px solid #111;border-radius:22px;pointer-events:none;z-index:9}
+    /* Bright design: blue per-page frame, strip the sheet's own border */
+    body.ptpl .dframe.brightframe{border:6px solid #2563eb;border-radius:22px}
+    body.ptpl .bright{border:none;border-radius:0;padding-top:14px}
+    body.ptpl .bright .b-foot{margin-left:0;margin-right:0}
     .dfoot{border-top:none;margin-top:8px;padding-top:4px;font-size:9px}
     body.ptpl .dframe.d-notebook{border-radius:10px}
     /* notebook holes + margin line move onto the per-page frame so they run
@@ -568,6 +609,19 @@ function qKind(q){
   if(q.options&&q.options.length) return "mcq";
   return "write";
 }
+/* Pull the sort/cut category names out of the question text (the AI is told to
+   name them, e.g. "Sort these into Mammals and Birds"). Falls back to two. */
+function qCats(q){
+  var t=(q.text||"");
+  var m=t.match(/\b(?:into|between|as)\b[:\s]+([^.?!]+)/i);
+  if(m){
+    var parts=m[1].split(/\s*(?:,|;|\/|\band\b|\bor\b)\s*/i)
+      .map(function(s){return s.replace(/^(the|a|an)\s+/i,"").trim();})
+      .filter(function(s){return s && s.length<=26;});
+    if(parts.length>=2) return parts.slice(0,4);
+  }
+  return ["Group 1","Group 2"];
+}
 
 /* ---------- Paper assessment ---------- */
 (function renderPaper(){
@@ -584,13 +638,11 @@ function qKind(q){
       var kind=qKind(q);
       if(kind==="draw"){
         h+='<div class="adraw"></div>';
-      }else if(kind==="sort"){
-        h+='<div class="bank">'+(q.options||[]).map(function(o){return '<span class="chip">'+esc(o)+'</span>';}).join('')+'</div>';
-        h+='<div class="sortgrid"><div class="sortcol"></div><div class="sortcol"></div></div>';
-      }else if(kind==="cut"){
-        h+='<div class="pasterow"><div class="pasteslot"></div><div class="pasteslot"></div></div>';
-        h+='<div class="cuthdr">✂️ Cut these out and paste above</div>';
-        h+='<div class="cutpool">'+(q.options||[]).map(function(o){return '<span class="cutcard">'+esc(o)+'</span>';}).join('')+'</div>';
+      }else if(kind==="sort"||kind==="cut"){
+        var cats=qCats(q);
+        h+='<div class="pcats">'+cats.map(function(c){return '<div class="pcat"><div class="pcat-h">'+esc(c)+'</div></div>';}).join('')+'</div>';
+        h+='<div class="pcutdiv"><span>✂️ '+(kind==="cut"?"Cut &amp; paste":"Sort the items")+'</span></div>';
+        h+='<div class="pcutgrid">'+(q.options||[]).map(function(o){return '<div class="pcutc">'+esc(o)+'</div>';}).join('')+'</div>';
       }else if(kind==="mcq"){
         h+='<div class="opts">';
         q.options.forEach(function(o){h+='<div class="paperopt">□ '+esc(o)+'</div>';});
@@ -605,12 +657,57 @@ function qKind(q){
 
 /* ---------- Interactive Template — pick a worksheet design ---------- */
 var TPL_THEMES=[
+  {name:"Bright",icon:"\u{1F308}",bright:true,mascot:"\u{1F50D}✨"},
   {name:"Collage",icon:"✏️",cls:"d-collage",mascot:"\u{1F431}✏️",cols:2,frames:[0,1,2,3,4],num:false,scribs:true},
   {name:"Notebook",icon:"\u{1F4D3}",cls:"d-notebook",mascot:"\u{1F989} \u{1F4DA}",cols:1,frames:[0,2,4],num:true,scribs:false},
   {name:"Scrapbook",icon:"✂️",cls:"d-scrap",mascot:"\u{1F430} ✂️",cols:2,frames:[1,3,4],num:false,scribs:true},
   {name:"Comic",icon:"\u{1F4A5}",cls:"d-comic",mascot:"⚡",cols:2,frames:[5],num:true,scribs:false}
 ];
 var tplTheme=0;
+
+/* ---------- Bright: vibrant full-colour worksheet design ---------- */
+var B_COLORS=["#7c3aed","#16a34a","#2563eb","#ef4444","#f97316","#0d9488"];
+var B_ICONS=["\u{1F4CB}","✏️","\u{1F50D}","\u{1F9E9}","\u{1F3AF}","⭐"];
+var B_CAT=["#16a34a","#ef4444","#2563eb","#f59e0b"];
+function renderBright(t){
+  var words=(WS.title||TITLE).split(/\s+/);
+  var mid=Math.ceil(words.length/2);
+  var ta=words.slice(0,mid).join(' '), tb=words.slice(mid).join(' ');
+  var titleHtml='<span class="x">'+esc(ta)+'</span>'+(tb?' <span class="y">'+esc(tb)+'</span>':'');
+  var h='<div class="bright">';
+  h+='<div class="b-head"><div class="b-tw"><img class="b-logo" src="'+ZLOGO+'" alt="Zera Education"/><div class="b-title">'+titleHtml+'</div>'+(WS.description?'<div class="b-sub">'+esc(WS.description)+'</div>':'')+'</div><div class="b-mascot">'+t.mascot+'</div></div>';
+  h+='<div class="b-meta"><span>\u{1F9D1}‍\u{1F393} Name <i></i></span><span>\u{1F4C5} Date <i></i></span><span>\u{1F3EB} Class <i></i></span></div>';
+  if(WS.readingPassage&&WS.readingPassage.trim()){h+='<div class="b-pass">'+esc(WS.readingPassage)+'</div>';}
+  var qn=0;
+  (WS.sections||[]).forEach(function(sec,si){
+    var c=B_COLORS[si%B_COLORS.length];
+    h+='<div class="b-sec" style="--bc:'+c+'"><div class="b-sech">'+B_ICONS[si%B_ICONS.length]+' '+esc(sec.title||"Activity")+'</div><div class="b-secb">';
+    if(sec.instructions){h+='<div class="b-ins">'+esc(sec.instructions)+'</div>';}
+    (sec.questions||[]).forEach(function(q){
+      qn++;
+      var kind=qKind(q);
+      h+='<div class="b-q"><div class="b-qn">'+qn+'</div><div class="b-qb"><div class="b-qt">'+esc(q.text)+'</div>';
+      if(kind==="draw"){
+        h+='<div class="b-draw"></div>';
+      }else if(kind==="sort"||kind==="cut"){
+        var cats=qCats(q);
+        h+='<div class="b-cats">'+cats.map(function(cc,ci){return '<div class="b-cat" style="--c2:'+B_CAT[ci%B_CAT.length]+'"><div class="b-cat-h">'+esc(cc)+'</div></div>';}).join('')+'</div>';
+        h+='<div class="b-cutdiv"><span>✂️ '+(kind==="cut"?"Cut &amp; paste":"Sort the items")+'</span></div>';
+        h+='<div class="b-cutgrid">'+(q.options||[]).map(function(o){return '<div class="b-cutc">'+esc(o)+'</div>';}).join('')+'</div>';
+      }else if(kind==="mcq"){
+        q.options.forEach(function(o,oi){h+='<button class="b-opt" onclick="this.classList.toggle(\'on\')"><span class="l">'+String.fromCharCode(65+oi)+'</span><span>'+esc(o)+'</span></button>';});
+      }else{
+        h+='<div class="b-line"></div><div class="b-line"></div><div class="b-line"></div>';
+      }
+      h+='</div></div>';
+    });
+    h+='</div></div>';
+  });
+  h+='<div class="b-foot">⭐ Remember: take your time and do your best! ⭐</div>';
+  h+='</div>';
+  byId("tplBody").innerHTML=h;
+  byId("dframe").className="dframe brightframe";
+}
 
 function renderPicker(){
   var p=byId("tplPicker"),h="";
@@ -627,6 +724,7 @@ function setTplTheme(i){ tplTheme=i; renderPicker(); renderTemplate(); }
    Each design swaps the page structure, frames and title treatment. */
 function renderTemplate(){
   var t=TPL_THEMES[tplTheme]||TPL_THEMES[0];
+  if(t.bright){renderBright(t);return;}
   var h='<div class="tpl-doodle '+t.cls+'">';
   if(t.scribs){h+='<span class="dscrib s1">✦</span><span class="dscrib s2">♡</span><span class="dscrib s3">✴</span>';}
   h+='<div class="tpl-doodle-head">';
@@ -649,13 +747,11 @@ function renderTemplate(){
       else{h+='<div class="dq">'+esc(q.text)+'</div>';}
       if(kind==="draw"){
         h+='<div class="ddraw"></div>';
-      }else if(kind==="sort"){
-        h+='<div class="dbank">'+(q.options||[]).map(function(o){return '<span class="dchip">'+esc(o)+'</span>';}).join('')+'</div>';
-        h+='<div class="dsortgrid"><div class="dsortcol"></div><div class="dsortcol"></div></div>';
-      }else if(kind==="cut"){
-        h+='<div class="dpaste"><div class="dslot"></div><div class="dslot"></div></div>';
-        h+='<div class="dcuthdr">✂️ Cut these out and paste above</div>';
-        h+='<div class="dpool">'+(q.options||[]).map(function(o){return '<span class="dcard">'+esc(o)+'</span>';}).join('')+'</div>';
+      }else if(kind==="sort"||kind==="cut"){
+        var cats=qCats(q);
+        h+='<div class="dcats">'+cats.map(function(c){return '<div class="dcat"><div class="dcat-h">'+esc(c)+'</div></div>';}).join('')+'</div>';
+        h+='<div class="dcutdiv"><span>✂️ '+(kind==="cut"?"Cut &amp; paste":"Sort the items")+'</span></div>';
+        h+='<div class="dcutgrid">'+(q.options||[]).map(function(o){return '<div class="dcutc">'+esc(o)+'</div>';}).join('')+'</div>';
       }else if(kind==="mcq"){
         q.options.forEach(function(o,oi){h+='<button class="dopt" onclick="tplTick(this)"><span class="dl">'+String.fromCharCode(65+oi)+'</span><span>'+esc(o)+'</span></button>';});
       }else{
