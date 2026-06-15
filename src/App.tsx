@@ -352,6 +352,16 @@ const ASSESSMENT_HTML_TEMPLATE = `<!DOCTYPE html>
   .q .opts{display:flex;flex-direction:column;gap:6px;margin-top:4px}
   .paperopt{font-size:13.5px;color:#4b466e;font-weight:600;padding:7px 11px;border:1.5px solid #ede9fe;border-radius:10px;background:#fff}
   .ansline{border-bottom:2px dotted #b9a9f0;height:26px;margin-top:8px}
+  .adraw{height:170px;border:2px dashed #b9a9f0;border-radius:14px;margin-top:8px}
+  .bank{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0}
+  .chip{border:1.5px solid #b9a9f0;border-radius:999px;padding:5px 13px;font-size:13px;font-weight:700;color:#4b466e;background:#faf8ff}
+  .sortgrid{display:flex;gap:12px;margin-top:8px}
+  .sortcol{flex:1;border:2px dashed #b9a9f0;border-radius:12px;min-height:96px;background:#fff}
+  .pasterow{display:flex;gap:12px;margin:8px 0}
+  .pasteslot{flex:1;border:2px dashed #b9a9f0;border-radius:12px;min-height:64px;background:#fff}
+  .cuthdr{font-size:12px;font-weight:800;color:#7c6fa6;margin:10px 0 6px;text-transform:uppercase;letter-spacing:1px}
+  .cutpool{display:flex;flex-wrap:wrap;gap:9px}
+  .cutcard{border:2px dashed #b9a9f0;border-radius:10px;padding:7px 14px;font-size:13px;font-weight:700;color:#4b466e;background:#fff}
   /* ===== Interactive Template — selectable worksheet themes ===== */
   .tplpick{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:18px}
   .tplpick button{cursor:pointer;border:2px solid #e9d5ff;background:#fff;border-radius:14px;padding:8px 13px;font-family:inherit;font-weight:800;font-size:12px;color:#6d28d9;display:flex;align-items:center;gap:6px;transition:.15s}
@@ -388,6 +398,17 @@ const ASSESSMENT_HTML_TEMPLATE = `<!DOCTYPE html>
   .dopt:hover{transform:rotate(-.6deg) translateY(-1px)}
   .dopt .dl{width:26px;height:26px;border-radius:50%;border:2.5px solid #111;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;flex:none;background:#fff;color:#111}
   .dopt.ticked{background:#111;color:#fff}
+  .ddraw{height:175px;border:2.5px dashed #111;border-radius:14px;margin-top:4px}
+  .dbank{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+  .dchip{border:2.5px solid #111;border-radius:999px;padding:5px 14px;font-size:13px;font-weight:800;background:#fff}
+  .dsortgrid{display:flex;gap:14px;margin-top:6px}
+  .dsortcol{flex:1;border:2.5px dashed #111;border-radius:12px;min-height:110px;background:#fff}
+  .dpaste{display:flex;gap:14px;margin:6px 0}
+  .dslot{flex:1;border:2.5px dashed #111;border-radius:12px;min-height:74px;background:#fff}
+  .dcuthdr{font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:1px;margin:10px 0 6px}
+  .dpool{display:flex;flex-wrap:wrap;gap:10px}
+  .dcard{border:2.5px dashed #111;border-radius:10px;padding:8px 15px;font-size:13px;font-weight:800;background:#fff}
+  .dbox.dwide{column-span:all;break-inside:avoid}
   .dsec{display:table;margin:18px auto 2px;background:#111;color:#fff;font-weight:900;font-size:13px;text-transform:uppercase;letter-spacing:1.5px;padding:7px 18px;border-radius:999px;transform:rotate(-1deg);break-after:avoid;page-break-after:avoid}
   .dins{font-size:12.5px;font-weight:700;font-style:italic;text-align:center;margin:6px 0 2px}
   .dnote{border:3px dotted #111;border-radius:18px;padding:12px 16px;font-size:13.5px;font-weight:700;font-style:italic;text-align:center;margin-bottom:6px}
@@ -476,7 +497,7 @@ const ASSESSMENT_HTML_TEMPLATE = `<!DOCTYPE html>
        across pages (huge column gaps, orphaned boxes on a trailing page) */
     .dcols{display:grid;grid-template-columns:1fr 1fr;column-gap:18px;align-items:start}
     .dcols.one{display:block}
-    .dcols .dsec,.dcols .dins{grid-column:1/-1}
+    .dcols .dsec,.dcols .dins,.dcols .dbox.dwide{grid-column:1/-1}
     .dbox{margin:8px 0 2px}
     .dbox.v1{margin-top:18px}
     .dbox.v4{margin-top:16px}
@@ -537,6 +558,17 @@ document.title="Interactive Assessment — "+TITLE;
 byId("title").textContent=TITLE;
 byId("sDate").value=new Date().toLocaleDateString();
 
+/* Classify a question by its "type" field (free string from the AI). Sorting
+   and cut-and-paste hold their items in "options", so type wins over options. */
+function qKind(q){
+  var t=(q.type||"").toLowerCase();
+  if(t.indexOf("draw")>=0||t.indexOf("creative")>=0) return "draw";
+  if(t.indexOf("sort")>=0) return "sort";
+  if(t.indexOf("cut")>=0||t.indexOf("paste")>=0) return "cut";
+  if(q.options&&q.options.length) return "mcq";
+  return "write";
+}
+
 /* ---------- Paper assessment ---------- */
 (function renderPaper(){
   var h="";
@@ -549,7 +581,17 @@ byId("sDate").value=new Date().toLocaleDateString();
     if(sec.instructions){h+='<div class="ins">'+esc(sec.instructions)+'</div>';}
     (sec.questions||[]).forEach(function(q,i){
       h+='<div class="q"><div class="qt">'+(i+1)+'. '+esc(q.text)+'</div>';
-      if(q.options&&q.options.length){
+      var kind=qKind(q);
+      if(kind==="draw"){
+        h+='<div class="adraw"></div>';
+      }else if(kind==="sort"){
+        h+='<div class="bank">'+(q.options||[]).map(function(o){return '<span class="chip">'+esc(o)+'</span>';}).join('')+'</div>';
+        h+='<div class="sortgrid"><div class="sortcol"></div><div class="sortcol"></div></div>';
+      }else if(kind==="cut"){
+        h+='<div class="pasterow"><div class="pasteslot"></div><div class="pasteslot"></div></div>';
+        h+='<div class="cuthdr">✂️ Cut these out and paste above</div>';
+        h+='<div class="cutpool">'+(q.options||[]).map(function(o){return '<span class="cutcard">'+esc(o)+'</span>';}).join('')+'</div>';
+      }else if(kind==="mcq"){
         h+='<div class="opts">';
         q.options.forEach(function(o){h+='<div class="paperopt">□ '+esc(o)+'</div>';});
         h+='</div>';
@@ -600,10 +642,21 @@ function renderTemplate(){
     if(sec.instructions){h+='<div class="dins">'+esc(sec.instructions)+'</div>';}
     (sec.questions||[]).forEach(function(q){
       qn++;
-      h+='<div class="dbox v'+t.frames[v%t.frames.length]+'">';
+      var kind=qKind(q);
+      var wide=(kind==="sort"||kind==="cut")?" dwide":"";
+      h+='<div class="dbox v'+t.frames[v%t.frames.length]+wide+'">';
       if(t.num){h+='<div class="dq withnum"><span class="dnum">'+qn+'</span><span>'+esc(q.text)+'</span></div>';}
       else{h+='<div class="dq">'+esc(q.text)+'</div>';}
-      if(q.options&&q.options.length){
+      if(kind==="draw"){
+        h+='<div class="ddraw"></div>';
+      }else if(kind==="sort"){
+        h+='<div class="dbank">'+(q.options||[]).map(function(o){return '<span class="dchip">'+esc(o)+'</span>';}).join('')+'</div>';
+        h+='<div class="dsortgrid"><div class="dsortcol"></div><div class="dsortcol"></div></div>';
+      }else if(kind==="cut"){
+        h+='<div class="dpaste"><div class="dslot"></div><div class="dslot"></div></div>';
+        h+='<div class="dcuthdr">✂️ Cut these out and paste above</div>';
+        h+='<div class="dpool">'+(q.options||[]).map(function(o){return '<span class="dcard">'+esc(o)+'</span>';}).join('')+'</div>';
+      }else if(kind==="mcq"){
         q.options.forEach(function(o,oi){h+='<button class="dopt" onclick="tplTick(this)"><span class="dl">'+String.fromCharCode(65+oi)+'</span><span>'+esc(o)+'</span></button>';});
       }else{
         h+='<div class="dline"></div><div class="dline"></div><div class="dline"></div>';
@@ -6814,6 +6867,8 @@ export default function App() {
     "Vocabulary Check",
     "Scenario Based",
     "Drawing or Creative Task",
+    "Sorting Activity",
+    "Cut and Paste Activity",
   ];
   const [isInputModalOpen, setIsInputModalOpen] = useState(false);
   const [editingImageUrl, setEditingImageUrl] = useState<string | null>(null);
@@ -21923,21 +21978,86 @@ export default function App() {
                                   <Trash2 size={14} />
                                 </button>
                               </div>
-                              {q.options ? (
-                                <div className="grid grid-cols-2 gap-3">
-                                  {q.options.map((opt, oi) => (
-                                    <div
-                                      key={oi}
-                                      className="p-3 border-2 border-[#E5E2C8] rounded-xl text-sm font-bold flex items-center gap-3"
-                                    >
-                                      <div className="w-4 h-4 border-2 border-[#E5E2C8] rounded-full" />
-                                      {opt}
+                              {(() => {
+                                const tt = (q.type || "").toLowerCase();
+                                const kind =
+                                  /draw|creative/.test(tt)
+                                    ? "draw"
+                                    : tt.includes("sort")
+                                      ? "sort"
+                                      : tt.includes("cut") ||
+                                          tt.includes("paste")
+                                        ? "cut"
+                                        : q.options && q.options.length
+                                          ? "mcq"
+                                          : "write";
+                                if (kind === "draw") {
+                                  return (
+                                    <div className="h-40 w-full border-2 border-dashed border-[#E5E2C8] rounded-xl mt-4" />
+                                  );
+                                }
+                                if (kind === "mcq") {
+                                  return (
+                                    <div className="grid grid-cols-2 gap-3">
+                                      {q.options!.map((opt, oi) => (
+                                        <div
+                                          key={oi}
+                                          className="p-3 border-2 border-[#E5E2C8] rounded-xl text-sm font-bold flex items-center gap-3"
+                                        >
+                                          <div className="w-4 h-4 border-2 border-[#E5E2C8] rounded-full" />
+                                          {opt}
+                                        </div>
+                                      ))}
                                     </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="h-24 w-full border-b-2 border-dashed border-[#E5E2C8]/50 mt-4" />
-                              )}
+                                  );
+                                }
+                                if (kind === "sort") {
+                                  return (
+                                    <div className="space-y-3 mt-2">
+                                      <div className="flex flex-wrap gap-2">
+                                        {(q.options || []).map((o, oi) => (
+                                          <span
+                                            key={oi}
+                                            className="px-3 py-1.5 border-2 border-[#E5E2C8] rounded-full text-sm font-bold"
+                                          >
+                                            {o}
+                                          </span>
+                                        ))}
+                                      </div>
+                                      <div className="grid grid-cols-2 gap-3">
+                                        <div className="h-24 border-2 border-dashed border-[#E5E2C8] rounded-xl" />
+                                        <div className="h-24 border-2 border-dashed border-[#E5E2C8] rounded-xl" />
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                if (kind === "cut") {
+                                  return (
+                                    <div className="space-y-3 mt-2">
+                                      <div className="grid grid-cols-2 gap-3">
+                                        <div className="h-16 border-2 border-dashed border-[#E5E2C8] rounded-xl" />
+                                        <div className="h-16 border-2 border-dashed border-[#E5E2C8] rounded-xl" />
+                                      </div>
+                                      <p className="text-[10px] font-black uppercase tracking-widest text-[#7C7A65]">
+                                        ✂️ Cut these out and paste above
+                                      </p>
+                                      <div className="flex flex-wrap gap-2">
+                                        {(q.options || []).map((o, oi) => (
+                                          <span
+                                            key={oi}
+                                            className="px-3 py-1.5 border-2 border-dashed border-[#E5E2C8] rounded-lg text-sm font-bold"
+                                          >
+                                            {o}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                return (
+                                  <div className="h-24 w-full border-b-2 border-dashed border-[#E5E2C8]/50 mt-4" />
+                                );
+                              })()}
                             </div>
                           ))}
                         </div>

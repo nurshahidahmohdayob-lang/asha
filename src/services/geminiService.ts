@@ -251,6 +251,16 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
 
     contents.push(mainPrompt);
     contents.push(`Format: JSON object with "title", "readingPassage" (The main content if readingPassageOnly, or the context story if includeStory), "description" (A concise single-sentence summary), "methodology" (MUST include Cambridge Subject Code), and "sections" (array of {title, instructions, questions: array of {text, type, options}}). If readingPassageOnly is true, sections should contain exactly one placeholder entry if necessary to satisfy the schema, and no questions.`);
+    contents.push(`QUESTION "type" FIELD — set it to one of these exact lowercase values based on the question, and follow the encoding rules for each:
+- "multiple-choice": put 3-4 answer choices in "options".
+- "true-false": put exactly ["True","False"] in "options".
+- "fill-in-the-blanks": include a blank shown as "____" inside "text"; leave "options" empty.
+- "short-answer" / "scenario": an open written response; leave "options" empty.
+- "matching": a left-to-right matching task; leave "options" empty.
+- "drawing": a creative DRAWING task — the student draws their answer in an empty box. Write a clear drawing instruction in "text" and DO NOT provide "options".
+- "sorting": a sorting task. Name the 2-4 categories inside "text" (e.g. "Sort these into Mammals and Birds"), and put the individual items to be sorted in "options".
+- "cut-and-paste": a cut-and-paste task. Describe the target slots/categories inside "text", and put the individual items the student cuts out and pastes in "options".
+Only use the types that appear in the "Allowed Types" list above.`);
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",

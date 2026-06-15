@@ -32,7 +32,16 @@ export interface WorksheetSection {
   imageUrl?: string;
   questions: {
     text: string;
-    type: 'short-answer' | 'multiple-choice' | 'matching' | 'fill-in-the-blanks';
+    type:
+      | 'short-answer'
+      | 'multiple-choice'
+      | 'true-false'
+      | 'matching'
+      | 'fill-in-the-blanks'
+      | 'drawing'
+      | 'sorting'
+      | 'cut-and-paste'
+      | 'scenario';
     options?: string[];
   }[];
 }
