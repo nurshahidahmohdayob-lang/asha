@@ -952,7 +952,7 @@ export async function relevelReadingPassage(
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+      model: "gemini-3-flash-preview",
       contents: { parts: [{ text: mainPrompt }] },
       config: {
         responseMimeType: "application/json",
@@ -997,6 +997,250 @@ export async function relevelReadingPassage(
   } catch (err: any) {
     if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
       return callAiProxy('relevelPassage', passage, { targetLexile, subject, yearGroup });
+    }
+    throw err;
+  }
+}
+
+// Retries a generateContent call on transient errors (503 model overloaded,
+// 429 rate limit) with backoff, then falls back to the next model in the list.
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function generateContentWithRetry(
+  request: { contents: any; config?: any },
+  models: string[] = ["gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
+  attemptsPerModel = 2,
+): Promise<any> {
+  let lastErr: any;
+  for (const model of models) {
+    for (let attempt = 0; attempt < attemptsPerModel; attempt++) {
+      try {
+        return await ai.models.generateContent({ model, ...request });
+      } catch (err: any) {
+        lastErr = err;
+        const msg = String(err?.message || err);
+        const isRateLimit =
+          msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED");
+        const transient =
+          isRateLimit ||
+          msg.includes("503") ||
+          msg.includes("UNAVAILABLE") ||
+          msg.toLowerCase().includes("overloaded") ||
+          msg.toLowerCase().includes("high demand");
+        if (!transient) throw err;
+        // 429 responses often carry a server-suggested retryDelay — honor it;
+        // otherwise wait much longer for rate limits than for 503 blips.
+        const suggested = msg.match(/retryDelay"?\s*:?\s*"?(\d+)/);
+        const wait = suggested
+          ? (parseInt(suggested[1], 10) + 1) * 1000
+          : isRateLimit
+            ? 6000 * (attempt + 1)
+            : 800 * (attempt + 1);
+        await sleep(Math.min(wait, 65000));
+      }
+    }
+  }
+  throw lastErr;
+}
+
+// Differentiated after-reading questions: the SAME question (same skill, same
+// intent, same expected answer) written once per requested Lexile level, with
+// only the language complexity adapted. No passage — students read their own
+// book; these are book-response questions.
+//
+// Speed: one small base call writes the question set, then ALL level
+// rewordings run in parallel (thinking budget capped) — wall time is roughly
+// two short calls regardless of how many levels are selected.
+export async function generateLeveledQuestions(
+  bookTitle: string,
+  levels: string[],
+  options: { yearGroup: string; subject: string; numQuestions: number },
+  onProgress?: (message: string) => void,
+): Promise<{
+  questions: {
+    skill: string;
+    type?: string;
+    versions: {
+      lexile: string;
+      text: string;
+      options?: string[];
+      pairs?: { left: string; right: string }[];
+    }[];
+  }[];
+}> {
+  const baseSchema = {
+    type: Type.OBJECT,
+    properties: {
+      questions: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            skill: { type: Type.STRING, description: "Comprehension skill (e.g. Recall, Inference, Sequencing, Vocabulary, Opinion & Evidence, Visualising)." },
+            type: { type: Type.STRING, description: "One of: multiple-choice, open-response, drawing, matching." },
+            text: { type: Type.STRING, description: "The question text / instruction." },
+            options: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+              description: "3-4 answer options — multiple-choice questions only.",
+            },
+            pairs: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  left: { type: Type.STRING },
+                  right: { type: Type.STRING },
+                },
+                required: ["left", "right"],
+              },
+              description: "3-5 left/right pairs — matching questions only (e.g. character ↔ trait, cause ↔ effect, word ↔ meaning).",
+            },
+          },
+          required: ["skill", "text", "type"],
+        },
+      },
+    },
+    required: ["questions"],
+  };
+
+  try {
+    // 1. Base question set (concise, fast)
+    onProgress?.(`Writing ${options.numQuestions} shared questions…`);
+    const basePrompt = `You are an expert Cambridge literacy educator. A ${options.yearGroup} class (${options.subject}) is reading: "${bookTitle}".
+Write exactly ${options.numQuestions} after-reading questions with EXACTLY this mix:
+- 1 DRAWING question (type "drawing"): the student draws a scene, character or idea from the book. No options, no pairs — just a clear drawing instruction.
+- 1 MATCHING question (type "matching"): 3-5 left/right pairs to connect with a line (e.g. character ↔ trait, cause ↔ effect, word ↔ meaning). Put the pairs in the "pairs" field with the CORRECT pairing.
+- The remaining questions split roughly half multiple-choice (type "multiple-choice", 3-4 options) and half open-response (type "open-response").
+Label each with its comprehension skill (Recall, Inference, Sequencing, Vocabulary, Opinion & Evidence, Visualising...). If the book is well known, reference its actual content; otherwise write strong generic book-response questions (characters, setting, problem/solution, prediction, opinion with evidence). Keep questions concise.`;
+    const baseRes = await generateContentWithRetry({
+      contents: { parts: [{ text: basePrompt }] },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: baseSchema,
+        thinkingConfig: { thinkingBudget: 128 },
+      },
+    });
+    const baseText = baseRes.text;
+    if (!baseText) throw new Error("Empty response");
+    const base: { questions: { skill: string; type?: string; text: string; options?: string[]; pairs?: { left: string; right: string }[] }[] } = JSON.parse(baseText);
+    if (!base.questions || base.questions.length === 0) throw new Error("No questions generated");
+
+    // 2. Reword in BATCHES: one call rewords for up to 4 Lexile bands at
+    // once, and the batches run in parallel — all 10 levels cost just
+    // 1 base call + 3 batch calls (fast AND friendly to tight rate limits).
+    const baseJson = JSON.stringify(base.questions);
+    const CHUNK = 4;
+    const chunks: string[][] = [];
+    for (let i = 0; i < levels.length; i += CHUNK) {
+      chunks.push(levels.slice(i, i + CHUNK));
+    }
+    onProgress?.(
+      `Adapting wording for ${levels.length} Lexile level(s) in ${chunks.length} parallel batch(es)…`,
+    );
+    let doneCount = 0;
+    type LeveledQuestion = {
+      skill: string;
+      type?: string;
+      text: string;
+      options?: string[];
+      pairs?: { left: string; right: string }[];
+    };
+    const batchSchema = {
+      type: Type.OBJECT,
+      properties: {
+        sets: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              lexile: {
+                type: Type.STRING,
+                description:
+                  "The Lexile band this question set is worded for — exactly one of the requested bands.",
+              },
+              questions: (baseSchema as any).properties.questions,
+            },
+            required: ["lexile", "questions"],
+          },
+          description: "One complete reworded question set per requested Lexile band.",
+        },
+      },
+      required: ["sets"],
+    };
+    const leveledResults: { lexile: string; questions: LeveledQuestion[] }[] = [];
+    await Promise.all(
+      chunks.map(async (chunk) => {
+        const rewordPrompt = `You are an expert in differentiated literacy instruction. Below is a fixed set of after-reading questions about "${bookTitle}".
+For EACH of these Lexile bands — ${chunk.join(", ")} — produce one complete reworded copy of the ENTIRE question set, so the LANGUAGE matches that band. Lower bands: short sentences, high-frequency words, direct phrasing. Higher bands: richer vocabulary, more complex syntax.
+STRICT RULES (apply to every band's copy): keep the same order, the same number of questions, the same "type", the same skill, the same intent and the SAME correct answer for each; multiple-choice questions keep the same number of options in the same order; open-response questions stay open-response (no options); drawing questions stay drawing instructions; matching questions keep the SAME number of pairs in the SAME order with the SAME correct pairing — reword both sides of each pair.
+Return exactly ${chunk.length} sets, one per band, with the "lexile" field exactly as given.
+
+QUESTIONS (JSON):
+${baseJson}`;
+        const res = await generateContentWithRetry({
+          contents: { parts: [{ text: rewordPrompt }] },
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: batchSchema,
+            thinkingConfig: { thinkingBudget: 64 },
+          },
+        });
+        const text = res.text;
+        if (!text) throw new Error("Empty response");
+        const parsed: { sets: { lexile: string; questions: LeveledQuestion[] }[] } =
+          JSON.parse(text);
+        for (const set of parsed.sets || []) {
+          if (set && set.lexile) {
+            leveledResults.push({
+              lexile: set.lexile,
+              questions: set.questions || [],
+            });
+            doneCount++;
+          }
+        }
+        onProgress?.(
+          `Adapting wording for ${levels.length} Lexile level(s)… ${Math.min(doneCount, levels.length)}/${levels.length} done`,
+        );
+      }),
+    );
+    // restore the requested level order; fall back to base wording for any
+    // band the model failed to return
+    const leveled = levels.map((l) => {
+      const found = leveledResults.find(
+        (r) => r.lexile === l || r.lexile.replace(/L$/i, "") === l,
+      );
+      return found || { lexile: l, questions: base.questions };
+    });
+
+    // 3. Assemble: one entry per base question holding all level versions
+    return {
+      questions: base.questions.map((bq, i) => ({
+        skill: bq.skill,
+        type: bq.type,
+        versions: leveled.map((lv) => {
+          const v = lv.questions[i] || bq;
+          const isMcq = !!(bq.options && bq.options.length);
+          const isMatch = !!(bq.pairs && bq.pairs.length);
+          return {
+            lexile: lv.lexile,
+            text: v.text || bq.text,
+            options: isMcq
+              ? v.options && v.options.length === (bq.options || []).length
+                ? v.options
+                : bq.options
+              : undefined,
+            pairs: isMatch
+              ? v.pairs && v.pairs.length === (bq.pairs || []).length
+                ? v.pairs
+                : bq.pairs
+              : undefined,
+          };
+        }),
+      })),
+    };
+  } catch (err: any) {
+    if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
+      return callAiProxy('leveledQuestions', bookTitle, { levels, ...options });
     }
     throw err;
   }

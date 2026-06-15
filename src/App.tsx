@@ -319,7 +319,7 @@ const prepareFileForGemini = async (
 
 // Self-contained, offline, interactive HTML for the assessment + playful
 // organizer. The placeholders /*__WS__*/null and /*__TITLE__*/null are replaced
-// with the worksheet JSON and title at download time (see downloadAssessmentHTML).
+// with the worksheet JSON and title when opened (see openAssessmentHTML).
 const ASSESSMENT_HTML_TEMPLATE = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -352,55 +352,6 @@ const ASSESSMENT_HTML_TEMPLATE = `<!DOCTYPE html>
   .q .opts{display:flex;flex-direction:column;gap:6px;margin-top:4px}
   .paperopt{font-size:13.5px;color:#4b466e;font-weight:600;padding:7px 11px;border:1.5px solid #ede9fe;border-radius:10px;background:#fff}
   .ansline{border-bottom:2px dotted #b9a9f0;height:26px;margin-top:8px}
-  /* ===== Interactive Organizer ===== */
-  .orgintro{background:linear-gradient(110deg,#fb7185,#f59e0b 38%,#22c55e 70%,#0ea5e9);color:#fff;border-radius:24px;padding:20px 24px;margin-bottom:22px;text-align:center;box-shadow:0 14px 32px rgba(0,0,0,.14);position:relative;overflow:hidden}
-  .orgintro h2{font-size:21px;font-weight:800;display:flex;gap:9px;align-items:center;justify-content:center;text-shadow:0 2px 0 rgba(0,0,0,.14)}
-  .orgintro p{font-size:13px;font-weight:600;opacity:.96;margin-top:5px}
-  #orgBody>.card:nth-of-type(7n+1){--ac:#7c3aed;--acl:#f3eaff}
-  #orgBody>.card:nth-of-type(7n+2){--ac:#0284c7;--acl:#e0f2fe}
-  #orgBody>.card:nth-of-type(7n+3){--ac:#059669;--acl:#d1fae5}
-  #orgBody>.card:nth-of-type(7n+4){--ac:#d97706;--acl:#fef3c7}
-  #orgBody>.card:nth-of-type(7n+5){--ac:#db2777;--acl:#fce7f3}
-  #orgBody>.card:nth-of-type(7n+6){--ac:#0d9488;--acl:#ccfbf1}
-  #orgBody>.card:nth-of-type(7n+7){--ac:#4f46e5;--acl:#e0e7ff}
-  .card.org{position:relative;background:#fff;border:2px solid var(--acl,#ede9fe);border-top:7px solid var(--ac,#7c3aed);border-radius:22px;padding:0 22px 24px;margin-bottom:20px;box-shadow:0 12px 28px rgba(0,0,0,.07);overflow:hidden}
-  .card.org h2{display:inline-flex;align-items:center;gap:9px;font-size:16px;color:#fff;background:var(--ac,#7c3aed);padding:10px 20px 10px 16px;border-radius:0 0 18px 0;margin:0 0 16px -22px;box-shadow:0 6px 14px rgba(0,0,0,.16);letter-spacing:.2px}
-  .qtext{font-weight:700;font-size:15px;margin:4px 0 14px;color:#3b3663}
-  .opt{border:2px solid var(--acl,#e9e3ff);background:#fff;border-radius:14px;padding:12px 15px;font-family:inherit;font-size:14px;font-weight:700;color:#403a63;cursor:pointer;text-align:left;transition:.15s;display:flex;align-items:center;gap:11px;width:100%}
-  .opt:hover{border-color:var(--ac,#a855f7);transform:translateY(-2px);box-shadow:0 6px 14px rgba(0,0,0,.08)}
-  .opt .dot{width:20px;height:20px;border-radius:50%;border:3px solid var(--ac,#c4b5fd);opacity:.45;flex:none;transition:.15s}
-  .opt.selected{border-color:var(--ac,#7c3aed);background:var(--acl,#f3eaff)}
-  .opt.selected .dot{background:var(--ac,#7c3aed);border-color:var(--ac,#7c3aed);opacity:1;box-shadow:0 0 0 4px var(--acl,#ede9fe)}
-  .grid2{display:flex;gap:10px;flex-wrap:wrap}
-  .grid2 .opt{flex:1;min-width:120px;justify-content:center}
-  body.reveal .opt[data-correct="1"]{border-color:#16a34a;background:#dcfce7;color:#15803d}
-  body.reveal .opt[data-correct="1"] .dot{background:#16a34a;border-color:#16a34a;opacity:1}
-  body.reveal .opt.selected[data-correct="0"]{border-color:#dc2626;background:#fee2e2;color:#b91c1c}
-  .fillrow{font-size:16px;font-weight:700;line-height:2.1;color:#3b3663}
-  .blank{display:inline-block;min-width:96px;border-bottom:3px solid var(--ac,#a855f7);text-align:center;color:var(--ac,#7c3aed);padding:0 10px;font-weight:800}
-  .cols{display:flex;gap:16px;flex-wrap:wrap}
-  .col{flex:1;min-width:170px;display:flex;flex-direction:column;gap:10px}
-  .term,.def{position:relative;border:2px solid var(--acl,#e9e3ff);background:#fff;border-radius:14px;padding:12px 14px;font-size:13.5px;font-weight:700;color:#403a63;cursor:pointer;transition:.15s}
-  .term:hover,.def:hover{border-color:var(--ac,#a855f7);transform:translateY(-1px)}
-  .term{border-left:6px solid var(--ac,#a855f7)}
-  .term.active{border-color:var(--ac,#7c3aed);background:var(--acl,#f3eaff);box-shadow:0 0 0 4px var(--acl,#ede9fe)}
-  .term.paired,.def.paired{opacity:.6}
-  .badge{display:inline-block;font-size:11px;font-weight:800;margin-left:8px;padding:2px 8px;border-radius:8px;background:var(--ac,#6d28d9);color:#fff}
-  .term.ok,.def.ok{border-color:#16a34a;background:#dcfce7}
-  .term.bad,.def.bad{border-color:#dc2626;background:#fee2e2}
-  .pool{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px;min-height:20px;padding:11px;background:var(--acl,#faf8ff);border-radius:16px}
-  .item{border:2px solid var(--ac,#e9e3ff);background:#fff;border-radius:999px;padding:9px 16px;font-size:13.5px;font-weight:800;color:#403a63;cursor:pointer;transition:.15s;user-select:none;box-shadow:0 3px 8px rgba(0,0,0,.06)}
-  .item:hover{transform:translateY(-2px) rotate(-1.5deg)}
-  .item.active{background:var(--acl,#f3eaff);box-shadow:0 0 0 4px var(--acl,#ede9fe)}
-  .item.ok{border-color:#16a34a;background:#dcfce7;color:#15803d}
-  .item.bad{border-color:#dc2626;background:#fee2e2;color:#b91c1c}
-  .buckets{display:flex;gap:14px;flex-wrap:wrap}
-  .bucket{flex:1;min-width:150px;border:3px dashed var(--ac,#c4b5fd);border-radius:20px;padding:14px 12px;min-height:106px;background:var(--acl,#faf8ff);cursor:pointer;transition:.15s}
-  .bucket:hover{filter:brightness(.97);transform:translateY(-1px)}
-  .bucket .bt{font-size:12.5px;font-weight:800;color:var(--ac,#6d28d9);margin-bottom:10px;text-align:center}
-  .bucket .drop{display:flex;gap:7px;flex-wrap:wrap;justify-content:center}
-  textarea.reflect{width:100%;min-height:96px;border:2px solid var(--acl,#e9e3ff);border-radius:14px;padding:13px;font-family:inherit;font-size:14px;font-weight:600;color:#3b3663;resize:vertical;outline:none;background:#fff}
-  textarea.reflect:focus{border-color:var(--ac,#a855f7);box-shadow:0 0 0 4px var(--acl,#ede9fe)}
   /* ===== Interactive Template — selectable worksheet themes ===== */
   .tplpick{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:18px}
   .tplpick button{cursor:pointer;border:2px solid #e9d5ff;background:#fff;border-radius:14px;padding:8px 13px;font-family:inherit;font-weight:800;font-size:12px;color:#6d28d9;display:flex;align-items:center;gap:6px;transition:.15s}
@@ -413,6 +364,9 @@ const ASSESSMENT_HTML_TEMPLATE = `<!DOCTYPE html>
   .tpl-doodle .s2{top:122px;left:52%;font-size:16px;transform:rotate(-10deg)}
   .tpl-doodle .s3{top:70px;left:56%;font-size:18px;transform:rotate(24deg)}
   .dbrand{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:900;letter-spacing:2px;text-transform:uppercase;border:2px solid #111;border-radius:999px;padding:3px 12px;margin-bottom:10px}
+  .dlogo{display:block;height:30px;width:auto;margin:0 0 10px}
+  .d-notebook .dlogo{margin:0 auto 8px}
+  .zlogo{display:block;height:36px;width:auto;margin:0 auto 12px}
   .tpl-doodle-head{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-bottom:14px}
   .dtitle-wrap{flex:1 1 300px;position:relative}
   .dtitle{font-size:40px;line-height:.95;font-weight:900;text-transform:uppercase;letter-spacing:.5px;max-width:440px}
@@ -479,17 +433,7 @@ const ASSESSMENT_HTML_TEMPLATE = `<!DOCTYPE html>
   .bar{position:sticky;bottom:14px;display:flex;gap:10px;justify-content:center;margin-top:18px;z-index:5}
   .btn{border:none;cursor:pointer;border-radius:18px;padding:14px 22px;font-family:inherit;font-weight:800;font-size:14px;box-shadow:0 8px 22px rgba(0,0,0,.12);transition:.15s}
   .btn:hover{transform:translateY(-2px)}
-  .btn.check{background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff}
-  .btn.reset{background:#fff;color:#6d28d9;border:2px solid #ddd6fe}
   .btn.print{background:#fff;color:#6d28d9;border:2px solid #ddd6fe}
-  .result{display:none;background:linear-gradient(135deg,#ffffff,#fef9ff);border:3px solid #f5d0fe;border-radius:24px;padding:26px;text-align:center;margin-bottom:18px;box-shadow:0 16px 34px rgba(124,58,237,.12)}
-  .result.show{display:block;animation:fade .3s ease}
-  .result .stars{font-size:42px;letter-spacing:6px}
-  .result .score{font-size:25px;font-weight:800;color:#7c3aed;margin:8px 0}
-  .result .msg{font-size:14px;font-weight:700;color:#7c6fa6}
-  .burst{position:fixed;inset:0;pointer-events:none;overflow:hidden;z-index:50}
-  .burst span{position:absolute;top:-40px;font-size:26px;animation:fall linear forwards}
-  @keyframes fall{to{transform:translateY(108vh) rotate(540deg);opacity:.2}}
   .foot{text-align:center;color:#a99fce;font-size:12px;font-weight:700;margin-top:22px}
   @page{margin:12mm}
   @media print{
@@ -545,12 +489,11 @@ const ASSESSMENT_HTML_TEMPLATE = `<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div class="burst" id="burst"></div>
 <div class="wrap">
   <div class="head">
     <div class="deco">✏️ ✨ \u{1F9E9} \u{1F4DA} \u{1F31F} \u{1F52C} \u{1F3A8} ✨ ✏️</div>
     <h1 id="title">Assessment</h1>
-    <p>Interactive Learning Pack — complete the paper task or play the organizer!</p>
+    <p>Interactive Learning Pack — print the paper assessment or play the interactive worksheet!</p>
     <div class="id">
       <label>\u{1F9D1}‍\u{1F393} Name <input id="sName" placeholder="Your name" /></label>
       <label>\u{1F4C5} Date <input id="sDate" placeholder="Today" /></label>
@@ -560,7 +503,6 @@ const ASSESSMENT_HTML_TEMPLATE = `<!DOCTYPE html>
   <div class="tabs">
     <button class="tab on" id="tabPaper" onclick="showTab('paper')">\u{1F4DD} Paper Assessment</button>
     <button class="tab" id="tabTpl" onclick="showTab('template')">\u{1F3A8} Interactive Template</button>
-    <button class="tab" id="tabOrg" onclick="showTab('org')">✨ Interactive Organizer</button>
   </div>
 
   <div class="panel on" id="paper"></div>
@@ -577,20 +519,6 @@ const ASSESSMENT_HTML_TEMPLATE = `<!DOCTYPE html>
     </div>
   </div>
 
-  <div class="panel" id="org">
-    <div class="orgintro">
-      <h2>\u{1F9E9} Interactive Learning Organizer</h2>
-      <p>Tap, match &amp; sort each colourful activity — then press “Check My Answers” to earn your stars! ⭐</p>
-    </div>
-    <div class="result" id="result"></div>
-    <div id="orgBody"></div>
-    <div class="bar">
-      <button class="btn check" onclick="checkAll()">✅ Check My Answers</button>
-      <button class="btn reset" onclick="resetOrg()">\u{1F501} Reset</button>
-      <button class="btn print" onclick="window.print()">\u{1F5A8}️ Print Organizer</button>
-    </div>
-  </div>
-
   <div class="foot">Generated by Zera Education · Works offline · Open in any browser</div>
 </div>
 
@@ -599,6 +527,7 @@ var WS = /*__WS__*/null;
 var TITLE = /*__TITLE__*/null;
 if(!WS){WS={title:"Assessment",description:"",readingPassage:"",sections:[]};}
 if(!TITLE){TITLE=WS.title||"Assessment";}
+var ZLOGO="${ZERA_LOGO_B64}";
 
 function esc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 function shuffle(a){a=a.slice();for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=a[i];a[i]=a[j];a[j]=t;}return a;}
@@ -611,7 +540,7 @@ byId("sDate").value=new Date().toLocaleDateString();
 /* ---------- Paper assessment ---------- */
 (function renderPaper(){
   var h="";
-  h+='<div class="card"><h2>'+esc(WS.title||TITLE)+'</h2>';
+  h+='<div class="card"><img class="zlogo" src="'+ZLOGO+'" alt="Zera Education"/><h2>'+esc(WS.title||TITLE)+'</h2>';
   if(WS.description){h+='<div class="ins">'+esc(WS.description)+'</div>';}
   if(WS.readingPassage&&WS.readingPassage.trim()){h+='<div class="passage">'+esc(WS.readingPassage)+'</div>';}
   h+='</div>';
@@ -659,7 +588,7 @@ function renderTemplate(){
   var h='<div class="tpl-doodle '+t.cls+'">';
   if(t.scribs){h+='<span class="dscrib s1">✦</span><span class="dscrib s2">♡</span><span class="dscrib s3">✴</span>';}
   h+='<div class="tpl-doodle-head">';
-  h+='<div class="dtitle-wrap"><div class="dbrand">★ Zera Printables</div><div class="dtitle">'+esc(WS.title||TITLE)+'</div><div class="dmascot">'+t.mascot+'</div></div>';
+  h+='<div class="dtitle-wrap"><img class="dlogo" src="'+ZLOGO+'" alt="Zera Education"/><div class="dtitle">'+esc(WS.title||TITLE)+'</div><div class="dmascot">'+t.mascot+'</div></div>';
   h+='<div class="dbox v0 dmeta"><div class="dmeta-row">My name is <i></i></div><div class="dmeta-row">Date <i></i></div><div class="dmeta-row">My class <i></i></div></div>';
   h+='</div>';
   if(WS.description){h+='<div class="dnote">'+esc(WS.description)+'</div>';}
@@ -695,212 +624,15 @@ renderTemplate();
 
 function tplTick(btn){ btn.classList.toggle("ticked"); }
 
-/* ---------- Build organizer data (mirrors the in-app organizer) ---------- */
-function buildOrganizer(ws,title){
-  var qList=[];
-  (ws.sections||[]).forEach(function(sec){(sec.questions||[]).forEach(function(q){var c={};for(var k in q){c[k]=q[k];}c.sectionTitle=sec.title||"Assessment Task";qList.push(c);});});
-  var withOpts=qList.filter(function(q){return q.options&&q.options.length>0;});
-  var qMcq=withOpts[0]||{text:"What is the core learning focus of our lesson on "+(title||"this topic")+"?",options:["Gaining active inquiry skills","Memorizing facts without understanding","Waiting for the timer to tick","Leaving homework incomplete"],sectionTitle:"Brain Power Quiz"};
-  var qCircle=withOpts[1]||{text:"Identify the true purpose of "+(title||"this worksheet")+":",options:["To explore and test ideas through interactive exercises","To guess randomly without thinking","To close the worksheet immediately"],sectionTitle:"Circle the Fact"};
-  var qTF=null;
-  for(var i=0;i<qList.length;i++){var t=(qList[i].text||"").toLowerCase();if(qList[i].type==="true-false"||t.indexOf("true")>=0||t.indexOf("false")>=0){qTF=qList[i];break;}}
-  if(!qTF){qTF={text:'Working on interactive organizers about "'+(title||"our lesson")+'" helps solidify our active learning memory!',isTrue:true,sectionTitle:"Fact Analyzer"};}
-  var qFill=null;
-  for(var j=0;j<qList.length;j++){if(qList[j].type==="fill-in-the-blanks"||(qList[j].text||"").indexOf("____")>=0){qFill=qList[j];break;}}
-  if(!qFill){qFill={text:"We always use our critical thinking caps to ____ any educational challenge we find.",options:["solve","ignore","sleep through","skip"],sectionTitle:"Vocabulary Fit"};}
-  var raw=qFill.text||"",tb=raw,ta="";
-  if(raw.indexOf("____")>=0){var parts=raw.split(/____+/);tb=parts[0]||"";ta=parts[1]||"";}else{tb=raw+" is a very ";ta=" concept.";}
-  var qShort=null;
-  for(var k2=0;k2<qList.length;k2++){if(qList[k2].type==="short-answer"||!qList[k2].options||qList[k2].options.length===0){qShort=qList[k2];break;}}
-  if(!qShort){qShort={text:'In your own words, what was the most exciting fact you learned about "'+(title||"our topic")+'" today?',sectionTitle:"Reflection Journal"};}
-  var keywords=[
-    {term:"Topic Focus",def:'The central theme of our study: "'+(title||"Mastery")+'".'},
-    {term:"Inquiry",def:"Asking smart questions and searching for proof to explain how things work."},
-    {term:"Application",def:"Using rules to find solutions to interesting challenges."}
-  ];
-  return {qMcq:qMcq,qCircle:qCircle,qTF:qTF,qFill:{tb:tb,ta:ta,expected:(qFill.options&&qFill.options[0])||"solve",choices:(qFill.options||["solve","ignore","sleep through","skip"]),title:qFill.sectionTitle},qShort:qShort,keywords:keywords};
-}
-
-var ORG=buildOrganizer(WS,TITLE);
-var graders=[];   /* each returns true/false; null entries are ungraded */
-var connState={active:null,pairs:{}};
-var sortState={active:null};
-
-function makeCard(emoji,title,inner){
-  return '<div class="card org"><h2>'+emoji+' '+esc(title)+'</h2>'+inner+'</div>';
-}
-
-function pickOpt(btn){
-  var group=btn.parentNode;
-  var opts=group.querySelectorAll(".opt");
-  for(var i=0;i<opts.length;i++){opts[i].classList.remove("selected");}
-  btn.classList.add("selected");
-}
-
-/* We rebuild graders cleanly here for reliability */
-function buildOrgUI(){
-  var host=byId("orgBody");
-  host.innerHTML="";
-  graders=[];
-  connState={active:null,pairs:{}};
-  sortState={active:null};
-
-  /* helper to append a choice card and register a grader */
-  function choiceCard(emoji,title,question,options,correctIdx,grid){
-    var shown=shuffle(options.map(function(o,i){return {text:o,correct:i===correctIdx};}));
-    var inner='<div class="qtext">'+esc(question)+'</div><div class="'+(grid?"grid2":"opts")+'">';
-    shown.forEach(function(o){inner+='<button class="opt" data-correct="'+(o.correct?"1":"0")+'" onclick="pickOpt(this)"><span class="dot"></span><span>'+esc(o.text)+'</span></button>';});
-    inner+='</div>';
-    var card=document.createElement("div");
-    card.innerHTML=makeCard(emoji,title,inner);
-    var node=card.firstChild;
-    host.appendChild(node);
-    graders.push(function(){var s=node.querySelector(".opt.selected");return !!(s&&s.getAttribute("data-correct")==="1");});
-  }
-
-  /* 1. MCQ */
-  choiceCard("\u{1F3C6}",ORG.qMcq.sectionTitle||"Multiple Choice",ORG.qMcq.text,ORG.qMcq.options,0,false);
-  /* 2. Circle the fact */
-  choiceCard("⭕",ORG.qCircle.sectionTitle||"Circle the Fact",ORG.qCircle.text,ORG.qCircle.options,0,false);
-  /* 3. True / False */
-  var tfCorrect=(ORG.qTF.isTrue!==undefined?ORG.qTF.isTrue:true)?0:1;
-  choiceCard("\u{1F44D}",ORG.qTF.sectionTitle||"Fact or Fiction",ORG.qTF.statement||ORG.qTF.text,["TRUE","FALSE"],tfCorrect,true);
-
-  /* 4. Fill in the blank */
-  (function(){
-    var f=ORG.qFill;
-    var shown=shuffle(f.choices.map(function(o){return {text:o,correct:o===f.expected};}));
-    var inner='<div class="fillrow">'+esc(f.tb)+' <span class="blank" id="fillBlank">______</span> '+esc(f.ta)+'</div>';
-    inner+='<div class="grid2" style="margin-top:12px">';
-    shown.forEach(function(o){inner+='<button class="opt" data-correct="'+(o.correct?"1":"0")+'" onclick="pickFill(this)"><span class="dot"></span><span>'+esc(o.text)+'</span></button>';});
-    inner+='</div>';
-    var card=document.createElement("div");card.innerHTML=makeCard("✏️",f.title||"Fill the Blank",inner);
-    var node=card.firstChild;host.appendChild(node);
-    graders.push(function(){var s=node.querySelector(".opt.selected");return !!(s&&s.getAttribute("data-correct")==="1");});
-  })();
-
-  /* 5. Concept Connectors */
-  (function(){
-    var kws=ORG.keywords;
-    var left=kws.map(function(k,i){return {id:"L"+i,text:k.term};});
-    var right=shuffle(kws.map(function(k,i){return {id:"R"+i,key:i,text:k.def};}));
-    var inner='<div class="qtext">Tap a term, then tap its matching meaning.</div><div class="cols"><div class="col" id="connL"></div><div class="col" id="connR"></div></div>';
-    var card=document.createElement("div");card.innerHTML=makeCard("\u{1F517}","Concept Connectors",inner);
-    var node=card.firstChild;host.appendChild(node);
-    var lc=node.querySelector("#connL"),rc=node.querySelector("#connR");
-    left.forEach(function(l,i){var b=document.createElement("div");b.className="term";b.setAttribute("data-key",i);b.innerHTML='<span>'+esc(l.text)+'</span><span class="badge" style="display:none"></span>';b.onclick=function(){connPickTerm(b);};lc.appendChild(b);});
-    right.forEach(function(r){var b=document.createElement("div");b.className="def";b.setAttribute("data-key",r.key);b.textContent=r.text;b.onclick=function(){connPickDef(b);};rc.appendChild(b);});
-    graders.push(function(){
-      var terms=node.querySelectorAll(".term");var ok=true;
-      terms.forEach(function(t){
-        var paired=connState.pairs[t.getAttribute("data-key")];
-        var good=(paired!==undefined&&String(paired)===t.getAttribute("data-key"));
-        t.classList.remove("ok","bad");t.classList.add(good?"ok":"bad");
-        if(!good)ok=false;
-      });
-      return ok;
-    });
-  })();
-
-  /* 6. Category Sorting */
-  (function(){
-    var pool=shuffle([
-      {label:"Active Understanding",tag:"core"},
-      {label:"Inquiry Evidence",tag:"core"},
-      {label:"Silly Distractors",tag:"extra"},
-      {label:"Random Doodles",tag:"extra"}
-    ]);
-    var inner='<div class="qtext">Tap an item, then tap the box it belongs in.</div>';
-    inner+='<div class="pool" id="sortPool"></div>';
-    inner+='<div class="buckets"><div class="bucket" data-tag="core" onclick="sortDrop(this)"><div class="bt">✨ Essential / Core</div><div class="drop"></div></div>';
-    inner+='<div class="bucket" data-tag="extra" onclick="sortDrop(this)"><div class="bt">⭐ Extra / Distractor</div><div class="drop"></div></div></div>';
-    var card=document.createElement("div");card.innerHTML=makeCard("\u{1F9FA}","Category Sorting Break",inner);
-    var node=card.firstChild;host.appendChild(node);
-    var poolEl=node.querySelector("#sortPool");
-    pool.forEach(function(it){var b=document.createElement("div");b.className="item";b.setAttribute("data-tag",it.tag);b.textContent=it.label;b.onclick=function(){sortPick(b);};poolEl.appendChild(b);});
-    graders.push(function(){
-      var items=node.querySelectorAll(".bucket .item");var poolLeft=node.querySelectorAll("#sortPool .item").length;
-      if(items.length===0)return false;var ok=poolLeft===0;
-      items.forEach(function(it){var b=it.closest(".bucket");var good=b.getAttribute("data-tag")===it.getAttribute("data-tag");it.classList.remove("ok","bad");it.classList.add(good?"ok":"bad");if(!good)ok=false;});
-      return ok;
-    });
-  })();
-
-  /* 7. Reflection (ungraded) */
-  (function(){
-    var inner='<div class="qtext">'+esc(ORG.qShort.text)+'</div><textarea class="reflect" placeholder="Write your answer like a real scholar..."></textarea>';
-    var card=document.createElement("div");card.innerHTML=makeCard("✍️",ORG.qShort.sectionTitle||"Reflection",inner);
-    host.appendChild(card.firstChild);
-  })();
-}
-
-function connPickTerm(el){
-  if(el.classList.contains("paired"))return;
-  var all=el.parentNode.querySelectorAll(".term");for(var i=0;i<all.length;i++)all[i].classList.remove("active");
-  el.classList.add("active");connState.active=el;
-}
-function connPickDef(def){
-  if(!connState.active||def.classList.contains("paired"))return;
-  var t=connState.active;var tk=t.getAttribute("data-key"),dk=def.getAttribute("data-key");
-  connState.pairs[tk]=dk;
-  t.classList.remove("active");t.classList.add("paired");def.classList.add("paired");
-  var badge=t.querySelector(".badge");badge.style.display="inline-block";badge.textContent="→ "+def.textContent.slice(0,18)+(def.textContent.length>18?"…":"");
-  connState.active=null;
-}
-function sortPick(el){
-  if(el.classList.contains("placed-lock"))return;
-  var actives=document.querySelectorAll(".item.active");for(var i=0;i<actives.length;i++)actives[i].classList.remove("active");
-  el.classList.add("active");sortState.active=el;
-}
-function sortDrop(bucket){
-  if(!sortState.active)return;
-  bucket.querySelector(".drop").appendChild(sortState.active);
-  sortState.active.classList.remove("active");sortState.active=null;
-}
-
-function pickFill(btn){
-  pickOpt(btn);
-  var blank=byId("fillBlank");if(blank)blank.textContent=btn.querySelector("span:last-child").textContent;
-}
-
 function showTab(which){
   document.body.classList.toggle("ptpl",which==="template");
   byId("paper").classList.toggle("on",which==="paper");
   byId("template").classList.toggle("on",which==="template");
-  byId("org").classList.toggle("on",which==="org");
   byId("tabPaper").classList.toggle("on",which==="paper");
   byId("tabTpl").classList.toggle("on",which==="template");
-  byId("tabOrg").classList.toggle("on",which==="org");
   byId("paperBar").style.display = which==="paper" ? "" : "none";
 }
 
-function celebrate(){
-  var b=byId("burst");b.innerHTML="";var ems=["⭐","\u{1F389}","✨","\u{1F31F}","\u{1F38A}"];
-  for(var i=0;i<26;i++){var s=document.createElement("span");s.textContent=ems[i%ems.length];s.style.left=(Math.random()*100)+"%";s.style.animationDuration=(2+Math.random()*2)+"s";s.style.animationDelay=(Math.random()*0.6)+"s";b.appendChild(s);}
-  setTimeout(function(){b.innerHTML="";},4200);
-}
-
-function checkAll(){
-  document.body.classList.add("reveal");
-  var total=0,correct=0;
-  for(var i=0;i<graders.length;i++){var r=graders[i]();if(r===null)continue;total++;if(r)correct++;}
-  var pct=total?correct/total:0;var stars=Math.max(1,Math.round(pct*5));
-  var sHtml="";for(var s=0;s<5;s++){sHtml+=s<stars?"⭐":"☆";}
-  var msg=pct===1?"Perfect! You are a superstar! \u{1F31F}":pct>=0.6?"Great work — keep it up! \u{1F4AA}":"Good try! Review and play again. \u{1F4DA}";
-  var res=byId("result");
-  res.innerHTML='<div class="stars">'+sHtml+'</div><div class="score">'+correct+' / '+total+' correct</div><div class="msg">'+msg+'</div>';
-  res.classList.add("show");
-  res.scrollIntoView({behavior:"smooth",block:"center"});
-  if(pct===1)celebrate();
-}
-
-function resetOrg(){
-  document.body.classList.remove("reveal");
-  byId("result").classList.remove("show");
-  buildOrgUI();
-}
-
-buildOrgUI();
 </script>
 </body>
 </html>`;
@@ -939,11 +671,8 @@ const renderSlideDecor = (
             style={{
               background: `linear-gradient(100deg, ${accent}, ${accent}E6)`,
               borderRadius: "0 0 30px 30px",
+              borderBottom: `6px solid ${secondary}`,
             }}
-          />
-          <div
-            className="absolute left-10 right-10 h-1.5 rounded-full"
-            style={{ top: "calc(23% + 7px)", backgroundColor: secondary }}
           />
           <div
             className="absolute top-4 right-6 w-10 h-10 rounded-full"
@@ -1188,9 +917,9 @@ const renderSlideDecor = (
           </span>
           <div
             className="absolute bottom-4 left-12 text-[10px] font-bold tracking-[0.25em] uppercase"
-            style={{ color: `${secondary}B3` }}
+            style={{ color: theme.name.startsWith("Zera") ? accent : `${secondary}B3`, opacity: 0.7 }}
           >
-            Zera Education
+            {theme.name.startsWith("Zera") ? theme.name : "Zera Education"}
           </div>
           <div
             className="absolute bottom-4 right-12 text-[10px] font-black"
@@ -1198,6 +927,350 @@ const renderSlideDecor = (
           >
             {slideIdx + 1} / {slideCount}
           </div>
+        </>
+      )}
+      {design === "notebook" && (
+        <>
+          <div
+            className="absolute inset-0"
+            style={{
+              backgroundImage: `repeating-linear-gradient(transparent 0 34px, ${secondary}4D 34px 36px)`,
+              backgroundPosition: "0 10px",
+            }}
+          />
+          <div
+            className="absolute top-0 bottom-0 w-px"
+            style={{ left: 66, backgroundColor: `${accent}66` }}
+          />
+          <div
+            className="absolute top-0 bottom-0 w-px"
+            style={{ left: 71, backgroundColor: `${accent}40` }}
+          />
+          {[18, 45, 72].map((top) => (
+            <div
+              key={top}
+              className="absolute left-5 w-4 h-4 rounded-full bg-white"
+              style={{
+                top: `${top}%`,
+                border: "2.5px solid #9CA3AF",
+                boxShadow: "inset 0 1px 2px rgba(0,0,0,.25)",
+              }}
+            />
+          ))}
+          <span
+            className="absolute top-4 right-6 text-xl"
+            style={{ transform: "rotate(12deg)", opacity: 0.55 }}
+          >
+            ✏️
+          </span>
+          {chip(accent, "#FFFFFF")}
+        </>
+      )}
+      {design === "neon" && (
+        <>
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                `radial-gradient(circle at 85% 12%, ${accent}45, transparent 42%),` +
+                `radial-gradient(circle at 8% 92%, ${secondary}40, transparent 45%)`,
+            }}
+          />
+          <div
+            className="absolute inset-0"
+            style={{
+              backgroundImage:
+                "radial-gradient(#FFFFFF14 1px, transparent 1.2px)",
+              backgroundSize: "30px 30px",
+            }}
+          />
+          <div
+            className="absolute inset-4 rounded-2xl"
+            style={{
+              border: `1.5px solid ${accent}73`,
+              boxShadow: `0 0 18px ${accent}40, inset 0 0 24px ${accent}1F`,
+            }}
+          />
+          <span
+            className="absolute top-7 right-12 text-2xl"
+            style={{ color: accent, textShadow: `0 0 12px ${accent}` }}
+          >
+            ✦
+          </span>
+          <span
+            className="absolute bottom-12 left-10 text-lg"
+            style={{ color: secondary, textShadow: `0 0 10px ${secondary}` }}
+          >
+            ✦
+          </span>
+          {chip(accent, theme.bgColor)}
+        </>
+      )}
+      {design === "sticky" && (
+        <>
+          <div
+            className="absolute inset-0"
+            style={{
+              backgroundImage:
+                "radial-gradient(#00000010 1.5px, transparent 1.8px)",
+              backgroundSize: "26px 26px",
+            }}
+          />
+          <div
+            className="absolute"
+            style={{
+              left: "4%",
+              right: "4%",
+              top: "5%",
+              bottom: "11%",
+              backgroundColor: "#FEF6C7",
+              borderRadius: 10,
+              transform: "rotate(-0.7deg)",
+              boxShadow: "0 16px 28px rgba(0,0,0,.14)",
+            }}
+          />
+          <div
+            className="absolute"
+            style={{
+              right: "4.5%",
+              bottom: "11.5%",
+              width: 0,
+              height: 0,
+              borderStyle: "solid",
+              borderWidth: "0 0 42px 42px",
+              borderColor: "transparent transparent #E5D188 transparent",
+            }}
+          />
+          <div
+            className="absolute left-1/2 w-28 h-7"
+            style={{
+              top: "2%",
+              backgroundColor: "#FFFFFFB3",
+              border: "1px solid #00000014",
+              transform: "translateX(-50%) rotate(-2deg)",
+              borderRadius: 4,
+            }}
+          />
+          <div
+            className="absolute w-12 h-12 rounded-sm"
+            style={{
+              right: "1.5%",
+              top: "18%",
+              backgroundColor: "#FBCFE8",
+              transform: "rotate(8deg)",
+              boxShadow: "0 5px 8px rgba(0,0,0,.12)",
+            }}
+          />
+          <div
+            className="absolute w-10 h-10 rounded-sm"
+            style={{
+              left: "1.5%",
+              bottom: "16%",
+              backgroundColor: "#BFDBFE",
+              transform: "rotate(-10deg)",
+              boxShadow: "0 5px 8px rgba(0,0,0,.12)",
+            }}
+          />
+          {chip(accent, "#FFFFFF")}
+        </>
+      )}
+      {design === "memphis" && (
+        <>
+          <svg
+            className="absolute top-6 right-8 w-44 h-16"
+            viewBox="0 0 180 60"
+          >
+            <path
+              d="M5,45 L30,15 L55,45 L80,15 L105,45 L130,15 L155,45"
+              fill="none"
+              stroke={accent}
+              strokeWidth="9"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <svg
+            className="absolute bottom-8 left-8 w-40 h-12"
+            viewBox="0 0 160 40"
+          >
+            <path
+              d="M5,20 q15,-22 30,0 q15,22 30,0 q15,-22 30,0 q15,22 30,0"
+              fill="none"
+              stroke={secondary}
+              strokeWidth="7"
+              strokeLinecap="round"
+            />
+          </svg>
+          <svg className="absolute top-10 left-10 w-12 h-12" viewBox="0 0 48 48">
+            <polygon points="24,4 44,42 4,42" fill="#FBBF24" />
+          </svg>
+          <div
+            className="absolute bottom-16 right-14 w-12 h-12 rounded-full"
+            style={{ border: "8px solid #8B5CF6", opacity: 0.85 }}
+          />
+          <div
+            className="absolute top-1/2 right-7 w-3.5 h-3.5 rounded-full"
+            style={{ backgroundColor: accent }}
+          />
+          <div
+            className="absolute bottom-9 left-1/2 w-3 h-3 rotate-45"
+            style={{ backgroundColor: secondary }}
+          />
+          {chip(accent, "#FFFFFF")}
+        </>
+      )}
+      {design === "botanical" && (
+        <>
+          <svg
+            className="absolute -top-6 -left-14 w-56 h-56"
+            viewBox="0 0 200 200"
+          >
+            <g fill={accent} opacity="0.8">
+              <path
+                d="M30,10 C50,60 60,110 55,170"
+                fill="none"
+                stroke={accent}
+                strokeWidth="4"
+              />
+              <ellipse cx="28" cy="48" rx="8" ry="22" transform="rotate(-38 28 48)" />
+              <ellipse cx="58" cy="62" rx="8" ry="22" transform="rotate(34 58 62)" />
+              <ellipse cx="36" cy="92" rx="8" ry="22" transform="rotate(-30 36 92)" />
+              <ellipse cx="68" cy="108" rx="8" ry="22" transform="rotate(38 68 108)" />
+              <ellipse cx="46" cy="140" rx="8" ry="22" transform="rotate(-24 46 140)" />
+            </g>
+          </svg>
+          <svg
+            className="absolute -bottom-6 -right-8 w-72 h-72"
+            viewBox="0 0 200 200"
+          >
+            <g fill={accent} opacity="0.7" transform="rotate(180 100 100)">
+              <path
+                d="M30,10 C50,60 60,110 55,170"
+                fill="none"
+                stroke={accent}
+                strokeWidth="4"
+              />
+              <ellipse cx="28" cy="48" rx="8" ry="22" transform="rotate(-38 28 48)" />
+              <ellipse cx="58" cy="62" rx="8" ry="22" transform="rotate(34 58 62)" />
+              <ellipse cx="36" cy="92" rx="8" ry="22" transform="rotate(-30 36 92)" />
+              <ellipse cx="68" cy="108" rx="8" ry="22" transform="rotate(38 68 108)" />
+            </g>
+          </svg>
+          <div
+            className="absolute -top-12 -right-12 w-44 h-44 rounded-full"
+            style={{ backgroundColor: `${secondary}26` }}
+          />
+          <div
+            className="absolute top-12 right-24 w-2.5 h-2.5 rounded-full"
+            style={{ backgroundColor: secondary, opacity: 0.7 }}
+          />
+          {chip(accent, "#FFFFFF")}
+        </>
+      )}
+      {design === "origami" && (
+        <>
+          <svg
+            className="absolute top-0 right-0 w-96 h-60"
+            viewBox="0 0 380 240"
+            preserveAspectRatio="none"
+          >
+            <polygon points="380,0 380,170 220,0" fill={accent} opacity="0.92" />
+            <polygon points="380,170 220,0 300,200" fill={secondary} />
+            <polygon points="220,0 80,0 200,110" fill={accent} opacity="0.4" />
+          </svg>
+          <svg
+            className="absolute bottom-0 left-0 w-64 h-40"
+            viewBox="0 0 260 160"
+            preserveAspectRatio="none"
+          >
+            <polygon points="0,160 0,40 120,160" fill={secondary} opacity="0.85" />
+            <polygon points="0,40 120,160 60,20" fill={accent} opacity="0.5" />
+          </svg>
+          <div
+            className="absolute top-1/2 left-10 w-3 h-3 rotate-45"
+            style={{ backgroundColor: accent, opacity: 0.55 }}
+          />
+          <div
+            className="absolute bottom-24 right-16 w-2.5 h-2.5 rotate-45"
+            style={{ backgroundColor: secondary }}
+          />
+          {chip(accent, "#FFFFFF")}
+        </>
+      )}
+      {design === "bubbles" && (
+        <>
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                `linear-gradient(180deg, ${secondary}40 0%, transparent 38%),` +
+                `linear-gradient(0deg, ${accent}26 0%, transparent 45%)`,
+            }}
+          />
+          {[
+            { pos: { right: 28, bottom: 40 }, size: 64, opacity: 0.85 },
+            { pos: { right: 90, bottom: 130 }, size: 36, opacity: 0.75 },
+            { pos: { right: 56, bottom: 210 }, size: 22, opacity: 0.7 },
+            { pos: { left: 36, top: 60 }, size: 44, opacity: 0.7 },
+            { pos: { left: 100, top: 120 }, size: 22, opacity: 0.65 },
+          ].map((b, i) => (
+            <div
+              key={i}
+              className="absolute rounded-full"
+              style={{
+                ...b.pos,
+                width: b.size,
+                height: b.size,
+                border: `2.5px solid ${accent}80`,
+                background: `radial-gradient(circle at 32% 30%, #FFFFFFCC 0 18%, ${secondary}30 60%, transparent)`,
+                opacity: b.opacity,
+              }}
+            />
+          ))}
+          {chip(accent, "#FFFFFF")}
+        </>
+      )}
+      {design === "candy" && (
+        <>
+          <div
+            className="absolute -left-20 top-10 w-80 h-9 -rotate-45"
+            style={{
+              background: `repeating-linear-gradient(90deg, ${accent}CC 0 16px, #FFFFFF 16px 32px)`,
+            }}
+          />
+          <div
+            className="absolute -right-20 bottom-12 w-80 h-9 -rotate-45"
+            style={{
+              background: `repeating-linear-gradient(90deg, ${secondary}B3 0 16px, #FFFFFF 16px 32px)`,
+            }}
+          />
+          <div
+            className="absolute top-9 right-12 w-16 h-16 rounded-full"
+            style={{ border: `5px dashed ${accent}99` }}
+          />
+          <div
+            className="absolute bottom-20 left-12 w-9 h-9 rounded-full"
+            style={{ border: `4px dashed ${secondary}99` }}
+          />
+          {[
+            { pos: { top: "22%", left: "30%" }, c: accent, r: 25 },
+            { pos: { top: "12%", left: "55%" }, c: "#FBBF24", r: -20 },
+            { pos: { bottom: "14%", right: "32%" }, c: secondary, r: 40 },
+            { pos: { bottom: "28%", right: "10%" }, c: "#FBBF24", r: 70 },
+            { pos: { top: "55%", left: "6%" }, c: accent, r: -35 },
+          ].map((s, i) => (
+            <div
+              key={i}
+              className="absolute w-4 h-1.5 rounded-full"
+              style={{
+                ...s.pos,
+                backgroundColor: s.c,
+                transform: `rotate(${s.r}deg)`,
+                opacity: 0.75,
+              }}
+            />
+          ))}
+          {chip(accent, "#FFFFFF")}
         </>
       )}
       {design === "blob" && (
@@ -1292,11 +1365,11 @@ const renderThemeThumb = (t: AppTheme) => {
         <>
           <div
             className="absolute top-0 left-0 right-0 h-[32%]"
-            style={{ backgroundColor: accent, borderRadius: "0 0 8px 8px" }}
-          />
-          <div
-            className="absolute left-[8%] right-[8%] h-0.5 rounded-full"
-            style={{ top: "36%", backgroundColor: secondary }}
+            style={{
+              backgroundColor: accent,
+              borderRadius: "0 0 8px 8px",
+              borderBottom: `2px solid ${secondary}`,
+            }}
           />
           <div
             className="absolute top-[10%] left-[10%] h-1.5 w-2/5 rounded-full"
@@ -1427,6 +1500,144 @@ const renderThemeThumb = (t: AppTheme) => {
           >
             01
           </span>
+          {lines(accent, t.textColor)}
+        </>
+      );
+    case "notebook":
+      return (
+        <>
+          <div
+            className="absolute inset-0"
+            style={{
+              backgroundImage: `repeating-linear-gradient(transparent 0 10px, ${secondary}59 10px 11px)`,
+            }}
+          />
+          <div
+            className="absolute top-0 bottom-0 w-px"
+            style={{ left: "14%", backgroundColor: `${accent}80` }}
+          />
+          {lines(accent, t.textColor)}
+        </>
+      );
+    case "neon":
+      return (
+        <>
+          <div
+            className="absolute inset-0"
+            style={{
+              background: `radial-gradient(circle at 85% 12%, ${accent}59, transparent 45%), radial-gradient(circle at 8% 92%, ${secondary}59, transparent 48%)`,
+            }}
+          />
+          <div
+            className="absolute inset-1 rounded-md"
+            style={{ border: `1px solid ${accent}99` }}
+          />
+          {lines("#FFFFFF", "#FFFFFF")}
+        </>
+      );
+    case "sticky":
+      return (
+        <>
+          <div
+            className="absolute rounded-sm"
+            style={{
+              inset: "10% 8% 14% 8%",
+              backgroundColor: "#FEF6C7",
+              transform: "rotate(-1deg)",
+              boxShadow: "0 3px 6px rgba(0,0,0,.15)",
+            }}
+          />
+          <div
+            className="absolute left-1/2 w-6 h-1.5 -translate-x-1/2 rounded-sm"
+            style={{ top: "5%", backgroundColor: "#FFFFFFCC", border: "1px solid #00000010" }}
+          />
+          {lines(accent, t.textColor)}
+        </>
+      );
+    case "memphis":
+      return (
+        <>
+          <svg className="absolute top-1 right-1 w-12 h-4" viewBox="0 0 48 16">
+            <path
+              d="M2,12 L8,4 L14,12 L20,4 L26,12 L32,4 L38,12"
+              fill="none"
+              stroke={accent}
+              strokeWidth="3"
+              strokeLinecap="round"
+            />
+          </svg>
+          <div
+            className="absolute bottom-2 right-3 w-3.5 h-3.5 rounded-full"
+            style={{ border: "2.5px solid #8B5CF6" }}
+          />
+          <svg className="absolute bottom-1.5 left-2 w-3.5 h-3.5" viewBox="0 0 14 14">
+            <polygon points="7,1 13,12 1,12" fill="#FBBF24" />
+          </svg>
+          {lines(accent, t.textColor)}
+        </>
+      );
+    case "botanical":
+      return (
+        <>
+          <svg className="absolute -top-1 -left-1 w-12 h-12" viewBox="0 0 48 48">
+            <g fill={accent} opacity="0.8">
+              <ellipse cx="10" cy="14" rx="3" ry="9" transform="rotate(-35 10 14)" />
+              <ellipse cx="20" cy="22" rx="3" ry="9" transform="rotate(30 20 22)" />
+              <ellipse cx="12" cy="32" rx="3" ry="9" transform="rotate(-25 12 32)" />
+            </g>
+          </svg>
+          <div
+            className="absolute -bottom-2 -right-2 w-8 h-8 rounded-full"
+            style={{ backgroundColor: `${secondary}33` }}
+          />
+          {lines(accent, t.textColor)}
+        </>
+      );
+    case "origami":
+      return (
+        <>
+          <svg
+            className="absolute top-0 right-0 w-14 h-9"
+            viewBox="0 0 56 36"
+            preserveAspectRatio="none"
+          >
+            <polygon points="56,0 56,26 32,0" fill={accent} opacity="0.9" />
+            <polygon points="56,26 32,0 44,30" fill={secondary} />
+          </svg>
+          {lines(accent, t.textColor)}
+        </>
+      );
+    case "bubbles":
+      return (
+        <>
+          <div
+            className="absolute bottom-1 right-2 w-5 h-5 rounded-full"
+            style={{ border: `1.5px solid ${accent}99`, background: "#FFFFFF66" }}
+          />
+          <div
+            className="absolute bottom-5 right-7 w-3 h-3 rounded-full"
+            style={{ border: `1.5px solid ${accent}80`, background: "#FFFFFF59" }}
+          />
+          <div
+            className="absolute top-1 left-2 w-3.5 h-3.5 rounded-full"
+            style={{ border: `1.5px solid ${accent}73`, background: "#FFFFFF59" }}
+          />
+          {lines(accent, t.textColor)}
+        </>
+      );
+    case "candy":
+      return (
+        <>
+          <div
+            className="absolute -left-4 top-1.5 w-16 h-2 -rotate-45"
+            style={{
+              background: `repeating-linear-gradient(90deg, ${accent}CC 0 5px, #FFFFFF 5px 10px)`,
+            }}
+          />
+          <div
+            className="absolute top-1.5 right-2 w-4 h-4 rounded-full"
+            style={{ border: `2px dashed ${accent}99` }}
+          />
           {lines(accent, t.textColor)}
         </>
       );
@@ -1711,6 +1922,7 @@ import firebaseConfig from "../firebase-applet-config.json";
 import { ImageEditor } from "./components/ImageEditor";
 import { GENERATED_THEMES, THEMES } from "./constants";
 import { PRESET_WALLPAPERS } from "./constants/wallpapers";
+import { ZERA_LOGO_B64 } from "./constants/zeraLogo";
 import {
   EduContent,
   AppTheme,
@@ -1730,6 +1942,7 @@ import {
   suggestWeeklyInput,
   relevelReadingPassage,
   generateInteractiveSortingGame,
+  generateLeveledQuestions,
   askAI,
   generatePosterImage,
 } from "./services/geminiService";
@@ -2549,8 +2762,9 @@ export default function App() {
     string | null
   >(null);
   const [teacherName, setTeacherName] = useState<string>("Teacher");
-  const [activeWallpaperCategory, setActiveWallpaperCategory] =
-    useState<string>("Zera");
+  // Unified "Slide Style" picker — design templates and background wallpapers
+  // live in one place since they serve the same purpose.
+  const [designTab, setDesignTab] = useState<string>("Designs");
   const [imageSearchQuery, setImageSearchQuery] = useState("");
   const [imageSearchResults, setImageSearchResults] = useState<
     { url: string; sourceName: string; sourceLogo: string; title: string }[]
@@ -2581,8 +2795,6 @@ export default function App() {
     },
   ];
 
-  const wallpaperCategories = ["Zera", "Abstract", "Pastel"];
-
   const GOOGLE_FONTS = [
     "Inter",
     "Bangers",
@@ -2596,9 +2808,7 @@ export default function App() {
     "Pacifico",
   ];
   const [currentSlideIdx, setCurrentSlideIdx] = useState(0);
-  const [imageTab, setImageTab] = useState<"assets" | "search" | "backgrounds">(
-    "assets",
-  );
+  const [imageTab, setImageTab] = useState<"assets" | "search">("assets");
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [userProjects, setUserProjects] = useState<any[]>([]);
   const [folders, setFolders] = useState<any[]>([]);
@@ -3470,6 +3680,16 @@ export default function App() {
   const [selectedSuiteLevel, setSelectedSuiteLevel] =
     useState<string>("400-500");
   const [selectedStoryStyle, setSelectedStoryStyle] = useState<string>("classic");
+  // Differentiated worksheet pack — same questions worded per Lexile level
+  const [diffWsLevels, setDiffWsLevels] = useState<string[]>([
+    "200-300",
+    "400-500",
+    "600-700",
+  ]);
+  const [diffWsBook, setDiffWsBook] = useState("");
+  const [diffWsNumQuestions, setDiffWsNumQuestions] = useState(8);
+  const [isGeneratingDiffWs, setIsGeneratingDiffWs] = useState(false);
+  const [diffWsProgress, setDiffWsProgress] = useState("");
 
   const getThemeStyles = (themeId: string) => {
     switch (themeId) {
@@ -3967,7 +4187,14 @@ export default function App() {
           };
           setUser(ssoFakeFbUser);
           setTeacherName(`${rawUser.name.first_name} ${rawUser.name.last_name}`);
-          setUserRoles(["admin", "educator"]);
+          // SSO users are regular educators in their own private space —
+          // admin (which can see all teachers' submissions) is granted only
+          // to the designated admin emails, same as the normal login path.
+          setUserRoles(
+            ADMIN_EMAILS.includes((rawUser.email || "").toLowerCase())
+              ? ["admin", "educator"]
+              : ["educator"],
+          );
           setAuthLoading(false);
           
           window.history.replaceState({}, document.title, window.location.pathname);
@@ -6601,11 +6828,19 @@ export default function App() {
     | "worksheet"
     | "notes"
     | "reading-program"
+    | "poster"
     | "admin"
   >("home");
   const [previousView, setPreviousView] = useState<
     "home" | "educator-suite" | "admin"
   >("home");
+  // Poster Studio state
+  const [posterPrompt, setPosterPrompt] = useState("");
+  const [posterStyle, setPosterStyle] = useState("Playful cartoon");
+  const [posterGallery, setPosterGallery] = useState<
+    { url: string; prompt: string }[]
+  >([]);
+  const [isGeneratingPoster, setIsGeneratingPoster] = useState(false);
 
   useEffect(() => {
     if (
@@ -17906,6 +18141,231 @@ export default function App() {
     </div>
   );
 
+  // --- Poster Studio: prompt → AI-generated printable classroom poster ---
+  const handleGeneratePoster = async () => {
+    const topic = posterPrompt.trim();
+    if (!topic) {
+      alert("Describe the poster you want to create first.");
+      return;
+    }
+    setIsGeneratingPoster(true);
+    try {
+      const composed = `${topic}. Art style: ${posterStyle}. Audience: ${yearGroup} students.`;
+      const res = await generatePosterImage(composed);
+      if (!res?.image) {
+        throw new Error("No image was returned — please try again.");
+      }
+      setPosterGallery((prev) =>
+        [{ url: res.image, prompt: topic }, ...prev].slice(0, 12),
+      );
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      if (
+        msg.includes("429") ||
+        msg.toLowerCase().includes("quota") ||
+        msg.toLowerCase().includes("rate")
+      ) {
+        alert(
+          "Image generation hit the API rate limit — wait a minute and try again.",
+        );
+      } else {
+        alert(`Poster generation failed: ${msg}`);
+      }
+    } finally {
+      setIsGeneratingPoster(false);
+    }
+  };
+
+  const renderPosterView = () => (
+    <div className="flex-1 flex flex-col bg-[#FDFBF7] overflow-hidden">
+      <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20 shrink-0">
+        <button
+          onClick={() => setCurrentView("educator-suite")}
+          className="flex items-center gap-2 text-[#064E3B]/60 font-bold hover:text-[#064E3B] transition-colors"
+        >
+          <ChevronLeft size={18} /> Educator Studio
+        </button>
+        <div className="flex items-center gap-3">
+          <Palette size={20} className="text-[#059669]" />
+          <h2 className="text-lg font-black text-[#064E3B] uppercase tracking-wide">
+            Poster Studio
+          </h2>
+        </div>
+        <ZeraBrandLogo size="sm" variant="original" />
+      </div>
+      <div className="flex-1 flex overflow-hidden">
+        <aside className="w-96 bg-white border-r-2 border-[#D1FAE5] p-6 overflow-y-auto custom-scrollbar space-y-6 shrink-0">
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase text-[#7C7A65] tracking-widest">
+              What is the poster about?
+            </label>
+            <textarea
+              value={posterPrompt}
+              onChange={(e) => setPosterPrompt(e.target.value)}
+              placeholder='e.g. "The water cycle with labels", "Classroom rules", "Recycling — reduce, reuse, recycle"'
+              className="w-full h-28 p-3 bg-[#F9F8F0] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold resize-none focus:border-[#059669] outline-none transition-all"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase text-[#7C7A65] tracking-widest">
+              Art style
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {[
+                "Playful cartoon",
+                "Watercolor",
+                "Flat infographic",
+                "Realistic",
+                "Comic book",
+                "Minimalist",
+                "Hand-drawn doodle",
+                "Paper collage",
+              ].map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setPosterStyle(s)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wide border-2 transition-all",
+                    posterStyle === s
+                      ? "bg-[#059669] text-white border-[#059669] shadow-sm"
+                      : "bg-white text-[#7C7A65] border-gray-200 hover:border-[#059669]",
+                  )}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase text-[#7C7A65] tracking-widest">
+              Audience
+            </label>
+            <select
+              value={yearGroup}
+              onChange={(e) => setYearGroup(e.target.value)}
+              className="w-full p-2.5 text-sm font-bold bg-[#F9F8F0] rounded-xl border-2 border-[#D1FAE5] focus:border-[#059669] outline-none"
+            >
+              {[
+                "Year 1",
+                "Year 2",
+                "Year 3",
+                "Year 4",
+                "Year 5",
+                "Year 6",
+                "Year 7",
+                "Year 8",
+                "Year 9",
+              ].map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={handleGeneratePoster}
+            disabled={isGeneratingPoster}
+            className="w-full py-3.5 bg-[#059669] text-white rounded-xl font-black uppercase text-xs tracking-widest flex items-center justify-center gap-2 hover:bg-[#047857] transition-colors disabled:opacity-50 shadow-md"
+          >
+            {isGeneratingPoster ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <Sparkles size={16} />
+            )}
+            {isGeneratingPoster
+              ? "Painting your poster…"
+              : posterGallery.length
+                ? "Generate Another"
+                : "Generate Poster"}
+          </button>
+          <p className="text-[10px] font-semibold text-[#7C7A65] leading-relaxed">
+            Tip: mention any text you want ON the poster (title, labels) and it
+            will be drawn in. Generation takes about 10–30 seconds.
+          </p>
+          {posterGallery.length > 1 && (
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase text-[#7C7A65] tracking-widest">
+                This session
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {posterGallery.map((g, i) => (
+                  <button
+                    key={i}
+                    onClick={() =>
+                      setPosterGallery((prev) => [
+                        prev[i],
+                        ...prev.filter((_, j) => j !== i),
+                      ])
+                    }
+                    className={cn(
+                      "aspect-[3/4] rounded-lg overflow-hidden border-2 transition-all",
+                      i === 0
+                        ? "border-[#059669] ring-2 ring-[#059669]/20"
+                        : "border-gray-200 hover:border-[#059669]",
+                    )}
+                  >
+                    <img src={g.url} className="w-full h-full object-cover" alt="" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </aside>
+        <main className="flex-1 overflow-y-auto p-10 flex items-start justify-center custom-scrollbar">
+          {posterGallery.length === 0 ? (
+            <div className="text-center space-y-4 mt-24">
+              <Palette size={48} className="mx-auto text-[#064E3B]/20" />
+              <h3 className="font-black text-lg text-[#064E3B]">
+                Create a classroom poster
+              </h3>
+              <p className="text-xs text-[#064E3B]/60 max-w-sm mx-auto font-semibold leading-relaxed">
+                Describe your poster in the sidebar, pick an art style and
+                click Generate — then download and print it for your classroom
+                wall.
+              </p>
+            </div>
+          ) : (
+            <div className="w-full max-w-xl space-y-4">
+              <div className="bg-white p-4 rounded-3xl shadow-2xl border-2 border-[#D1FAE5]">
+                <img
+                  src={posterGallery[0].url}
+                  alt="Generated poster"
+                  className="w-full rounded-2xl"
+                />
+              </div>
+              <div className="flex items-center justify-center gap-3">
+                <a
+                  href={posterGallery[0].url}
+                  download={`poster-${posterGallery[0].prompt
+                    .slice(0, 30)
+                    .replace(/[^a-z0-9]+/gi, "-")
+                    .replace(/^-+|-+$/g, "")}.png`}
+                  className="px-5 py-3 bg-[#064E3B] text-white rounded-xl font-black text-xs uppercase tracking-widest flex items-center gap-2 hover:bg-[#053527] shadow-md"
+                >
+                  <Download size={15} /> Download PNG
+                </a>
+                <button
+                  onClick={handleGeneratePoster}
+                  disabled={isGeneratingPoster}
+                  className="px-5 py-3 bg-white border-2 border-[#D1FAE5] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest flex items-center gap-2 hover:border-[#059669] disabled:opacity-50 transition-all"
+                >
+                  <RefreshCw
+                    size={15}
+                    className={isGeneratingPoster ? "animate-spin" : ""}
+                  />{" "}
+                  Regenerate
+                </button>
+              </div>
+              <p className="text-center text-[10px] font-bold text-[#7C7A65] uppercase tracking-wider">
+                "{posterGallery[0].prompt}" · {posterStyle}
+              </p>
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+
   const renderEducatorSuite = () => (
     <div className="flex-1 overflow-y-auto p-12 bg-[#FDFBF7] custom-scrollbar">
       <div className="max-w-7xl mx-auto space-y-12">
@@ -18045,6 +18505,12 @@ export default function App() {
                   name: "Handouts & Journal",
                   icon: Edit2,
                   desc: "Lesson Observations & Handouts",
+                },
+                {
+                  id: "poster",
+                  name: "Poster Studio",
+                  icon: Palette,
+                  desc: "AI Posters & Classroom Art",
                 },
               ].map((tool) => (
                 <button
@@ -18661,6 +19127,23 @@ export default function App() {
       }
     };
 
+    // Slide Style → background wallpapers apply to the whole deck, same as
+    // picking a design template (pass undefined to clear).
+    const applyWallpaperToAll = (url?: string) => {
+      setContent((prev) =>
+        prev && prev.slides
+          ? {
+              ...prev,
+              slides: prev.slides.map((sl) => ({
+                ...sl,
+                backgroundWallpaper: url,
+                backgroundColor: undefined,
+              })),
+            }
+          : prev,
+      );
+    };
+
     return (
       <div className="flex-1 flex flex-col bg-[#F0FDF4] overflow-hidden">
         <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20">
@@ -18991,18 +19474,6 @@ export default function App() {
                           Images & Assets
                         </label>
                         <div className="flex gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setImageTab("backgrounds");
-                              setActiveWallpaperCategory("Zera");
-                            }}
-                            className="flex items-center gap-1 px-2.5 py-1.5 bg-gradient-to-r from-[#0A4F29] to-[#668C4A] text-white rounded-lg text-[9px] font-black uppercase hover:from-[#083E20] hover:to-[#55763E] transition-all cursor-pointer shadow-sm active:scale-95"
-                            title="Choose from official Zera brand background templates"
-                          >
-                            <WallpaperIcon size={11} /> Zera Presets
-                          </button>
-
                           <label
                             className="flex items-center gap-1 px-2.5 py-1.5 bg-gray-100 text-[#44423C] border border-gray-200 rounded-lg text-[9px] font-black uppercase hover:bg-gray-200 transition-all cursor-pointer shadow-sm active:scale-95"
                             title="Upload image straight as slide background"
@@ -19029,17 +19500,6 @@ export default function App() {
                           )}
                         >
                           Slide Assets
-                        </button>
-                        <button
-                          onClick={() => setImageTab("backgrounds")}
-                          className={cn(
-                            "flex-1 py-1.5 text-[9px] font-black uppercase rounded-lg transition-all",
-                            imageTab === "backgrounds"
-                              ? "bg-white shadow-sm text-[#059669]"
-                              : "text-gray-400 hover:text-gray-600",
-                          )}
-                        >
-                          Backgrounds
                         </button>
                         <button
                           onClick={() => {
@@ -19143,107 +19603,6 @@ export default function App() {
                             </p>
                           )}
                         </>
-                      )}
-
-                      {imageTab === "backgrounds" && (
-                        <div className="space-y-4">
-                          <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar -mx-1 px-1">
-                            {wallpaperCategories.map((cat, idx) => (
-                              <button
-                                key={idx}
-                                onClick={() => setActiveWallpaperCategory(cat)}
-                                className={cn(
-                                  "px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all whitespace-nowrap",
-                                  activeWallpaperCategory === cat
-                                    ? "bg-[#059669] text-white shadow-md"
-                                    : "bg-white text-[#7C7A65] border border-gray-200 hover:border-[#059669]",
-                                )}
-                              >
-                                {cat}
-                              </button>
-                            ))}
-                          </div>
-                          <div className="grid grid-cols-2 gap-3 max-h-[400px] overflow-y-auto pr-1 custom-scrollbar">
-                            <label
-                              className="aspect-video rounded-xl border-2 border-dashed border-[#059669]/30 bg-[#F0FDF4] flex flex-col items-center justify-center gap-1 hover:bg-[#D1FAE5] hover:border-[#059669] transition-all group cursor-pointer"
-                              title="Upload custom background from device"
-                            >
-                              <FileUp size={20} className="text-[#059669]" />
-                              <span className="text-[9px] font-black uppercase text-[#059669]">
-                                Device BG
-                              </span>
-                              <input
-                                type="file"
-                                className="hidden"
-                                accept="image/*"
-                                onChange={handleBackgroundUpload}
-                              />
-                            </label>
-
-                            <button
-                              onClick={() =>
-                                updateSlideData(
-                                  currentSlideIdx,
-                                  "backgroundWallpaper",
-                                  undefined,
-                                )
-                              }
-                              className="aspect-video rounded-xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center gap-1 hover:bg-gray-50 transition-all group"
-                            >
-                              <X
-                                size={20}
-                                className="text-gray-300 group-hover:text-gray-500"
-                              />
-                              <span className="text-[9px] font-black uppercase text-gray-400">
-                                Clear BG
-                              </span>
-                            </button>
-
-                            <button
-                              onClick={() =>
-                                updateSlideData(
-                                  currentSlideIdx,
-                                  "backgroundWallpaper",
-                                  null,
-                                )
-                              }
-                              className="aspect-video rounded-xl border-2 border-dashed border-red-200 bg-red-50 flex flex-col items-center justify-center gap-1 hover:bg-red-100 transition-all group"
-                              title="Remove background image"
-                            >
-                              <Trash2 size={20} className="text-red-400" />
-                              <span className="text-[9px] font-black uppercase text-red-500">
-                                Remove BG
-                              </span>
-                            </button>
-                            {PRESET_WALLPAPERS.filter(
-                              (w) => w.category === activeWallpaperCategory,
-                            ).map((w, idx) => (
-                              <button
-                                key={idx}
-                                onClick={() =>
-                                  updateSlideData(
-                                    currentSlideIdx,
-                                    "backgroundWallpaper",
-                                    w.url,
-                                  )
-                                }
-                                className={cn(
-                                  "aspect-video rounded-xl overflow-hidden border-2 transition-all hover:scale-105 active:scale-95 shadow-sm",
-                                  currentSlide.backgroundWallpaper === w.url
-                                    ? "border-[#059669] ring-2 ring-[#D1FAE5]"
-                                    : "border-transparent",
-                                )}
-                              >
-                                <img
-                                  src={w.thumbnail}
-                                  className="w-full h-full object-cover"
-                                  alt=""
-                                  loading="lazy"
-                                />
-                              </button>
-                            ))}
-                          </div>
-                        </div>
                       )}
 
                       {imageTab === "search" && (
@@ -19504,14 +19863,102 @@ export default function App() {
 
               <div className="space-y-4">
                 <h3 className="text-xs font-black uppercase text-[#7C7A65]">
-                  Slide Design
+                  Slide Style
                 </h3>
-                <div className="grid grid-cols-2 gap-2.5">
+                <div className="flex gap-1.5">
+                  {["Designs", "Pastel", "Abstract"].map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setDesignTab(tab)}
+                      className={cn(
+                        "flex-1 px-2 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all",
+                        designTab === tab
+                          ? "bg-[#059669] text-white shadow-md"
+                          : "bg-white text-[#7C7A65] border border-gray-200 hover:border-[#059669]",
+                      )}
+                    >
+                      {tab}
+                    </button>
+                  ))}
+                </div>
+                {designTab !== "Designs" && (
+                  <div className="grid grid-cols-2 gap-2.5 max-h-[340px] overflow-y-auto pr-1 custom-scrollbar">
+                    <button
+                      onClick={() => applyWallpaperToAll(undefined)}
+                      className="aspect-video rounded-xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center gap-1 hover:bg-gray-50 transition-all group"
+                      title="Remove the background from every slide"
+                    >
+                      <X
+                        size={18}
+                        className="text-gray-300 group-hover:text-gray-500"
+                      />
+                      <span className="text-[8px] font-black uppercase text-gray-400">
+                        No background
+                      </span>
+                    </button>
+                    {PRESET_WALLPAPERS.filter(
+                      (w) => w.category === designTab,
+                    ).map((w, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => applyWallpaperToAll(w.url)}
+                        className={cn(
+                          "aspect-video rounded-xl overflow-hidden border-2 transition-all hover:scale-[1.03] active:scale-95 shadow-sm",
+                          currentSlide.backgroundWallpaper === w.url
+                            ? "border-[#059669] ring-2 ring-[#059669]/25"
+                            : "border-[#D1FAE5] hover:border-[#059669]",
+                        )}
+                      >
+                        <img
+                          src={w.thumbnail}
+                          className="w-full h-full object-cover"
+                          alt=""
+                          loading="lazy"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div
+                  className={cn(
+                    "grid grid-cols-2 gap-2.5 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar",
+                    designTab !== "Designs" && "hidden",
+                  )}
+                >
                   {allThemes.map((t) => (
                     <button
                       key={t.id}
                       title={t.name}
-                      onClick={() => setActiveTheme(t)}
+                      onClick={() => {
+                        setActiveTheme(t);
+                        // Per-slide background overrides beat the theme, so
+                        // clear them — otherwise picking a design appears to
+                        // do nothing on slides with a stored background.
+                        setContent((prev) =>
+                          prev && prev.slides
+                            ? {
+                                ...prev,
+                                slides: prev.slides.map((sl) => ({
+                                  ...sl,
+                                  backgroundColor: undefined,
+                                  backgroundWallpaper: undefined,
+                                  // drop stale COLOR overrides from a previous
+                                  // theme; keep user font/size choices
+                                  titleSettings: sl.titleSettings
+                                    ? { ...sl.titleSettings, color: undefined }
+                                    : sl.titleSettings,
+                                  bulletSettings: sl.bulletSettings
+                                    ? { ...sl.bulletSettings, color: undefined }
+                                    : sl.bulletSettings,
+                                  individualBulletSettings:
+                                    sl.individualBulletSettings?.map((b) =>
+                                      b ? { ...b, color: undefined } : b,
+                                    ),
+                                })),
+                              }
+                            : prev,
+                        );
+                      }}
                       className={cn(
                         "relative w-full aspect-video rounded-xl border-2 overflow-hidden transition-all shadow-sm group hover:scale-[1.03] active:scale-95",
                         activeTheme.id === t.id
@@ -20981,10 +21428,10 @@ export default function App() {
                       <Download size={16} /> Download DOCX
                     </button>
                     <button
-                      onClick={downloadAssessmentHTML}
+                      onClick={openAssessmentHTML}
                       className="w-full py-3 bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white rounded-xl text-xs font-black uppercase tracking-widest hover:opacity-90 transition-all shadow-md flex items-center justify-center gap-2"
                     >
-                      <Sparkles size={16} /> Download Interactive HTML
+                      <Sparkles size={16} /> Open Interactive HTML
                     </button>
                     <button
                       onClick={() => generateOnlySlides(true)}
@@ -21048,6 +21495,12 @@ export default function App() {
                     className="max-w-4xl mx-auto bg-white p-16 pt-16 shadow-2xl border-t-[32px] border-[#1B4332] min-h-[1200px] relative font-sans text-left"
                     ref={worksheetRef}
                   >
+                <img
+                  src={ZERA_LOGO_B64}
+                  alt="Zera Education"
+                  className="h-9 w-auto mx-auto mb-6 select-none"
+                  draggable={false}
+                />
                 <h1
                   contentEditable={true}
                   suppressContentEditableWarning={true}
@@ -22042,6 +22495,278 @@ export default function App() {
     });
   };
 
+  // Differentiated worksheet pack: the SAME questions (same skill, intent and
+  // answer) worded once per Lexile band. No passage — students read their own
+  // book; each student gets the worksheet matching their reading level.
+  const handleGenerateDifferentiatedWorksheets = async () => {
+    const book =
+      diffWsBook.trim() ||
+      content?.readingProgram?.passageTitle ||
+      lessonInput;
+    if (!book) {
+      alert("Enter the book title or topic your students are reading.");
+      return;
+    }
+    if (diffWsLevels.length === 0) {
+      alert("Select at least one Lexile level for the pack.");
+      return;
+    }
+    setIsGeneratingDiffWs(true);
+    setDiffWsProgress(
+      `Writing ${diffWsNumQuestions} shared questions, each worded for ${diffWsLevels.length} Lexile band(s)…`,
+    );
+    try {
+      const result = await generateLeveledQuestions(
+        book,
+        diffWsLevels,
+        {
+          yearGroup: content?.gradeLevel || yearGroup || "Year 3",
+          subject: content?.subject || subject || "English",
+          numQuestions: diffWsNumQuestions,
+        },
+        (msg) => setDiffWsProgress(msg),
+      );
+      if (!result || !result.questions || result.questions.length === 0) {
+        throw new Error("The AI returned no questions — please try again.");
+      }
+      setContent((prev) =>
+        prev && prev.readingProgram
+          ? {
+              ...prev,
+              readingProgram: {
+                ...prev.readingProgram,
+                differentiatedQuestionSets: {
+                  book,
+                  levels: [...diffWsLevels],
+                  questions: result.questions,
+                },
+              },
+            }
+          : prev,
+      );
+      alert(
+        `Pack ready: ${result.questions.length} questions × ${diffWsLevels.length} Lexile level(s). Use "Open Worksheets" to preview, play or print.`,
+      );
+    } catch (e: any) {
+      console.error("Differentiated worksheet error:", e);
+      const msg = String(e?.message || e);
+      if (msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED")) {
+        alert(
+          "The AI API rate limit was hit — we already slowed down and retried automatically. Wait about a minute and click Generate Pack again. If this keeps happening, the API key's daily quota may be used up.",
+        );
+      } else if (
+        msg.includes("503") ||
+        msg.includes("UNAVAILABLE") ||
+        msg.toLowerCase().includes("overloaded") ||
+        msg.toLowerCase().includes("high demand")
+      ) {
+        alert(
+          "The AI model is busy right now — we already retried a few times with a backup model. Please wait a minute and click Generate Pack again.",
+        );
+      } else {
+        alert(`Error creating the differentiated pack: ${msg}`);
+      }
+    } finally {
+      setIsGeneratingDiffWs(false);
+      setDiffWsProgress("");
+    }
+  };
+
+  // Opens the pack as an interactive doodle-style worksheet (same look as the
+  // Interactive Template printables): one sheet per Lexile level, identical
+  // questions, tappable options, print-ready.
+  const printDifferentiatedWorksheets = () => {
+    const pack = content?.readingProgram?.differentiatedQuestionSets;
+    if (!pack || !pack.questions || pack.questions.length === 0) {
+      alert('Generate the pack first with "Generate Pack".');
+      return;
+    }
+    const esc = (s: string) =>
+      String(s ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    const sheets = pack.levels
+      .map((lvl) => {
+        // Boxes stack compactly in two balanced columns (no grid rows, so a
+        // short box never leaves a big gap beside a tall one); drawing and
+        // matching boxes span the full width between column groups.
+        const segments: string[] = [];
+        let pending: { html: string; est: number }[] = [];
+        const flushColumns = () => {
+          if (!pending.length) return;
+          const colA: string[] = [];
+          const colB: string[] = [];
+          let hA = 0;
+          let hB = 0;
+          for (const it of pending) {
+            if (hA <= hB) {
+              colA.push(it.html);
+              hA += it.est;
+            } else {
+              colB.push(it.html);
+              hB += it.est;
+            }
+          }
+          segments.push(
+            `<div class="dcols"><div class="dcol">${colA.join("")}</div><div class="dcol">${colB.join("")}</div></div>`,
+          );
+          pending = [];
+        };
+        pack.questions
+          .forEach((q, qi) => {
+            const v =
+              q.versions.find((ver) => ver.lexile === lvl) || q.versions[0];
+            if (!v) return;
+            const isMatching = !!(v.pairs && v.pairs.length);
+            const isDrawing =
+              q.type === "drawing" ||
+              (!isMatching && (!v.options || !v.options.length) &&
+                /\bdraw\b/i.test(v.text));
+            let body: string;
+            let wide = "";
+            if (isMatching) {
+              // deterministic derangement: shift the right column by one so
+              // every level prints the same scrambled arrangement
+              const rights = v.pairs!.map((p) => p.right);
+              const shuffled = rights.map(
+                (_, i) => rights[(i + 1) % rights.length],
+              );
+              wide = " dwide";
+              body =
+                `<div class="dmins">✏️ Draw a line to match each pair!</div>` +
+                `<div class="dmatch">` +
+                `<div class="dmcol dmleft">${v.pairs!.map((p) => `<div class="dmitem">${esc(p.left)}</div>`).join("")}</div>` +
+                `<div class="dmcol dmright">${shuffled.map((r) => `<div class="dmitem">${esc(r)}</div>`).join("")}</div>` +
+                `</div>`;
+            } else if (isDrawing) {
+              wide = " dwide";
+              body = `<div class="ddraw"></div>`;
+            } else if (v.options && v.options.length) {
+              body = v.options
+                .map(
+                  (o, oi) =>
+                    `<button class="dopt" onclick="this.classList.toggle('ticked')"><span class="dl">${String.fromCharCode(65 + oi)}</span><span>${esc(o)}</span></button>`,
+                )
+                .join("");
+            } else {
+              body = `<div class="dline"></div><div class="dline"></div><div class="dline"></div>`;
+            }
+            const boxHtml =
+              `<div class="dbox v${qi % 5}${wide}">` +
+              `<div class="dq"><span class="dnum">${qi + 1}</span><span>${esc(v.text)}</span>${q.skill ? `<span class="dskill">${esc(q.skill)}</span>` : ""}</div>` +
+              body +
+              `</div>`;
+            if (wide) {
+              flushColumns();
+              segments.push(boxHtml);
+            } else {
+              const textRows = Math.ceil(v.text.length / 36);
+              const est =
+                52 +
+                textRows * 22 +
+                (v.options && v.options.length
+                  ? v.options.length * 42
+                  : 3 * 30);
+              pending.push({ html: boxHtml, est });
+            }
+          });
+        flushColumns();
+        const boxes = segments.join("");
+        return (
+          `<section class="sheet">` +
+          `<span class="dscrib s1">✦</span><span class="dscrib s2">♡</span>` +
+          `<div class="dhead">` +
+          `<div class="dtw"><img class="dlogo" src="${ZERA_LOGO_B64}" alt="Zera Education"/><div class="dtitle">${esc(pack.book)}</div><div class="dsub">After-Reading Worksheet</div></div>` +
+          `<div class="dbox v0 dmeta"><div class="dmrow">My name is <i></i></div><div class="dmrow">Date <i></i></div><div class="dmrow">My level <b>${esc(lvl)}L</b></div></div>` +
+          `</div>` +
+          `<div class="dsec">Reading Questions · Lexile ${esc(lvl)}L</div>` +
+          `<div class="dins">Read your book first, then answer every question. Tick or write your answers!</div>` +
+          boxes +
+          `<div class="dfoot"><span>✏️ Zera Education printable</span><span>Same questions for every level — this copy is worded for ${esc(lvl)}L readers</span><span>★ Great work!</span></div>` +
+          `</section>`
+        );
+      })
+      .join("");
+    const html =
+      `<!DOCTYPE html><html><head><meta charset="utf-8"/>` +
+      `<title>Differentiated Pack — ${esc(pack.book)}</title>` +
+      `<style>` +
+      `*{box-sizing:border-box;margin:0;padding:0}` +
+      `body{font-family:'Baloo 2','Comic Sans MS','Segoe UI',system-ui,sans-serif;background:#f5f5f4;color:#111;padding:24px;-webkit-print-color-adjust:exact;print-color-adjust:exact}` +
+      `.bar{position:sticky;top:10px;z-index:9;display:flex;justify-content:center;margin-bottom:18px}` +
+      `.bar button{border:3px solid #111;background:#111;color:#fff;font-family:inherit;font-weight:800;font-size:14px;padding:10px 26px;border-radius:999px;cursor:pointer}` +
+      `.sheet{position:relative;max-width:850px;margin:0 auto 26px;background:#fff;border:3px solid #111;border-radius:34px;padding:24px 26px 12px;page-break-after:always;overflow:hidden}` +
+      `.dscrib{position:absolute;font-weight:900;color:#111;pointer-events:none}` +
+      `.s1{top:78px;left:46%;font-size:22px;transform:rotate(14deg)}` +
+      `.s2{top:110px;left:52%;font-size:15px;transform:rotate(-10deg)}` +
+      `.dhead{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px}` +
+      `.dtw{flex:1 1 300px}` +
+      `.dlogo{display:block;height:30px;width:auto;margin-bottom:10px}` +
+      `.dtitle{font-size:36px;line-height:.95;font-weight:900;text-transform:uppercase;letter-spacing:.5px;max-width:430px}` +
+      `.dsub{font-size:12px;font-weight:800;letter-spacing:2px;text-transform:uppercase;margin-top:6px;color:#444}` +
+      `.dmeta{flex:1 1 230px;max-width:320px}` +
+      `.dmrow{display:flex;align-items:flex-end;gap:8px;font-size:13.5px;font-weight:800;margin:9px 0}` +
+      `.dmrow i{flex:1;border-bottom:2px dotted #111;height:15px}` +
+      `.dmrow b{font-weight:900}` +
+      `.dbox{position:relative;background:#fff;border:3px solid #111;padding:14px 15px 12px;margin:14px 0 4px;break-inside:avoid;page-break-inside:avoid}` +
+      `.dbox.v0{border-radius:36px 20px 40px 18px/20px 40px 18px 36px}` +
+      `.dbox.v1{border-radius:10px;transform:rotate(-.4deg);margin-top:20px}` +
+      `.dbox.v1:before{content:"";position:absolute;top:-12px;left:50%;width:104px;height:22px;transform:translateX(-50%) rotate(-2deg);background:radial-gradient(circle,#111 2.2px,transparent 2.8px) 4px 4px/14px 14px,#fff;border:2.5px solid #111;border-radius:3px}` +
+      `.dbox.v2{border-radius:18px;border-style:dashed;border-width:3px}` +
+      `.dbox.v3{border-radius:8px;transform:rotate(.4deg);box-shadow:7px 7px 0 -3px #fff,7px 7px 0 0 #111;width:calc(100% - 8px)}` +
+      `.dbox.v4{border-radius:22px;margin-top:18px}` +
+      `.dbox.v4:before{content:"";position:absolute;top:-10px;left:22px;width:66px;height:18px;transform:rotate(-3deg);background:#fff;border:2.5px solid #111;border-radius:2px}` +
+      `.dq{display:flex;align-items:flex-start;gap:9px;font-weight:800;font-size:14px;margin-bottom:9px}` +
+      `.dnum{display:inline-flex;width:26px;height:26px;border:2.5px solid #111;border-radius:50% 45% 55% 48%/48% 55% 45% 50%;align-items:center;justify-content:center;font-weight:900;font-size:12px;flex:none}` +
+      `.dq>span:nth-child(2){flex:1}` +
+      `.dskill{flex:none;font-size:8.5px;font-weight:900;letter-spacing:1px;text-transform:uppercase;border:2px solid #111;border-radius:999px;padding:2px 8px;align-self:flex-start}` +
+      `.dline{height:26px;border-bottom:2px dotted #111}` +
+      `.dopt{display:flex;align-items:center;gap:9px;width:100%;border:2.5px solid #111;background:#fff;border-radius:28px 12px 24px 14px/14px 24px 12px 28px;padding:6px 13px 6px 7px;font-family:inherit;font-size:12.5px;font-weight:800;color:#111;cursor:pointer;text-align:left;margin:5px 0;transition:.12s}` +
+      `.dopt .dl{width:24px;height:24px;border-radius:50%;border:2.5px solid #111;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:12px;flex:none;background:#fff;color:#111}` +
+      `.dopt.ticked{background:#111;color:#fff}` +
+      `.dsec{display:table;margin:14px auto 2px;background:#111;color:#fff;font-weight:900;font-size:12.5px;text-transform:uppercase;letter-spacing:1.5px;padding:7px 18px;border-radius:999px;transform:rotate(-1deg)}` +
+      `.dins{font-size:12px;font-weight:700;font-style:italic;text-align:center;margin:6px 0 2px}` +
+      `.dcols{display:flex;gap:18px;align-items:flex-start}` +
+      `.dcol{flex:1;min-width:0}` +
+      `.ddraw{height:200px;border:2.5px dashed #111;border-radius:14px;margin-top:2px}` +
+      `.dmins{font-size:11px;font-weight:700;font-style:italic;margin-bottom:9px}` +
+      `.dmatch{display:flex;gap:120px}` +
+      `.dmcol{flex:1;display:flex;flex-direction:column;gap:9px}` +
+      `.dmitem{position:relative;border:2.5px solid #111;border-radius:12px;padding:7px 11px;font-size:12px;font-weight:800;background:#fff}` +
+      `.dmleft .dmitem:after{content:"";position:absolute;right:-22px;top:50%;width:9px;height:9px;background:#111;border-radius:50%;transform:translateY(-50%)}` +
+      `.dmright .dmitem:before{content:"";position:absolute;left:-22px;top:50%;width:9px;height:9px;background:#111;border-radius:50%;transform:translateY(-50%)}` +
+      `.dfoot{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:2px dashed #111;margin-top:16px;padding-top:8px;padding-bottom:6px;font-size:9px;font-weight:800;letter-spacing:.6px;text-transform:uppercase}` +
+      `.pframe{display:none}` +
+      `@page{margin:12mm}` +
+      `@media print{` +
+      `body{background:#fff;padding:0;min-height:0}` +
+      `.bar{display:none}` +
+      // complete doodle frame on EVERY printed page (fixed repeats per page);
+      // the sheet sheds its own border so it never slices across pages
+      `.pframe{display:block;position:fixed;inset:0;border:3px solid #111;border-radius:24px;pointer-events:none;z-index:9}` +
+      `.sheet{max-width:none;margin:0;border:none;border-radius:0;padding:14px 20px 6px}` +
+      `.sheet:last-of-type{page-break-after:auto}` +
+      `.dbox{margin:10px 0 4px}` +
+      `.dline{height:24px}` +
+      `.ddraw{height:180px}` +
+      `.dfoot{margin-top:12px;padding-top:6px}` +
+      `}` +
+      `@media(max-width:640px){.dcols{flex-direction:column}.dtitle{font-size:28px}}` +
+      `</style></head><body>` +
+      `<div class="bar"><button onclick="window.print()">🖨️ Print all ${pack.levels.length} worksheets</button></div>` +
+      `<div class="pframe"></div>` +
+      sheets +
+      `</body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) {
+      alert("Pop-up blocked — please allow pop-ups to open the worksheets.");
+      return;
+    }
+    w.document.write(html);
+    w.document.close();
+  };
+
   const renderReadingProgramView = () => {
     if (!content || !content.readingProgram) {
       return (
@@ -22655,6 +23380,212 @@ export default function App() {
                     </div>
                   </div>
                 )}
+
+                {/* DIFFERENTIATED WORKSHEET PACK — same questions, worded per Lexile level */}
+                <div className="p-8 bg-white border-2 border-stone-200 rounded-[2.5rem] shadow-sm space-y-5 font-sans">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-4 border-b border-stone-200">
+                    <div className="text-left">
+                      <h2 className="text-xl font-black text-stone-800 flex items-center gap-2 tracking-tight">
+                        <FileText size={20} className="text-[#0d9488]" />
+                        Differentiated Worksheet Pack
+                      </h2>
+                      <p className="text-xs font-semibold text-stone-500 mt-1 max-w-xl">
+                        Your students read a real book — no generated passage.
+                        Every student answers the SAME questions, but each
+                        worksheet words them for a different Lexile level.
+                        Printed in the hand-drawn Interactive Template style.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        disabled={isGeneratingDiffWs}
+                        onClick={handleGenerateDifferentiatedWorksheets}
+                        className="flex items-center gap-1.5 bg-[#0d9488] hover:bg-[#0f766e] text-white text-[11px] font-black uppercase px-4 py-2.5 rounded-xl transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-sm"
+                      >
+                        {isGeneratingDiffWs ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <Sparkles size={13} />
+                        )}
+                        {isGeneratingDiffWs
+                          ? "Building pack…"
+                          : content.readingProgram?.differentiatedQuestionSets
+                            ? "Regenerate Pack"
+                            : "Generate Pack"}
+                      </button>
+                      {content.readingProgram?.differentiatedQuestionSets &&
+                        content.readingProgram.differentiatedQuestionSets
+                          .questions.length > 0 && (
+                          <button
+                            onClick={printDifferentiatedWorksheets}
+                            className="flex items-center gap-1.5 bg-stone-900 hover:bg-stone-700 text-white text-[11px] font-black uppercase px-4 py-2.5 rounded-xl transition-all active:scale-95 cursor-pointer shadow-sm"
+                          >
+                            <Printer size={13} /> Open Worksheets (
+                            {
+                              content.readingProgram.differentiatedQuestionSets
+                                .levels.length
+                            }
+                            )
+                          </button>
+                        )}
+                    </div>
+                  </div>
+
+                  <div className="grid md:grid-cols-3 gap-3">
+                    <div className="md:col-span-2 space-y-1.5">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-stone-500">
+                        Book title / topic the class is reading
+                      </label>
+                      <input
+                        type="text"
+                        value={diffWsBook}
+                        onChange={(e) => setDiffWsBook(e.target.value)}
+                        placeholder={
+                          content.readingProgram?.passageTitle ||
+                          'e.g. "Charlotte’s Web" or "The Very Hungry Caterpillar"'
+                        }
+                        className="w-full p-2.5 text-sm font-bold bg-stone-50 rounded-xl border-2 border-stone-200 text-stone-800 focus:outline-none focus:border-[#0d9488] transition-all"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-stone-500">
+                        Questions
+                      </label>
+                      <select
+                        value={diffWsNumQuestions}
+                        onChange={(e) =>
+                          setDiffWsNumQuestions(parseInt(e.target.value) || 8)
+                        }
+                        className="w-full p-2.5 text-sm font-bold bg-stone-50 rounded-xl border-2 border-stone-200 text-stone-800 focus:outline-none focus:border-[#0d9488] transition-all"
+                      >
+                        <option value={5}>5 questions</option>
+                        <option value={8}>8 questions</option>
+                        <option value={10}>10 questions</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-stone-500">
+                      Lexile levels in this pack — one worksheet per level
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        "BR99-100",
+                        "100-200",
+                        "200-300",
+                        "300-400",
+                        "400-500",
+                        "500-600",
+                        "600-700",
+                        "700-800",
+                        "800-900",
+                        "900-1050",
+                      ].map((lvl) => {
+                        const inPack = diffWsLevels.includes(lvl);
+                        return (
+                          <button
+                            key={lvl}
+                            onClick={() =>
+                              setDiffWsLevels((prev) =>
+                                prev.includes(lvl)
+                                  ? prev.filter((l) => l !== lvl)
+                                  : [...prev, lvl],
+                              )
+                            }
+                            className={cn(
+                              "px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wide border-2 transition-all cursor-pointer active:scale-95",
+                              inPack
+                                ? "bg-[#0d9488] text-white border-[#0d9488] shadow-sm"
+                                : "bg-white text-stone-500 border-stone-200 hover:border-[#0d9488]",
+                            )}
+                          >
+                            {lvl}L
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {isGeneratingDiffWs && diffWsProgress && (
+                    <div className="flex items-center gap-2 p-3 bg-teal-50 border border-teal-200 rounded-xl text-xs font-bold text-teal-800">
+                      <Loader2 size={13} className="animate-spin" />
+                      {diffWsProgress}
+                    </div>
+                  )}
+
+                  {content.readingProgram?.differentiatedQuestionSets &&
+                    content.readingProgram.differentiatedQuestionSets.questions
+                      .length > 0 && (
+                      <div className="p-4 bg-stone-50 border border-stone-200 rounded-2xl space-y-3">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-stone-500">
+                          Question set for "
+                          {
+                            content.readingProgram.differentiatedQuestionSets
+                              .book
+                          }
+                          " — same question, worded per level
+                        </p>
+                        <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1 custom-scrollbar">
+                          {content.readingProgram.differentiatedQuestionSets.questions.map(
+                            (q, qi) => (
+                              <div
+                                key={qi}
+                                className="p-3 bg-white border border-stone-200 rounded-xl space-y-1.5"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span className="w-5 h-5 rounded-full bg-[#0d9488] text-white text-[10px] font-black flex items-center justify-center">
+                                    {qi + 1}
+                                  </span>
+                                  {q.skill && (
+                                    <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 border border-teal-200">
+                                      {q.skill}
+                                    </span>
+                                  )}
+                                  {q.type && (
+                                    <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-stone-100 text-stone-600 border border-stone-200">
+                                      {q.type === "drawing"
+                                        ? "🎨 Drawing"
+                                        : q.type === "matching"
+                                          ? "🔗 Matching"
+                                          : q.type}
+                                    </span>
+                                  )}
+                                </div>
+                                {q.versions.map((v, vi) => (
+                                  <p
+                                    key={vi}
+                                    className="text-xs font-semibold text-stone-700 leading-relaxed"
+                                  >
+                                    <span className="text-[9px] font-black text-[#0d9488] uppercase mr-1.5">
+                                      {v.lexile}L
+                                    </span>
+                                    {v.text}
+                                    {v.options && v.options.length > 0 && (
+                                      <span className="text-stone-400 font-medium">
+                                        {" "}
+                                        ({v.options.join(" · ")})
+                                      </span>
+                                    )}
+                                    {v.pairs && v.pairs.length > 0 && (
+                                      <span className="text-stone-400 font-medium">
+                                        {" "}
+                                        (
+                                        {v.pairs
+                                          .map((p) => `${p.left} ↔ ${p.right}`)
+                                          .join(" · ")}
+                                        )
+                                      </span>
+                                    )}
+                                  </p>
+                                ))}
+                              </div>
+                            ),
+                          )}
+                        </div>
+                      </div>
+                    )}
+                </div>
               </div>
             )}
 
@@ -24439,6 +25370,12 @@ export default function App() {
                 data-ref-id="lesson-plan-container"
               >
                 <div className="text-center border-b-4 border-[#064E3B] pb-8">
+                  <img
+                    src={ZERA_LOGO_B64}
+                    alt="Zera Education"
+                    className="h-10 w-auto mx-auto mb-5 select-none"
+                    draggable={false}
+                  />
                   <h1 className="text-4xl font-black uppercase tracking-tight mb-2 text-[#064E3B]">
                     Cambridge Termly Lesson Plan (
                     {content.lessonPlan.weeklyBreakdown.length}-Week Program)
@@ -24934,6 +25871,39 @@ export default function App() {
       const textColor = (activeTheme.textColor || "#2D3436").replace("#", "");
       const bgColor = (activeTheme.bgColor || "#FFF9E5").replace("#", "");
 
+      // PowerPoint can't render SVG backgrounds — rasterize any SVG wallpaper
+      // (e.g. the generated pastel backgrounds) to PNG before export.
+      const svgDataUriToPng = (uri: string): Promise<string> =>
+        new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            const c = document.createElement("canvas");
+            c.width = 1280;
+            c.height = 720;
+            const ctx = c.getContext("2d");
+            if (!ctx) return resolve(uri);
+            ctx.drawImage(img, 0, 0, c.width, c.height);
+            try {
+              resolve(c.toDataURL("image/png"));
+            } catch {
+              resolve(uri);
+            }
+          };
+          img.onerror = () => resolve(uri);
+          img.src = uri;
+        });
+      const rasterizedWallpapers = new Map<string, string>();
+      for (const sl of content.slides) {
+        const w = sl.backgroundWallpaper;
+        if (
+          w &&
+          w.startsWith("data:image/svg") &&
+          !rasterizedWallpapers.has(w)
+        ) {
+          rasterizedWallpapers.set(w, await svgDataUriToPng(w));
+        }
+      }
+
       content.slides.forEach((slide, idx) => {
         const s = pres.addSlide();
 
@@ -24944,10 +25914,13 @@ export default function App() {
           "FFFFFF"
         ).replace("#", "");
         if (slide.backgroundWallpaper) {
-          if (slide.backgroundWallpaper.startsWith("data:")) {
-            s.background = { data: slide.backgroundWallpaper };
+          const wp =
+            rasterizedWallpapers.get(slide.backgroundWallpaper) ||
+            slide.backgroundWallpaper;
+          if (wp.startsWith("data:")) {
+            s.background = { data: wp };
           } else {
-            s.background = { path: slide.backgroundWallpaper };
+            s.background = { path: wp };
           }
         } else if (slide.backgroundWallpaper === "") {
           s.background = { color: slideBGColor };
@@ -24980,10 +25953,10 @@ export default function App() {
               line: { type: "none" },
             });
             s.addShape(pres.ShapeType.rect, {
-              x: 0.5,
-              y: 1.42,
-              w: 9.0,
-              h: 0.06,
+              x: -0.1,
+              y: 1.22,
+              w: 10.2,
+              h: 0.07,
               fill: { color: secondaryColor },
               line: { type: "none" },
             });
@@ -25148,16 +26121,278 @@ export default function App() {
               fill: { color: secondaryColor, transparency: 55 },
               line: { type: "none" },
             });
-            s.addText("ZERA EDUCATION", {
+            s.addText(
+              (activeTheme.name.startsWith("Zera")
+                ? activeTheme.name
+                : "Zera Education"
+              ).toUpperCase(),
+              {
+                x: 0.5,
+                y: 5.32,
+                w: 3.0,
+                h: 0.25,
+                fontSize: 8,
+                bold: true,
+                charSpacing: 4,
+                color: activeTheme.name.startsWith("Zera")
+                  ? accentColor
+                  : secondaryColor,
+                align: pres.AlignH.left,
+              },
+            );
+          } else if (design === "notebook") {
+            for (let r = 1; r <= 8; r++) {
+              s.addShape(pres.ShapeType.rect, {
+                x: 0,
+                y: r * 0.62,
+                w: 10,
+                h: 0.015,
+                fill: { color: secondaryColor, transparency: 55 },
+                line: { type: "none" },
+              });
+            }
+            s.addShape(pres.ShapeType.rect, {
+              x: 0.55,
+              y: 0,
+              w: 0.014,
+              h: 5.63,
+              fill: { color: accentColor, transparency: 35 },
+              line: { type: "none" },
+            });
+            for (let r = 0; r < 3; r++) {
+              s.addShape(pres.ShapeType.ellipse, {
+                x: 0.16,
+                y: 1.0 + r * 1.7,
+                w: 0.2,
+                h: 0.2,
+                fill: { color: "FFFFFF" },
+                line: { color: "9CA3AF", width: 1.75 },
+              });
+            }
+          } else if (design === "neon") {
+            s.addShape(pres.ShapeType.ellipse, {
+              x: 7.6,
+              y: -1.6,
+              w: 3.6,
+              h: 3.6,
+              fill: { color: accentColor, transparency: 72 },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.ellipse, {
+              x: -1.4,
+              y: 4.0,
+              w: 3.4,
+              h: 3.4,
+              fill: { color: secondaryColor, transparency: 74 },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.roundRect, {
+              x: 0.22,
+              y: 0.22,
+              w: 9.56,
+              h: 5.18,
+              rectRadius: 0.15,
+              fill: { type: "none" },
+              line: { color: accentColor, width: 1.5, transparency: 35 },
+            });
+            s.addShape(pres.ShapeType.star4, {
+              x: 8.9,
+              y: 0.5,
+              w: 0.35,
+              h: 0.35,
+              fill: { color: accentColor },
+              line: { type: "none" },
+            });
+          } else if (design === "sticky") {
+            s.addShape(pres.ShapeType.roundRect, {
+              x: 0.4,
+              y: 0.3,
+              w: 9.2,
+              h: 4.85,
+              rectRadius: 0.1,
+              rotate: 359,
+              fill: { color: "FEF6C7" },
+              line: { type: "none" },
+              shadow: {
+                type: "outer",
+                blur: 7,
+                offset: 3,
+                angle: 90,
+                opacity: 0.3,
+                color: "000000",
+              },
+            });
+            s.addShape(pres.ShapeType.rect, {
+              x: 4.5,
+              y: 0.08,
+              w: 1.05,
+              h: 0.28,
+              rotate: 358,
+              fill: { color: "FFFFFF", transparency: 30 },
+              line: { color: "D6D3D1", width: 0.5 },
+            });
+            s.addShape(pres.ShapeType.rect, {
+              x: 9.25,
+              y: 1.0,
+              w: 0.55,
+              h: 0.55,
+              rotate: 8,
+              fill: { color: "FBCFE8" },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.rect, {
+              x: 0.18,
+              y: 4.35,
+              w: 0.48,
+              h: 0.48,
+              rotate: 350,
+              fill: { color: "BFDBFE" },
+              line: { type: "none" },
+            });
+          } else if (design === "memphis") {
+            s.addShape(pres.ShapeType.chevron, {
+              x: 7.4,
+              y: 0.35,
+              w: 0.55,
+              h: 0.45,
+              rotate: 270,
+              fill: { color: accentColor },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.chevron, {
+              x: 8.0,
+              y: 0.35,
+              w: 0.55,
+              h: 0.45,
+              rotate: 270,
+              fill: { color: accentColor },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.triangle, {
               x: 0.5,
-              y: 5.32,
-              w: 3.0,
-              h: 0.25,
-              fontSize: 8,
-              bold: true,
-              charSpacing: 4,
-              color: secondaryColor,
-              align: pres.AlignH.left,
+              y: 0.45,
+              w: 0.55,
+              h: 0.5,
+              fill: { color: "FBBF24" },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.ellipse, {
+              x: 8.9,
+              y: 4.6,
+              w: 0.6,
+              h: 0.6,
+              fill: { type: "none" },
+              line: { color: "8B5CF6", width: 5 },
+            });
+            s.addShape(pres.ShapeType.wave, {
+              x: 0.4,
+              y: 5.0,
+              w: 2.2,
+              h: 0.3,
+              fill: { color: secondaryColor },
+              line: { type: "none" },
+            });
+          } else if (design === "botanical") {
+            for (let r = 0; r < 4; r++) {
+              s.addShape(pres.ShapeType.ellipse, {
+                x: 0.2 + (r % 2) * 0.35,
+                y: 0.25 + r * 0.5,
+                w: 0.26,
+                h: 0.7,
+                rotate: r % 2 ? 35 : 325,
+                fill: { color: accentColor, transparency: 15 },
+                line: { type: "none" },
+              });
+              s.addShape(pres.ShapeType.ellipse, {
+                x: 9.2 + (r % 2) * 0.35,
+                y: 3.4 + r * 0.5,
+                w: 0.26,
+                h: 0.7,
+                rotate: r % 2 ? 35 : 325,
+                fill: { color: accentColor, transparency: 35 },
+                line: { type: "none" },
+              });
+            }
+            s.addShape(pres.ShapeType.ellipse, {
+              x: 8.7,
+              y: -0.7,
+              w: 1.9,
+              h: 1.9,
+              fill: { color: secondaryColor, transparency: 80 },
+              line: { type: "none" },
+            });
+          } else if (design === "origami") {
+            s.addShape(pres.ShapeType.rtTriangle, {
+              x: 7.4,
+              y: 0,
+              w: 2.6,
+              h: 1.8,
+              rotate: 90,
+              fill: { color: accentColor, transparency: 8 },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.rtTriangle, {
+              x: 8.3,
+              y: 0,
+              w: 1.7,
+              h: 1.3,
+              rotate: 180,
+              fill: { color: secondaryColor },
+              line: { type: "none" },
+            });
+            s.addShape(pres.ShapeType.rtTriangle, {
+              x: 0,
+              y: 4.3,
+              w: 1.9,
+              h: 1.33,
+              fill: { color: secondaryColor, transparency: 15 },
+              line: { type: "none" },
+            });
+          } else if (design === "bubbles") {
+            const bubbles = [
+              { x: 9.1, y: 4.5, d: 0.7 },
+              { x: 8.4, y: 3.6, d: 0.42 },
+              { x: 8.85, y: 2.8, d: 0.26 },
+              { x: 0.45, y: 0.6, d: 0.5 },
+              { x: 1.15, y: 1.25, d: 0.26 },
+            ];
+            for (const b of bubbles) {
+              s.addShape(pres.ShapeType.ellipse, {
+                x: b.x,
+                y: b.y,
+                w: b.d,
+                h: b.d,
+                fill: { color: secondaryColor, transparency: 70 },
+                line: { color: accentColor, width: 1.5, transparency: 40 },
+              });
+            }
+          } else if (design === "candy") {
+            for (let r = 0; r < 6; r++) {
+              s.addShape(pres.ShapeType.rect, {
+                x: -0.2 + r * 0.3,
+                y: 0.35 - (r % 2) * 0.05,
+                w: 0.16,
+                h: 0.6,
+                rotate: 45,
+                fill: { color: r % 2 ? "FFFFFF" : accentColor },
+                line: { type: "none" },
+              });
+            }
+            s.addShape(pres.ShapeType.ellipse, {
+              x: 8.95,
+              y: 0.45,
+              w: 0.7,
+              h: 0.7,
+              fill: { type: "none" },
+              line: { color: accentColor, width: 3, dashType: "dash" },
+            });
+            s.addShape(pres.ShapeType.ellipse, {
+              x: 0.6,
+              y: 4.6,
+              w: 0.45,
+              h: 0.45,
+              fill: { type: "none" },
+              line: { color: secondaryColor, width: 2.5, dashType: "dash" },
             });
           } else {
             // blob (default)
@@ -25214,7 +26449,7 @@ export default function App() {
                     ? "111111"
                     : accentColor;
             const chipFg =
-              design === "gradient" || design === "chalk"
+              design === "gradient" || design === "chalk" || design === "neon"
                 ? bgColor
                 : design === "band"
                   ? "1A2E22"
@@ -25710,9 +26945,9 @@ export default function App() {
 
   // Download the paper assessment AND the playful interactive organizer as a
   // single self-contained, offline-capable, interactive HTML file.
-  const downloadAssessmentHTML = () => {
+  const openAssessmentHTML = () => {
     if (!content?.worksheet) {
-      alert("No assessment available to download yet.");
+      alert("No assessment available to open yet.");
       return;
     }
 
@@ -25744,15 +26979,16 @@ export default function App() {
       () => wsJson,
     ).replace("/*__TITLE__*/null", () => titleJson);
 
+    // Open in a new tab instead of downloading; the blob URL keeps the page
+    // fully self-contained (and the user can still save it from the browser).
     const blob = new Blob([html], { type: "text/html;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${title.replace(/[\\/:*?"<>|]+/g, "").replace(/\s+/g, "_")}_Interactive.html`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    const w = window.open(url, "_blank");
+    if (!w) {
+      alert("Pop-up blocked — please allow pop-ups to open the interactive assessment.");
+    }
+    // Revoke after the tab has had time to load the document.
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   };
 
   const [selectedImageSlot, setSelectedImageSlot] = useState<string | null>(
@@ -26082,6 +27318,17 @@ export default function App() {
             className="flex-1 flex overflow-hidden"
           >
             {renderNotesView()}
+          </motion.div>
+        )}
+        {currentView === "poster" && (
+          <motion.div
+            key="poster"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            className="flex-1 flex overflow-hidden"
+          >
+            {renderPosterView()}
           </motion.div>
         )}
       </AnimatePresence>

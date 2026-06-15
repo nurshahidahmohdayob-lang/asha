@@ -111,6 +111,23 @@ export interface ReadingProgram {
   leveledPassages?: Record<string, string>;
   leveledVocabulary?: Record<string, OneDayVocab[]>;
   leveledQuestions?: Record<string, { question: string; answer?: string }[]>;
+  /** Differentiated worksheet pack: the SAME questions (same skill, intent
+   *  and answer) worded once per Lexile band — no passage, students read
+   *  their own book. */
+  differentiatedQuestionSets?: {
+    book: string;
+    levels: string[];
+    questions: {
+      skill?: string;
+      type?: string; // multiple-choice | open-response | drawing | matching
+      versions: {
+        lexile: string;
+        text: string;
+        options?: string[];
+        pairs?: { left: string; right: string }[];
+      }[];
+    }[];
+  };
   oneDayPlan?: OneDayPlan;
 }
 
@@ -216,7 +233,15 @@ export interface AppTheme {
     | 'gradient'
     | 'clouds'
     | 'chalk'
-    | 'minimal';
+    | 'minimal'
+    | 'notebook'
+    | 'neon'
+    | 'sticky'
+    | 'memphis'
+    | 'botanical'
+    | 'origami'
+    | 'bubbles'
+    | 'candy';
   /** Title color override for designs where the title sits on a colored
    *  surface (e.g. the band header). Falls back to accentColor. */
   titleColor?: string;
