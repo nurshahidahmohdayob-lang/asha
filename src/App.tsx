@@ -27367,26 +27367,42 @@ export default function App() {
       () => wsJson,
     ).replace("/*__TITLE__*/null", () => titleJson);
 
-    // Open a blank tab and write the document directly. This is more reliable
-    // than navigating a new tab to a blob: URL, which some browsers/pop-up
-    // settings open as a blank page.
-    const w = window.open("", "_blank");
-    if (!w) {
-      alert(
-        "Pop-up blocked — please allow pop-ups for this site to open the interactive assessment.",
-      );
-      return;
-    }
-    try {
-      w.document.open();
-      w.document.write(html);
-      w.document.close();
-    } catch (e) {
-      // Fallback: blob URL if direct write is unavailable.
+    // Download the assessment as a self-contained HTML file the user can open
+    // (and keep). This works in every browser/pop-up configuration — no blank
+    // tab, no pop-up blocker. Opening it shows all the interactive designs.
+    const downloadHtml = () => {
       const blob = new Blob([html], { type: "text/html;charset=utf-8" });
       const url = URL.createObjectURL(blob);
-      w.location.href = url;
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${title
+        .replace(/[\\/:*?"<>|]+/g, "")
+        .replace(/\s+/g, "_")}_Interactive.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 60000);
+    };
+
+    // Prefer opening in a new tab; fall back to a download if the browser
+    // blocks the pop-up or refuses to render the written document.
+    let opened = false;
+    try {
+      const w = window.open("", "_blank");
+      if (w && w.document) {
+        w.document.open();
+        w.document.write(html);
+        w.document.close();
+        opened = true;
+      }
+    } catch {
+      opened = false;
+    }
+    if (!opened) {
+      downloadHtml();
+      alert(
+        "Your interactive assessment was downloaded (pop-ups are blocked) — open the saved HTML file to view it.",
+      );
     }
   };
 
