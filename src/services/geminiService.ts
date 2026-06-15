@@ -336,9 +336,7 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
       mainPrompt += `\nPedagogical Focus: ${options.metadataHints.methodology}`;
     }
 
-    contents.push(mainPrompt);
-    contents.push(`Format: JSON object with "title", "readingPassage" (The main content if readingPassageOnly, or the context story if includeStory), "description" (ONE sentence, max 25 words), "methodology" (ONE to TWO sentences, max 45 words, MUST include the Cambridge Subject Code — do NOT write a paragraph), and "sections" (array of {title, instructions, questions: array of {text, type, options}}). Keep every question concise and direct. If readingPassageOnly is true, sections should contain exactly one placeholder entry if necessary to satisfy the schema, and no questions.`);
-    contents.push(`QUESTION "type" FIELD — set it to one of these exact lowercase values based on the question, and follow the encoding rules for each:
+    const encodingRules = `QUESTION "type" FIELD — set it to one of these exact lowercase values based on the question, and follow the encoding rules for each:
 - "multiple-choice": put 3-4 answer choices in "options".
 - "true-false": put exactly ["True","False"] in "options".
 - "fill-in-the-blanks": include a blank shown as "____" inside "text"; leave "options" empty.
@@ -347,14 +345,98 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
 - "drawing": a creative DRAWING task — the student draws their answer in an empty box. Write a clear drawing instruction in "text" and DO NOT provide "options".
 - "sorting": a sorting task. Name the 2-4 categories inside "text" (e.g. "Sort these into Mammals and Birds"), and put the individual items to be sorted in "options".
 - "cut-and-paste": a cut-and-paste task. Describe the target slots/categories inside "text", and put the individual items the student cuts out and pastes in "options".
-Only use the types that appear in the "Allowed Types" list above.`);
+Only use the types that appear in the "Allowed Types" list above.`;
+    contents.push(mainPrompt);
+    contents.push(`Format: JSON object with "title", "readingPassage" (The main content if readingPassageOnly, or the context story if includeStory), "description" (ONE sentence, max 25 words), "methodology" (ONE to TWO sentences, max 45 words, MUST include the Cambridge Subject Code — do NOT write a paragraph), and "sections" (array of {title, instructions, questions: array of {text, type, options}}). Keep every question concise and direct. If readingPassageOnly is true, sections should contain exactly one placeholder entry if necessary to satisfy the schema, and no questions.`);
+    contents.push(encodingRules);
 
-    const response = await generateContentWithRetry({
-      contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
+    const questionItemSchema = {
+      type: Type.OBJECT,
+      properties: {
+        text: { type: Type.STRING },
+        type: { type: Type.STRING },
+        options: { type: Type.ARRAY, items: { type: Type.STRING } },
+      },
+      required: ["text", "type"],
+    };
+    const sectionItemSchema = {
+      type: Type.OBJECT,
+      properties: {
+        title: { type: Type.STRING },
+        instructions: { type: Type.STRING },
+        questions: { type: Type.ARRAY, items: questionItemSchema },
+      },
+      required: ["title", "instructions", "questions"],
+    };
+    const fullWsSchema = {
+      type: Type.OBJECT,
+      properties: {
+        title: { type: Type.STRING },
+        readingPassage: { type: Type.STRING },
+        description: { type: Type.STRING },
+        methodology: { type: Type.STRING },
+        sections: { type: Type.ARRAY, items: sectionItemSchema },
+      },
+      required: ["title", "sections"],
+    };
+
+    const total = options.numQuestions || 0;
+    const CHUNK = 5;
+    // Chunk only the plain question-generation case — file/slide-driven and
+    // passage-only worksheets keep the single call.
+    const canChunk =
+      !options.readingPassageOnly &&
+      !options.fileContext &&
+      !slideContext &&
+      total > CHUNK + 1;
+
+    if (!canChunk) {
+      const response = await generateContentWithRetry({
+        contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
+        config: {
+          // Structured, not deep-reasoning — cap "thinking" to cut latency.
+          thinkingConfig: { thinkingBudget: 128 },
+          responseMimeType: "application/json",
+          responseSchema: fullWsSchema,
+        },
+      });
+      const text = response.text;
+      if (!text) throw new Error("Empty response");
+      return JSON.parse(text);
+    }
+
+    // SPEED: generate the questions in CONCURRENT batches (each call produces
+    // far fewer questions, and they overlap), then merge — roughly the wall
+    // time of one batch instead of the whole worksheet.
+    const chunkCount = Math.ceil(total / CHUNK);
+    const per = Math.ceil(total / chunkCount);
+    const ranges: { count: number; idx: number }[] = [];
+    for (let i = 0; i < chunkCount; i++) {
+      const count = Math.min(per, total - i * per);
+      if (count > 0) ranges.push({ count, idx: i });
+    }
+    const lex =
+      options.lexileLevel && options.lexileLevel !== "None"
+        ? `, Lexile: ${options.lexileLevel}`
+        : "";
+    const sharedCtx = `As an expert Cambridge Educator preparing a worksheet on "${lessonInput}". Subject: ${options.subject}, Year Group: ${options.yearGroup}${lex}.
+CURRICULUM ALIGNMENT: Align with the Cambridge International Framework and Scheme of Work; where natural reference one official LO code (Stage+Strand+Number, e.g. 3TC.01) using: ${CAMBRIDGE_CURRICULUM_INFO}
+Use the subject "${options.subject}" exactly. Keep all content neutral and brand-free, and keep every question concise and direct.`;
+
+    // Header: title + (optional) passage + short description/methodology.
+    const headerPromise = generateContentWithRetry({
+      contents: {
+        parts: [
+          ...(options.fileContext ? [{ inlineData: options.fileContext }] : []),
+          {
+            text: `${sharedCtx}
+${options.includeStory ? `Write a short reading passage (around ${requestedWordCount}) about "${lessonInput}" for ${options.yearGroup} students and put it in "readingPassage".` : `Leave "readingPassage" as an empty string.`}
+Return ONLY: "title" (a concise worksheet title), "readingPassage" (as above), "description" (ONE sentence, max 25 words), "methodology" (ONE to TWO sentences, max 45 words, include the Cambridge subject code). NO sections.`,
+          },
+        ],
+      },
       config: {
-        // Worksheet generation is structured, not deep-reasoning — cap "thinking"
-        // to cut latency significantly (the slide call uses the same approach).
-        thinkingConfig: { thinkingBudget: 128 },
+        thinkingConfig: { thinkingBudget: 96 },
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -363,39 +445,77 @@ Only use the types that appear in the "Allowed Types" list above.`);
             readingPassage: { type: Type.STRING },
             description: { type: Type.STRING },
             methodology: { type: Type.STRING },
-            sections: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  instructions: { type: Type.STRING },
-                  illustrationPrompt: { type: Type.STRING },
-                  questions: {
-                    type: Type.ARRAY,
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        text: { type: Type.STRING },
-                        type: { type: Type.STRING },
-                        options: { type: Type.ARRAY, items: { type: Type.STRING } }
-                      },
-                      required: ["text", "type"]
-                    }
-                  }
-                },
-                required: ["title", "instructions", "questions"]
-              }
-            }
           },
-          required: ["title", "sections"]
-        }
+          required: ["title"],
+        },
+      },
+    }).then((r) => {
+      try {
+        return JSON.parse(r.text || "{}");
+      } catch {
+        return {};
       }
     });
 
-    const text = response.text;
-    if (!text) throw new Error("Empty response");
-    return JSON.parse(text);
+    const makeBatch = (rg: { count: number; idx: number }, passage: string) =>
+      generateContentWithRetry({
+        contents: {
+          parts: [
+            {
+              text: `${sharedCtx}
+Generate EXACTLY ${rg.count} questions as ONE worksheet section (give the section a fitting title and a brief instruction line). This is part ${rg.idx + 1} of ${chunkCount} of a ${total}-question worksheet — cover a DISTINCT sub-area and do NOT duplicate the other parts. Allowed Types: ${options.questionTypes.join(", ")}.${passage ? `\nBase the questions on this reading passage:\n"""${passage}"""` : ""}
+${encodingRules}
+Return ONLY a "sections" array containing exactly ONE section with exactly ${rg.count} questions.`,
+            },
+          ],
+        },
+        config: {
+          thinkingConfig: { thinkingBudget: 128 },
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              sections: { type: Type.ARRAY, items: sectionItemSchema },
+            },
+            required: ["sections"],
+          },
+        },
+      }).then((r) => {
+        try {
+          return { idx: rg.idx, sections: JSON.parse(r.text || "{}").sections || [] };
+        } catch {
+          return { idx: rg.idx, sections: [] as WorksheetSection[] };
+        }
+      });
+
+    let header: any;
+    let batches: { idx: number; sections: WorksheetSection[] }[];
+    if (options.includeStory) {
+      // Questions reference the passage → write the passage first, then fan out.
+      header = await headerPromise;
+      batches = await Promise.all(
+        ranges.map((rg) => makeBatch(rg, header.readingPassage || "")),
+      );
+    } else {
+      // No passage dependency → header + all batches fully concurrent.
+      const all = await Promise.all([
+        headerPromise,
+        ...ranges.map((rg) => makeBatch(rg, "")),
+      ]);
+      header = all[0];
+      batches = all.slice(1) as { idx: number; sections: WorksheetSection[] }[];
+    }
+    const sections = batches
+      .sort((a, b) => a.idx - b.idx)
+      .flatMap((b) => b.sections);
+    if (sections.length === 0) throw new Error("Empty response");
+    return {
+      title: header.title || lessonInput,
+      readingPassage: header.readingPassage || "",
+      description: header.description || "",
+      methodology: header.methodology || "",
+      sections,
+    };
   } catch (err: any) {
     if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
       return callAiProxy('worksheet', lessonInput, { ...options, slideContext });
