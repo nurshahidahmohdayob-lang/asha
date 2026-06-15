@@ -150,58 +150,145 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
 
     contents.push(mainPrompt);
     contents.push(`Format: JSON object with "slides" (array of {title, type, content, illustrationPrompt}) AND "metadata" (object with "description": string, "methodology": string).
-    "methodology": A concise string describing the lesson focus and pedagogical approach (mention Cambridge framework alignment and specific subject code). IF methodology hints were provided in the prompt, expand on them while adhering to them strictly.
-    "description": A high-level overview. IF description hints were provided, incorporate them.
+    "methodology": ONE to TWO sentences (MAX 45 words) on the pedagogical approach, mentioning the Cambridge subject code. Be concise — do NOT write a paragraph.
+    "description": ONE sentence (MAX 25 words) high-level overview.
     "type" for slides: one of title, content, activity, quiz.
-    "illustrationPrompt": A concise string of 3-5 high-quality search keywords for an image.
+    "content": 3-4 SHORT bullet points, each a concise phrase (MAX 14 words). Do NOT write long sentences or paragraphs.
+    "illustrationPrompt": 3-5 search keywords only.
     "layoutType": (OPTIONAL) suggest one of 'infographic-cards', 'infographic-flow', 'infographic-grid', 'infographic-bubbles' if the content suits a non-list layout, otherwise 'standard'.
-    IMPORTANT: 
-    1. Do NOT repeat the slide "title" as the first item or any item in the "content" array.
-    2. Each content point should be unique, informative, and distinct from the title.
-    3. Refer to the Cambridge Subject Code (from the provided list) in the methodology or first slide where appropriate.`);
+    IMPORTANT:
+    1. Do NOT repeat the slide "title" as any item in the "content" array.
+    2. Each content point is unique, informative, distinct from the title, and brief.
+    3. Reference the Cambridge Subject Code (from the provided list) in the methodology.`);
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
+    const slideItemSchema = {
+      type: Type.OBJECT,
+      properties: {
+        title: { type: Type.STRING },
+        type: { type: Type.STRING },
+        content: { type: Type.ARRAY, items: { type: Type.STRING } },
+        illustrationPrompt: { type: Type.STRING },
+        layoutType: { type: Type.STRING },
+      },
+      required: ["title", "type", "content", "illustrationPrompt"],
+    };
+    const fullSchema = {
+      type: Type.OBJECT,
+      properties: {
+        metadata: {
+          type: Type.OBJECT,
+          properties: {
+            description: { type: Type.STRING },
+            methodology: { type: Type.STRING },
+          },
+          required: ["description", "methodology"],
+        },
+        slides: { type: Type.ARRAY, items: slideItemSchema },
+      },
+      required: ["metadata", "slides"],
+    };
+    const baseParts = contents.map((c) =>
+      typeof c === "string" ? { text: c } : c,
+    );
+
+    // SPEED: a single call to generate many slides is dominated by output-token
+    // generation. For larger decks we split the slides into chunks generated
+    // CONCURRENTLY (each call produces far less, and they overlap), then merge —
+    // roughly the wall-time of one chunk instead of the whole deck.
+    const total = options.numSlides || 0;
+    const CHUNK = 5;
+    if (options.templateMode === "strict" || total <= CHUNK + 1 || total === 0) {
+      const response = await generateContentWithRetry({
+        contents: { parts: baseParts },
+        config: {
+          thinkingConfig: { thinkingBudget: 128 },
+          responseMimeType: "application/json",
+          responseSchema: fullSchema,
+        },
+      });
+      const text = response.text;
+      if (!text) throw new Error("Empty response");
+      return JSON.parse(text);
+    }
+
+    // Build chunk ranges, e.g. 12 → [1-4][5-8][9-12]
+    const chunkCount = Math.ceil(total / CHUNK);
+    const per = Math.ceil(total / chunkCount);
+    const ranges: { start: number; count: number; idx: number }[] = [];
+    for (let i = 0; i < chunkCount; i++) {
+      const start = i * per + 1;
+      const count = Math.min(per, total - (start - 1));
+      if (count > 0) ranges.push({ start, count, idx: i });
+    }
+    const planNote = `This is ONE coherent ${total}-slide lesson split into ${chunkCount} parts for assembly. Part 1 opens with the title and foundational ideas; middle parts develop the core content with increasing depth; the final part covers application, an activity, and a summary/quiz. Produce slides that fit this overall flow and do NOT duplicate the other parts.`;
+
+    // Metadata + every chunk run concurrently (concurrency-capped via retry helper).
+    const metaPromise = generateContentWithRetry({
+      contents: {
+        parts: [
+          ...baseParts,
+          {
+            text: `Return ONLY the "metadata" object for this ${total}-slide lesson. "description": ONE sentence (max 25 words). "methodology": ONE to TWO sentences (max 45 words) mentioning the Cambridge subject code. Be concise — no paragraphs. No slides.`,
+          },
+        ],
+      },
       config: {
-        // Slide generation is structured, not deep-reasoning — cap "thinking"
-        // to cut latency significantly (benchmarked faster, lighter on the model).
-        thinkingConfig: { thinkingBudget: 128 },
+        thinkingConfig: { thinkingBudget: 64 },
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            metadata: {
-              type: Type.OBJECT,
-              properties: {
-                description: { type: Type.STRING },
-                methodology: { type: Type.STRING }
-              },
-              required: ["description", "methodology"]
-            },
-            slides: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  title: { type: Type.STRING },
-                  type: { type: Type.STRING },
-                  content: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  illustrationPrompt: { type: Type.STRING },
-                  layoutType: { type: Type.STRING }
-                },
-                required: ["title", "type", "content", "illustrationPrompt"]
-              }
-            }
+            description: { type: Type.STRING },
+            methodology: { type: Type.STRING },
           },
-          required: ["metadata", "slides"]
-        }
+          required: ["description", "methodology"],
+        },
+      },
+    }).then((r) => {
+      try {
+        return JSON.parse(r.text || "{}");
+      } catch {
+        return { description: "", methodology: "" };
       }
     });
 
-    const text = response.text;
-    if (!text) throw new Error("Empty response");
-    return JSON.parse(text);
+    const chunkPromises = ranges.map((rg) =>
+      generateContentWithRetry({
+        contents: {
+          parts: [
+            ...baseParts,
+            {
+              text: `${planNote}\n\nGenerate EXACTLY ${rg.count} slides — these are slides ${rg.start} to ${rg.start + rg.count - 1} of ${total} (part ${rg.idx + 1} of ${chunkCount}). Return ONLY a "slides" array (no metadata). Keep each slide concise.`,
+            },
+          ],
+        },
+        config: {
+          thinkingConfig: { thinkingBudget: 128 },
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: { slides: { type: Type.ARRAY, items: slideItemSchema } },
+            required: ["slides"],
+          },
+        },
+      }).then((r) => {
+        try {
+          return { idx: rg.idx, slides: JSON.parse(r.text || "{}").slides || [] };
+        } catch {
+          return { idx: rg.idx, slides: [] };
+        }
+      }),
+    );
+
+    const [metadata, ...chunks] = await Promise.all([
+      metaPromise,
+      ...chunkPromises,
+    ]);
+    const slides = chunks
+      .sort((a, b) => a.idx - b.idx)
+      .flatMap((c) => c.slides);
+    if (slides.length === 0) throw new Error("Empty response");
+    return { slides, metadata };
   } catch (err: any) {
     if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
       return callAiProxy('slides', lessonInput, options);
