@@ -27367,16 +27367,27 @@ export default function App() {
       () => wsJson,
     ).replace("/*__TITLE__*/null", () => titleJson);
 
-    // Open in a new tab instead of downloading; the blob URL keeps the page
-    // fully self-contained (and the user can still save it from the browser).
-    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const w = window.open(url, "_blank");
+    // Open a blank tab and write the document directly. This is more reliable
+    // than navigating a new tab to a blob: URL, which some browsers/pop-up
+    // settings open as a blank page.
+    const w = window.open("", "_blank");
     if (!w) {
-      alert("Pop-up blocked — please allow pop-ups to open the interactive assessment.");
+      alert(
+        "Pop-up blocked — please allow pop-ups for this site to open the interactive assessment.",
+      );
+      return;
     }
-    // Revoke after the tab has had time to load the document.
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    try {
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+    } catch (e) {
+      // Fallback: blob URL if direct write is unavailable.
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      w.location.href = url;
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
   };
 
   // Differentiated assessment: reword the current worksheet (same topic, same
