@@ -187,6 +187,17 @@ export interface EduContent {
     title: string;
     readingPassage?: string;
     leveledPassages?: Record<string, string>;
+    /** Same topic/questions reworded per Lexile band — one full worksheet per
+     *  level, for differentiating the same assessment by student reading level. */
+    leveledWorksheets?: Record<
+      string,
+      {
+        title: string;
+        description?: string;
+        readingPassage?: string;
+        sections: WorksheetSection[];
+      }
+    >;
     description?: string;
     methodology?: string;
     sections: WorksheetSection[];

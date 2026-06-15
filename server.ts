@@ -43,7 +43,7 @@ async function startServer() {
     }
 
     try {
-      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateEduContent, suggestWeeklyInput, generateEduNotes, relevelReadingPassage, generateInteractiveSortingGame, askAI, generatePosterImage, generateLeveledQuestions } = await import("./src/services/geminiService.ts");
+      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateEduContent, suggestWeeklyInput, generateEduNotes, relevelReadingPassage, generateInteractiveSortingGame, askAI, generatePosterImage, generateLeveledQuestions, relevelWorksheet } = await import("./src/services/geminiService.ts");
       
       let result;
       switch (type) {
@@ -59,6 +59,7 @@ async function startServer() {
         case 'all': result = await generateEduContent(lessonInput, options); break;
         case 'relevelPassage': result = await relevelReadingPassage(lessonInput, options.targetLexile, options.subject, options.yearGroup); break;
         case 'leveledQuestions': result = await generateLeveledQuestions(lessonInput, options.levels, { yearGroup: options.yearGroup, subject: options.subject, numQuestions: options.numQuestions }); break;
+        case 'relevelWorksheet': result = await relevelWorksheet(JSON.parse(lessonInput), options.targetLexile, options.subject, options.yearGroup); break;
         case 'chat': result = await askAI(lessonInput, options.history || []); break;
         case 'image': result = await generatePosterImage(lessonInput); break;
         default: throw new Error(`Unknown generation type: ${type}`);

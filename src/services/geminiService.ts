@@ -1256,6 +1256,93 @@ ${baseJson}`;
   }
 }
 
+// Re-level a full worksheet/assessment to a target Lexile band: same topic,
+// same questions, same intent and same correct answers — only the language
+// complexity of the passage, question text and options changes. Structure
+// (sections, question count, types, option count) is preserved exactly.
+export async function relevelWorksheet(
+  worksheet: {
+    title: string;
+    description?: string;
+    readingPassage?: string;
+    sections: WorksheetSection[];
+  },
+  targetLexile: string,
+  subject: string,
+  yearGroup: string,
+): Promise<{
+  title: string;
+  description?: string;
+  readingPassage?: string;
+  sections: WorksheetSection[];
+}> {
+  const prompt = `You are an expert Cambridge literacy educator specialising in differentiated instruction.
+
+Below is a worksheet/assessment as JSON. Produce a copy of it reworded for the Lexile band ${targetLexile} (Subject: ${subject}, Year Group: ${yearGroup}).
+
+STRICT RULES:
+1. Keep the SAME structure exactly: same number of sections in the same order, same number of questions per section in the same order, and the same "type" for every question.
+2. Keep the SAME intent and the SAME correct answer for every question. For multiple-choice keep the same number of options in the same order (reword them but keep the same correct choice). For sorting/cut-and-paste keep the same items in "options". Drawing questions stay drawing instructions (no options). Fill-in-the-blanks keep a "____" blank.
+3. Only adjust LANGUAGE COMPLEXITY — vocabulary, sentence length and syntax — to match the ${targetLexile} band. Lower bands: short sentences, high-frequency words, direct phrasing. Higher bands: richer vocabulary and more complex syntax.
+4. If a reading passage is present, rewrite it at the ${targetLexile} band keeping the same facts and meaning. If absent, return an empty string for readingPassage.
+5. Keep the title essentially the same (you may append the level).
+
+WORKSHEET (JSON):
+${JSON.stringify(worksheet)}`;
+
+  const schema = {
+    type: Type.OBJECT,
+    properties: {
+      title: { type: Type.STRING },
+      description: { type: Type.STRING },
+      readingPassage: { type: Type.STRING },
+      sections: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            instructions: { type: Type.STRING },
+            questions: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  text: { type: Type.STRING },
+                  type: { type: Type.STRING },
+                  options: { type: Type.ARRAY, items: { type: Type.STRING } },
+                },
+                required: ["text", "type"],
+              },
+            },
+          },
+          required: ["title", "instructions", "questions"],
+        },
+      },
+    },
+    required: ["title", "sections"],
+  };
+
+  try {
+    const res = await generateContentWithRetry({
+      contents: { parts: [{ text: prompt }] },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: schema,
+        thinkingConfig: { thinkingBudget: 96 },
+      },
+    });
+    const text = res.text;
+    if (!text) throw new Error("Empty response");
+    return JSON.parse(text);
+  } catch (err: any) {
+    if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
+      return callAiProxy('relevelWorksheet', JSON.stringify(worksheet), { targetLexile, subject, yearGroup });
+    }
+    throw err;
+  }
+}
+
 export async function generateInteractiveSortingGame(
   topic: string,
   subject: string,

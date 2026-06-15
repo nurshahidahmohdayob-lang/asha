@@ -1984,6 +1984,7 @@ import {
   SlideImage,
   FontSettings,
   HandoutMetadata,
+  WorksheetSection,
 } from "./types";
 import {
   generateSlides,
@@ -1994,6 +1995,7 @@ import {
   generateWeeklyPlan,
   suggestWeeklyInput,
   relevelReadingPassage,
+  relevelWorksheet,
   generateInteractiveSortingGame,
   generateLeveledQuestions,
   askAI,
@@ -4495,6 +4497,14 @@ export default function App() {
     "Fill in the Blanks",
     "Short Answer",
   ]);
+  // Differentiated assessment levels — same worksheet reworded per Lexile band
+  const [wsLevels, setWsLevels] = useState<string[]>([
+    "200-300",
+    "400-500",
+    "600-700",
+  ]);
+  const [isLevelingWorksheet, setIsLevelingWorksheet] = useState(false);
+  const [wsLevelProgress, setWsLevelProgress] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
   const [generatingMessage, setGeneratingMessage] = useState("Generating...");
@@ -21477,13 +21487,13 @@ export default function App() {
                 {content?.worksheet && (
                   <div className="space-y-2 w-full pt-2 border-t border-[#D1FAE5]/60">
                     <button
-                      onClick={downloadDOCX}
+                      onClick={() => downloadDOCX()}
                       className="w-full py-3 bg-[#F0FDF4] text-[#064E3B] border-2 border-[#059669] rounded-xl text-xs font-black uppercase tracking-widest hover:bg-[#D1FAE5] transition-all shadow-sm flex items-center justify-center gap-2"
                     >
                       <Download size={16} /> Download DOCX
                     </button>
                     <button
-                      onClick={openAssessmentHTML}
+                      onClick={() => openAssessmentHTML()}
                       className="w-full py-3 bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white rounded-xl text-xs font-black uppercase tracking-widest hover:opacity-90 transition-all shadow-md flex items-center justify-center gap-2"
                     >
                       <Sparkles size={16} /> Open Interactive HTML
@@ -21500,6 +21510,133 @@ export default function App() {
                       )}{" "}
                       Generate Slides from Assessment
                     </button>
+                  </div>
+                )}
+
+                {/* DIFFERENTIATED LEVELS — same assessment per Lexile band */}
+                {content?.worksheet && (
+                  <div className="space-y-3 w-full pt-4 border-t-2 border-[#D1FAE5]">
+                    <div>
+                      <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest leading-none flex items-center gap-1.5">
+                        <Layers size={13} className="text-[#0d9488]" /> Level
+                        Versions
+                      </h3>
+                      <p className="text-[10px] font-semibold text-[#064E3B]/50 mt-1.5 leading-relaxed">
+                        Same topic & questions — reworded for each reading
+                        level, so every student gets this assessment at their
+                        own Lexile.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        "BR99-100",
+                        "100-200",
+                        "200-300",
+                        "300-400",
+                        "400-500",
+                        "500-600",
+                        "600-700",
+                        "700-800",
+                        "800-900",
+                        "900-1050",
+                      ].map((lvl) => {
+                        const on = wsLevels.includes(lvl);
+                        const made =
+                          !!content.worksheet?.leveledWorksheets?.[lvl];
+                        return (
+                          <button
+                            key={lvl}
+                            onClick={() =>
+                              setWsLevels((prev) =>
+                                prev.includes(lvl)
+                                  ? prev.filter((l) => l !== lvl)
+                                  : [...prev, lvl],
+                              )
+                            }
+                            className={cn(
+                              "flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wide border-2 transition-all",
+                              on
+                                ? "bg-[#0d9488] text-white border-[#0d9488]"
+                                : "bg-white text-[#7C7A65] border-gray-200 hover:border-[#0d9488]",
+                            )}
+                          >
+                            {made && (
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-300" />
+                            )}
+                            {lvl}L
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <button
+                      onClick={handleGenerateWorksheetLevels}
+                      disabled={isLevelingWorksheet}
+                      className="w-full py-3 bg-[#0d9488] text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-[#0f766e] transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {isLevelingWorksheet ? (
+                        <Loader2 className="animate-spin" size={16} />
+                      ) : (
+                        <Layers size={16} />
+                      )}{" "}
+                      {isLevelingWorksheet
+                        ? "Building levels…"
+                        : "Create Level Versions"}
+                    </button>
+                    {isLevelingWorksheet && wsLevelProgress && (
+                      <p className="text-[10px] font-bold text-[#0d9488] text-center">
+                        {wsLevelProgress}
+                      </p>
+                    )}
+                    {content.worksheet.leveledWorksheets &&
+                      Object.keys(content.worksheet.leveledWorksheets).length >
+                        0 && (
+                        <div className="space-y-1.5 pt-1">
+                          {[
+                            "BR99-100",
+                            "100-200",
+                            "200-300",
+                            "300-400",
+                            "400-500",
+                            "500-600",
+                            "600-700",
+                            "700-800",
+                            "800-900",
+                            "900-1050",
+                          ]
+                            .filter(
+                              (lvl) =>
+                                content.worksheet?.leveledWorksheets?.[lvl],
+                            )
+                            .map((lvl) => {
+                              const lw =
+                                content.worksheet!.leveledWorksheets![lvl];
+                              return (
+                                <div
+                                  key={lvl}
+                                  className="flex items-center gap-1.5 bg-[#F0FDF4] border border-[#D1FAE5] rounded-xl p-1.5"
+                                >
+                                  <span className="text-[10px] font-black text-[#0d9488] uppercase px-1.5 flex-1">
+                                    {lvl}L
+                                  </span>
+                                  <button
+                                    onClick={() => openAssessmentHTML(lw)}
+                                    title="Open interactive worksheet"
+                                    className="px-2 py-1 bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white rounded-lg text-[9px] font-black uppercase flex items-center gap-1 hover:opacity-90"
+                                  >
+                                    <Sparkles size={11} /> Open
+                                  </button>
+                                  <button
+                                    onClick={() => downloadDOCX(lw, lvl)}
+                                    title="Download DOCX"
+                                    className="px-2 py-1 bg-white text-[#064E3B] border border-[#059669] rounded-lg text-[9px] font-black uppercase flex items-center gap-1 hover:bg-[#D1FAE5]"
+                                  >
+                                    <Download size={11} /> DOCX
+                                  </button>
+                                </div>
+                              );
+                            })}
+                        </div>
+                      )}
                   </div>
                 )}
               </div>
@@ -26979,8 +27116,17 @@ export default function App() {
     }
   };
 
-  const downloadDOCX = async () => {
+  const downloadDOCX = async (
+    override?: {
+      title: string;
+      readingPassage?: string;
+      sections: WorksheetSection[];
+    },
+    levelLabel?: string,
+  ) => {
     if (!content) return;
+    const ws = override || content.worksheet;
+    if (!ws) return;
 
     const doc = new Document({
       sections: [
@@ -26988,12 +27134,26 @@ export default function App() {
           properties: { type: SectionType.CONTINUOUS },
           children: [
             new Paragraph({
-              text: content.worksheet.title,
+              text: ws.title,
               heading: HeadingLevel.HEADING_1,
               alignment: AlignmentType.CENTER,
             }),
-            ...(content.worksheet.readingPassage &&
-            content.worksheet.readingPassage.trim().length > 0
+            ...(levelLabel
+              ? [
+                  new Paragraph({
+                    children: [
+                      new TextRun({
+                        text: `Lexile Level: ${levelLabel}`,
+                        italics: true,
+                      }),
+                    ],
+                    alignment: AlignmentType.CENTER,
+                    spacing: { after: 200 },
+                  }),
+                ]
+              : []),
+            ...(ws.readingPassage &&
+            ws.readingPassage.trim().length > 0
               ? [
                   new Paragraph({
                     text: "Reading Passage",
@@ -27003,14 +27163,14 @@ export default function App() {
                   new Paragraph({
                     children: [
                       new TextRun({
-                        text: content.worksheet.readingPassage,
+                        text: ws.readingPassage,
                       }),
                     ],
                     spacing: { after: 400 },
                   }),
                 ]
               : []),
-            ...content.worksheet.sections.flatMap((section) => [
+            ...ws.sections.flatMap((section) => [
               new Paragraph({
                 text: section.title,
                 heading: HeadingLevel.HEADING_2,
@@ -27059,27 +27219,39 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${content.lessonTitle.replace(/\s+/g, "_")}_Worksheet.docx`;
+    const safeBase = (ws.title || content.lessonTitle || "Worksheet").replace(
+      /[\\/:*?"<>|]+/g,
+      "",
+    );
+    a.download = `${safeBase.replace(/\s+/g, "_")}${
+      levelLabel ? "_" + levelLabel + "L" : ""
+    }_Worksheet.docx`;
     a.click();
   };
 
   // Download the paper assessment AND the playful interactive organizer as a
   // single self-contained, offline-capable, interactive HTML file.
-  const openAssessmentHTML = () => {
-    if (!content?.worksheet) {
+  const openAssessmentHTML = (override?: {
+    title?: string;
+    description?: string;
+    readingPassage?: string;
+    sections: WorksheetSection[];
+  }) => {
+    const ws = override || content?.worksheet;
+    if (!ws) {
       alert("No assessment available to open yet.");
       return;
     }
 
     // Prefer the AI-generated worksheet title; never fall back to the raw prompt.
-    const title = content.worksheet.title || content.lessonTitle || "Assessment";
+    const title = ws.title || content?.lessonTitle || "Assessment";
     // Trim to the fields the standalone player needs, then escape "<" so any
     // user text containing "</script>" cannot break out of the embedded script.
     const wsPayload = {
-      title: content.worksheet.title || "",
-      description: content.worksheet.description || "",
-      readingPassage: content.worksheet.readingPassage || "",
-      sections: (content.worksheet.sections || []).map((s) => ({
+      title: ws.title || "",
+      description: ws.description || "",
+      readingPassage: ws.readingPassage || "",
+      sections: (ws.sections || []).map((s) => ({
         title: s.title || "",
         instructions: s.instructions || "",
         questions: (s.questions || []).map((q) => ({
@@ -27109,6 +27281,83 @@ export default function App() {
     }
     // Revoke after the tab has had time to load the document.
     setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
+
+  // Differentiated assessment: reword the current worksheet (same topic, same
+  // questions, same answers) to each selected Lexile band, in parallel (capped).
+  const handleGenerateWorksheetLevels = async () => {
+    const ws = content?.worksheet;
+    if (!ws || !ws.sections || ws.sections.length === 0) {
+      alert("Generate an assessment first, then create its level versions.");
+      return;
+    }
+    if (wsLevels.length === 0) {
+      alert("Select at least one Lexile level.");
+      return;
+    }
+    setIsLevelingWorksheet(true);
+    const base = {
+      title: ws.title,
+      description: ws.description,
+      readingPassage: ws.readingPassage || "",
+      sections: ws.sections,
+    };
+    const subj = content?.subject || subject || "English";
+    const yr = content?.gradeLevel || yearGroup || "Year 3";
+    const pending = [...wsLevels];
+    const results: Record<string, any> = {};
+    let done = 0;
+    setWsLevelProgress(`Creating ${wsLevels.length} level version(s)… 0/${wsLevels.length}`);
+    const worker = async () => {
+      while (pending.length) {
+        const lvl = pending.shift();
+        if (!lvl) break;
+        try {
+          const r = await relevelWorksheet(base, lvl, subj, yr);
+          if (r && r.sections) results[lvl] = r;
+        } catch (e) {
+          console.error(`Re-level ${lvl} failed:`, e);
+        }
+        done++;
+        setWsLevelProgress(
+          `Creating ${wsLevels.length} level version(s)… ${done}/${wsLevels.length}`,
+        );
+      }
+    };
+    try {
+      await Promise.all(
+        Array.from({ length: Math.min(2, wsLevels.length) }, worker),
+      );
+      const built = Object.keys(results).length;
+      if (built === 0) {
+        const msg =
+          "Could not create any level versions — the AI may be busy or rate-limited. Wait a minute and try again.";
+        alert(msg);
+        return;
+      }
+      setContent((prev) =>
+        prev && prev.worksheet
+          ? {
+              ...prev,
+              worksheet: {
+                ...prev.worksheet,
+                leveledWorksheets: {
+                  ...(prev.worksheet.leveledWorksheets || {}),
+                  ...results,
+                },
+              },
+            }
+          : prev,
+      );
+      alert(
+        `Created ${built} level version(s). Open or download each from the list below.`,
+      );
+    } catch (e: any) {
+      alert(`Error creating level versions: ${String(e?.message || e)}`);
+    } finally {
+      setIsLevelingWorksheet(false);
+      setWsLevelProgress("");
+    }
   };
 
   const [selectedImageSlot, setSelectedImageSlot] = useState<string | null>(
