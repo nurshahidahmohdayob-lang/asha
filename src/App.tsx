@@ -868,8 +868,9 @@ function zIcon(s: any): string {
   for (const [re, em] of ZICON_MAP) if (re.test(t)) return em;
   return "🧩";
 }
-function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detective"): string {
+function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detective", kind: string = "worksheet"): string {
   const T = ZTHEMES[themeKey] || ZTHEMES.detective;
+  const kindWord = kind === "assessment" ? "Assessment" : "Worksheet";
   const PAL: string[] = T.pal;
   // Per request: do NOT show the topic description or section instructions in
   // the worksheet — only the questions/activities themselves.
@@ -1261,7 +1262,7 @@ ${T.extraCss || ""}
   <div class="kd-head">
     <div class="titlewrap">
       <div class="brandrow"><img src="${ZERA_LOGO_B64}" alt="Zera Education"/></div>
-      <div class="title"><span class="x">My</span> <span class="y">Worksheet</span><span class="mascot">${T.mascot}</span></div>
+      <div class="title"><span class="x">My</span> <span class="y">${kindWord}</span><span class="mascot">${T.mascot}</span></div>
       ${subtitleHtml}
     </div>
     <div class="steps">
@@ -4508,6 +4509,10 @@ export default function App() {
     useState<number>(-1);
   const [numSlides, setNumSlides] = useState(10);
   const [numQuestions, setNumQuestions] = useState(8);
+  // Whether the generated document is framed as a "Worksheet" or "Assessment".
+  const [docKind, setDocKind] = useState<"worksheet" | "assessment">(
+    "worksheet",
+  );
   const [isReviewMode, setIsReviewMode] = useState(false);
   const [includeStory, setIncludeStory] = useState(false);
   const [readingPassageOnly, setReadingPassageOnly] = useState(false);
@@ -5154,6 +5159,7 @@ export default function App() {
     title: string;
     ws?: any;
     design?: string;
+    kind?: string;
   } | null>(null);
   const [interactiveDesign, setInteractiveDesign] = useState<string>("detective");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -22110,6 +22116,29 @@ export default function App() {
                   <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest leading-none">
                     Generation Prompt
                   </h3>
+                  {/* Worksheet vs Assessment toggle */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
+                      Type
+                    </label>
+                    <div className="flex gap-2 bg-white p-1 rounded-xl border-2 border-[#D1FAE5]">
+                      {(["worksheet", "assessment"] as const).map((k) => (
+                        <button
+                          key={k}
+                          type="button"
+                          onClick={() => setDocKind(k)}
+                          className={cn(
+                            "flex-1 py-2 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all",
+                            docKind === k
+                              ? "bg-[#059669] text-white shadow"
+                              : "text-[#064E3B]/60 hover:bg-[#D1FAE5]/40",
+                          )}
+                        >
+                          {k === "worksheet" ? "📝 Worksheet" : "📋 Assessment"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
                       Topic / Instructions
@@ -22174,7 +22203,9 @@ export default function App() {
                   )}{" "}
                   {fileContext
                     ? "Solve & Analyze with AI"
-                    : "Generate Assessment"}
+                    : docKind === "assessment"
+                      ? "Generate Assessment"
+                      : "Generate Worksheet"}
                 </button>
                 {fileContext && (
                   <button
@@ -28006,12 +28037,12 @@ export default function App() {
     const title = ws.title || content?.lessonTitle || "Assessment";
     // Build the colourful, interactive worksheet using the chosen design.
     // Store `ws` so the design picker can re-render other themes instantly.
-    const html = buildInteractiveHTML(ws, title, interactiveDesign);
+    const html = buildInteractiveHTML(ws, title, interactiveDesign, docKind);
 
     // Show the interactive assessment inline in the worksheet view. Scroll it
     // into view so it can never look like "nothing happened" when the user is
     // scrolled down among the questions.
-    setInteractiveDoc({ html, title, ws, design: interactiveDesign });
+    setInteractiveDoc({ html, title, ws, design: interactiveDesign, kind: docKind });
     setCurrentView("worksheet");
     setTimeout(() => {
       try {
@@ -28030,7 +28061,7 @@ export default function App() {
     setInteractiveDesign(key);
     setInteractiveDoc((prev) =>
       prev && prev.ws
-        ? { ...prev, html: buildInteractiveHTML(prev.ws, prev.title, key), design: key }
+        ? { ...prev, html: buildInteractiveHTML(prev.ws, prev.title, key, prev.kind || "worksheet"), design: key }
         : prev,
     );
   };
