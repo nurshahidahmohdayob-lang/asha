@@ -22613,39 +22613,8 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Description & Methodology Section */}
-                <div className="mb-12 space-y-6">
-                  {content.worksheet.description && (
-                    <div className="p-8 bg-[#F0FDF4] border-2 border-[#10B981] rounded-3xl">
-                      <div className="flex items-center gap-3 mb-4">
-                        <div className="p-2 bg-white rounded-xl shadow-sm text-[#064E3B]">
-                          <Info size={20} />
-                        </div>
-                        <h2 className="text-xl font-black uppercase tracking-tight text-[#064E3B]">
-                          Assessment Description
-                        </h2>
-                      </div>
-                      <p className="text-lg font-medium text-[#064E3B]/80 leading-relaxed">
-                        {content.worksheet.description}
-                      </p>
-                    </div>
-                  )}
-
-                  <div className="p-8 bg-[#FEFCE8] border-2 border-[#FACC15] rounded-3xl">
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="p-2 bg-white rounded-xl shadow-sm text-[#064E3B]">
-                        <BookOpen size={20} />
-                      </div>
-                      <h2 className="text-xl font-black uppercase tracking-tight text-[#064E3B]">
-                        Methodology & Lesson Focus
-                      </h2>
-                    </div>
-                    <p className="text-lg font-medium text-[#064E3B]/80 leading-relaxed italic">
-                      {content.worksheet.methodology ||
-                        `This lesson focus on ${content.subject} using inquiry-based methods to enhance student engagement and conceptual depth in ${content.gradeLevel}.`}
-                    </p>
-                  </div>
-                </div>
+                {/* Description & Methodology removed from the worksheet output
+                    per request — these stay in the settings sidebar only. */}
 
                 <div className="space-y-12">
                   {content.worksheet.sections.map((section, si) =>
