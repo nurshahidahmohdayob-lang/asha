@@ -17,6 +17,15 @@ async function startServer() {
   const app = express();
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
+  // Force browsers to NEVER cache app code in dev — guarantees the latest
+  // bundle loads on every refresh (no more stale-cache "my fix isn't showing").
+  app.use((_req, res, next) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    next();
+  });
+
   // JSON parsing
   app.use(express.json({ limit: '50mb' }));
 

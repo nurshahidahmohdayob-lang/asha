@@ -297,7 +297,7 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
   }
 }
 
-export async function generateWorksheet(lessonInput: string, options: EduOptions, slideContext?: SlideContent[]): Promise<{ title: string; readingPassage?: string; leveledPassages?: Record<string, string>; description?: string; methodology?: string; sections: WorksheetSection[] }> {
+export async function generateWorksheet(lessonInput: string, options: EduOptions, slideContext?: SlideContent[], onPartial?: (partial: { phase: string; title: string; readingPassage?: string; description?: string; methodology?: string; sections: WorksheetSection[]; done: number; total: number }) => void): Promise<{ title: string; readingPassage?: string; leveledPassages?: Record<string, string>; description?: string; methodology?: string; sections: WorksheetSection[] }> {
   try {
     const contents: any[] = [];
     if (options.fileContext) {
@@ -382,20 +382,25 @@ Only use the types that appear in the "Allowed Types" list above.`;
 
     const total = options.numQuestions || 0;
     const CHUNK = 5;
-    // Chunk only the plain question-generation case — file/slide-driven and
-    // passage-only worksheets keep the single call.
-    const canChunk =
-      !options.readingPassageOnly &&
-      !options.fileContext &&
-      !slideContext &&
-      total > CHUNK + 1;
+    // SINGLE-CALL MODE: build the whole worksheet in ONE API request so we stay
+    // well under the Gemini free-tier per-minute request cap (~20 req/min).
+    // To re-enable faster parallel-batch generation on a paid/higher-limit key,
+    // restore the commented condition below.
+    const canChunk: boolean = false;
+    // const canChunk =
+    //   !options.readingPassageOnly &&
+    //   !options.fileContext &&
+    //   !slideContext &&
+    //   total > CHUNK + 1;
+    void CHUNK;
 
     if (!canChunk) {
       const response = await generateContentWithRetry({
         contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
         config: {
-          // Structured, not deep-reasoning — cap "thinking" to cut latency.
-          thinkingConfig: { thinkingBudget: 128 },
+          // Structured generation, not deep reasoning — disable "thinking"
+          // entirely to minimise latency.
+          thinkingConfig: { thinkingBudget: 0 },
           responseMimeType: "application/json",
           responseSchema: fullWsSchema,
         },
@@ -419,9 +424,13 @@ Only use the types that appear in the "Allowed Types" list above.`;
       options.lexileLevel && options.lexileLevel !== "None"
         ? `, Lexile: ${options.lexileLevel}`
         : "";
+    // SPEED: the full ~1.8k-char curriculum list only matters for the header
+    // call (which writes the methodology + Cambridge LO code). Keep it OUT of
+    // the parallel question batches so each batch sends far fewer input tokens
+    // and returns faster — the batches just need the topic/subject/year.
     const sharedCtx = `As an expert Cambridge Educator preparing a worksheet on "${lessonInput}". Subject: ${options.subject}, Year Group: ${options.yearGroup}${lex}.
-CURRICULUM ALIGNMENT: Align with the Cambridge International Framework and Scheme of Work; where natural reference one official LO code (Stage+Strand+Number, e.g. 3TC.01) using: ${CAMBRIDGE_CURRICULUM_INFO}
 Use the subject "${options.subject}" exactly. Keep all content neutral and brand-free, and keep every question concise and direct.`;
+    const curriculumNote = `\nCURRICULUM ALIGNMENT: Align with the Cambridge International Framework and Scheme of Work; where natural reference one official LO code (Stage+Strand+Number, e.g. 3TC.01) using: ${CAMBRIDGE_CURRICULUM_INFO}`;
 
     // Header: title + (optional) passage + short description/methodology.
     const headerPromise = generateContentWithRetry({
@@ -429,14 +438,14 @@ Use the subject "${options.subject}" exactly. Keep all content neutral and brand
         parts: [
           ...(options.fileContext ? [{ inlineData: options.fileContext }] : []),
           {
-            text: `${sharedCtx}
+            text: `${sharedCtx}${curriculumNote}
 ${options.includeStory ? `Write a short reading passage (around ${requestedWordCount}) about "${lessonInput}" for ${options.yearGroup} students and put it in "readingPassage".` : `Leave "readingPassage" as an empty string.`}
 Return ONLY: "title" (a concise worksheet title), "readingPassage" (as above), "description" (ONE sentence, max 25 words), "methodology" (ONE to TWO sentences, max 45 words, include the Cambridge subject code). NO sections.`,
           },
         ],
       },
       config: {
-        thinkingConfig: { thinkingBudget: 96 },
+        thinkingConfig: { thinkingBudget: 0 },
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -470,7 +479,9 @@ Return ONLY a "sections" array containing exactly ONE section with exactly ${rg.
           ],
         },
         config: {
-          thinkingConfig: { thinkingBudget: 128 },
+          // Question batches are structured generation, not deep reasoning —
+          // disable thinking to minimise latency per batch.
+          thinkingConfig: { thinkingBudget: 0 },
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -488,27 +499,60 @@ Return ONLY a "sections" array containing exactly ONE section with exactly ${rg.
         }
       });
 
-    let header: any;
-    let batches: { idx: number; sections: WorksheetSection[] }[];
+    // PHASED STREAMING: report each phase to the caller the moment it lands —
+    // header (title + passage) first, then each question batch as it resolves —
+    // so the UI fills in progressively instead of waiting for the whole thing.
+    let header: any = {
+      title: lessonInput,
+      readingPassage: "",
+      description: "",
+      methodology: "",
+    };
+    let headerReady = false;
+    const collected = new Map<number, WorksheetSection[]>();
+    const orderedSections = () =>
+      ranges
+        .map((r) => r.idx)
+        .sort((a, b) => a - b)
+        .flatMap((idx) => collected.get(idx) || []);
+    const emit = (phase: string) => {
+      if (!onPartial) return;
+      onPartial({
+        phase,
+        title: header.title || lessonInput,
+        readingPassage: header.readingPassage || "",
+        description: header.description || "",
+        methodology: header.methodology || "",
+        sections: orderedSections(),
+        done: collected.size,
+        total: ranges.length,
+      });
+    };
+
+    const hp = headerPromise.then((h) => {
+      header = { ...header, ...h };
+      headerReady = true;
+      emit("header");
+    });
+    const runBatch = (rg: { count: number; idx: number }, passage: string) =>
+      makeBatch(rg, passage).then((b) => {
+        collected.set(b.idx, b.sections);
+        emit("questions");
+      });
+
     if (options.includeStory) {
       // Questions reference the passage → write the passage first, then fan out.
-      header = await headerPromise;
-      batches = await Promise.all(
-        ranges.map((rg) => makeBatch(rg, header.readingPassage || "")),
+      await hp;
+      await Promise.all(
+        ranges.map((rg) => runBatch(rg, header.readingPassage || "")),
       );
     } else {
       // No passage dependency → header + all batches fully concurrent.
-      const all = await Promise.all([
-        headerPromise,
-        ...ranges.map((rg) => makeBatch(rg, "")),
-      ]);
-      header = all[0];
-      batches = all.slice(1) as { idx: number; sections: WorksheetSection[] }[];
+      await Promise.all([hp, ...ranges.map((rg) => runBatch(rg, ""))]);
     }
-    const sections = batches
-      .sort((a, b) => a.idx - b.idx)
-      .flatMap((b) => b.sections);
+    const sections = orderedSections();
     if (sections.length === 0) throw new Error("Empty response");
+    emit("done");
     return {
       title: header.title || lessonInput,
       readingPassage: header.readingPassage || "",
@@ -517,8 +561,19 @@ Return ONLY a "sections" array containing exactly ONE section with exactly ${rg.
       sections,
     };
   } catch (err: any) {
-    if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
-      return callAiProxy('worksheet', lessonInput, { ...options, slideContext });
+    // In the browser, ALWAYS fall back to the server proxy on ANY failure
+    // (empty response, network, model unavailable, missing key, etc.). The
+    // server has the API key + model fallback chain and reliably returns a
+    // populated worksheet — this prevents a silent empty generation.
+    if (typeof window !== 'undefined') {
+      try {
+        const viaProxy = await callAiProxy('worksheet', lessonInput, { ...options, slideContext });
+        if (viaProxy && (viaProxy as any).sections && (viaProxy as any).sections.length > 0) {
+          return viaProxy;
+        }
+      } catch (proxyErr) {
+        console.error('Worksheet proxy fallback failed:', proxyErr);
+      }
     }
     throw err;
   }
@@ -554,7 +609,7 @@ export async function generateReadingProgram(lessonInput: string, options: EduOp
       Format: JSON object matching the defined schema.`);
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3.5-flash",
       contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
       config: {
         responseMimeType: "application/json",
@@ -701,7 +756,7 @@ export async function generateSessionPlan(topic: string, subtopics: string, week
     contents.push(mainPrompt);
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3.5-flash",
       contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
       config: {
         responseMimeType: "application/json",
@@ -812,7 +867,7 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
     contents.push(mainPrompt);
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3.5-flash",
       contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
       config: {
         responseMimeType: "application/json",
@@ -883,7 +938,7 @@ export async function suggestWeeklyInput(type: 'unit' | 'topic' | 'activity', op
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3.5-flash",
       contents: [{ parts: [{ text: prompt }] }]
     });
 
@@ -931,7 +986,7 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
     contents.push(mainPrompt);
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3.5-flash",
       contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
       config: {
         responseMimeType: "application/json",
@@ -1034,7 +1089,7 @@ export async function generateEduNotes(lessonInput: string, options: EduOptions)
     contents.push(`Format: JSON object with "notes" (a long string containing the markdown formatted notes).`);
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3.5-flash",
       contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
       config: {
         responseMimeType: "application/json",
@@ -1102,7 +1157,7 @@ export async function generateEduNotesStream(
 
   try {
     const stream = await ai.models.generateContentStream({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3.5-flash",
       contents: { parts },
     });
     let full = "";
@@ -1171,7 +1226,7 @@ export async function relevelReadingPassage(
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3.5-flash",
       contents: { parts: [{ text: mainPrompt }] },
       config: {
         responseMimeType: "application/json",
@@ -1226,10 +1281,15 @@ export async function relevelReadingPassage(
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function generateContentWithRetry(
   request: { contents: any; config?: any },
-  models: string[] = ["gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
+  models: string[] = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
   attemptsPerModel = 2,
 ): Promise<any> {
   let lastErr: any;
+  // Some models reject thinkingBudget:0 (or other thinkingConfig values) with a
+  // non-retryable 400. If that happens, transparently retry the same request
+  // WITHOUT thinkingConfig so an aggressive low-latency setting can never break
+  // generation — we just lose the latency win on that model.
+  let strippedThinking = false;
   for (const model of models) {
     for (let attempt = 0; attempt < attemptsPerModel; attempt++) {
       try {
@@ -1237,6 +1297,32 @@ async function generateContentWithRetry(
       } catch (err: any) {
         lastErr = err;
         const msg = String(err?.message || err);
+        const isThinkingReject =
+          (msg.includes("400") ||
+            msg.toLowerCase().includes("invalid_argument") ||
+            msg.toLowerCase().includes("invalid argument")) &&
+          msg.toLowerCase().includes("thinking");
+        if (isThinkingReject && !strippedThinking && request.config?.thinkingConfig) {
+          strippedThinking = true;
+          const { thinkingConfig, ...restConfig } = request.config;
+          request = { ...request, config: restConfig };
+          continue; // retry same model without thinkingConfig
+        }
+        // If THIS model is unavailable for the key (404 / not found / not
+        // supported / permission), don't abort — fall through to the NEXT model
+        // in the list. This makes `models` a real fallback chain and prevents a
+        // single bad/unavailable model id from breaking all generation.
+        const lower = msg.toLowerCase();
+        const isModelUnavailable =
+          msg.includes("404") ||
+          lower.includes("not_found") ||
+          lower.includes("not found") ||
+          lower.includes("is not supported") ||
+          lower.includes("does not exist") ||
+          lower.includes("permission_denied") ||
+          lower.includes("permission denied");
+        if (isModelUnavailable) break; // stop retrying this model, try the next
+
         const isRateLimit =
           msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED");
         const transient =
@@ -1538,15 +1624,22 @@ ${JSON.stringify(worksheet)}`;
       config: {
         responseMimeType: "application/json",
         responseSchema: schema,
-        thinkingConfig: { thinkingBudget: 96 },
+        // Rewording, not deep reasoning — disable thinking to cut latency.
+        thinkingConfig: { thinkingBudget: 0 },
       },
     });
     const text = res.text;
     if (!text) throw new Error("Empty response");
     return JSON.parse(text);
   } catch (err: any) {
-    if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
-      return callAiProxy('relevelWorksheet', JSON.stringify(worksheet), { targetLexile, subject, yearGroup });
+    // In the browser, fall back to the server proxy on ANY failure.
+    if (typeof window !== 'undefined') {
+      try {
+        const viaProxy = await callAiProxy('relevelWorksheet', JSON.stringify(worksheet), { targetLexile, subject, yearGroup });
+        if (viaProxy && (viaProxy as any).sections) return viaProxy;
+      } catch (proxyErr) {
+        console.error('Re-level proxy fallback failed:', proxyErr);
+      }
     }
     throw err;
   }
@@ -1583,7 +1676,7 @@ export async function generateInteractiveSortingGame(
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3.5-flash",
       contents: mainPrompt,
       config: {
         responseMimeType: "application/json",
@@ -1663,7 +1756,7 @@ export async function askAI(question: string, history: ChatTurn[] = []): Promise
     ];
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-3.5-flash",
       contents,
       config: { systemInstruction },
     });

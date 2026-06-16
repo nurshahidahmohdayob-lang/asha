@@ -652,6 +652,13 @@ function qCats(q){
     });
     h+='</div>';
   });
+  var __qTotal=(WS.sections||[]).reduce(function(n,s){return n+((s.questions||[]).length);},0);
+  if(__qTotal===0){
+    h+='<div class="card" style="border:2px solid #f0a0c8;background:#fff5fb"><h2>⚠️ No questions found</h2>'+
+       '<div class="ins">This worksheet opened with no questions (sections detected: '+((WS.sections||[]).length)+'). '+
+       'Generate or add questions in the app, then click “Open Interactive HTML” again.</div></div>';
+    try{console.warn("[Zera] Interactive worksheet opened with EMPTY content. WS =",WS);}catch(e){}
+  }
   byId("paper").innerHTML=h;
 })();
 
@@ -785,6 +792,512 @@ function showTab(which){
 </script>
 </body>
 </html>`;
+
+// ===== Colourful interactive worksheet (Keyword-Detective style) =====
+// Builds a self-contained, offline HTML worksheet from a worksheet object.
+// Rendered inside an isolated iframe (srcDoc), so its class names never clash
+// with the app.
+// Six selectable worksheet themes for the interactive worksheet.
+const ZTHEMES: Record<string, any> = {
+  detective: { name: "Detective", icon: "🕵️", layout: "stack", bg: "#eef2ff", border: "#2563eb", tx: "#1d4ed8", ty: "#16a34a", steps: "#16a34a", mascot: "🕵️🔍", reflect: "linear-gradient(90deg,#2563eb,#7c3aed)", pal: ["#7c3aed", "#2563eb", "#16a34a", "#f97316", "#ec4899", "#0d9488"] },
+  rainbow: { name: "Rainbow", icon: "🌈", layout: "grid", bg: "#fffbeb", border: "#f59e0b", tx: "#db2777", ty: "#7c3aed", steps: "#db2777", mascot: "🌈✨", reflect: "linear-gradient(90deg,#f59e0b,#ec4899)", pal: ["#ef4444", "#f97316", "#eab308", "#16a34a", "#2563eb", "#7c3aed"] },
+  ocean: { name: "Ocean", icon: "🌊", layout: "stack", bg: "#ecfeff", border: "#0891b2", tx: "#0e7490", ty: "#2563eb", steps: "#0891b2", mascot: "🌊🐠", reflect: "linear-gradient(90deg,#0891b2,#2563eb)", pal: ["#0891b2", "#0ea5e9", "#2563eb", "#0d9488", "#6366f1", "#06b6d4"] },
+  sunset: { name: "Sunset", icon: "🌅", layout: "grid", bg: "#fff1f2", border: "#fb7185", tx: "#e11d48", ty: "#f59e0b", steps: "#fb7185", mascot: "🌅🦩", reflect: "linear-gradient(90deg,#fb7185,#f59e0b)", pal: ["#e11d48", "#f43f5e", "#f97316", "#f59e0b", "#d946ef", "#ec4899"] },
+  forest: { name: "Forest", icon: "🌳", layout: "stack", bg: "#f0fdf4", border: "#16a34a", tx: "#15803d", ty: "#ca8a04", steps: "#15803d", mascot: "🌳🦉", reflect: "linear-gradient(90deg,#15803d,#65a30d)", pal: ["#15803d", "#16a34a", "#65a30d", "#ca8a04", "#0d9488", "#4d7c0f"] },
+  candy: { name: "Candy", icon: "🍭", layout: "grid", bg: "#fdf4ff", border: "#d946ef", tx: "#c026d3", ty: "#db2777", steps: "#d946ef", mascot: "🍭🦄", reflect: "linear-gradient(90deg,#d946ef,#ec4899)", pal: ["#c026d3", "#db2777", "#ec4899", "#a855f7", "#8b5cf6", "#f472b6"] },
+  template: { name: "Template", icon: "📊", layout: "table", bg: "#f8fafc", border: "#7c3aed", tx: "#6d28d9", ty: "#0d9488", steps: "#7c3aed", mascot: "📝✅", reflect: "linear-gradient(90deg,#7c3aed,#0d9488)", pal: ["#7c3aed", "#2563eb", "#16a34a", "#f97316", "#ec4899", "#0d9488"] },
+  doodle: { name: "Doodle", icon: "✏️", layout: "doodle", bg: "#ffffff", border: "#111111", tx: "#111111", ty: "#111111", steps: "#111111", mascot: "✏️🐱", reflect: "linear-gradient(90deg,#111,#111)", pal: ["#111111", "#111111", "#111111", "#111111", "#111111", "#111111"], extraCss: 'body{background:#fafafa}.sheet{border:3px dashed #111;box-shadow:6px 6px 0 #e5e5e5}.title{-webkit-text-stroke:0;color:#111}.subtitle{background:#fff;border:2px dashed #111;color:#111}.steps{border:2.5px dashed #111;background:#fff}.steps h3{background:#111}.steps li:before{background:#111}.secins{color:#333}.opt{border:2px solid #111;border-radius:18px 6px 16px 8px/8px 16px 6px 18px;color:#111;background:#fff}.opt .ol{border-color:#111;color:#111}.opt.on{background:#111;color:#fff}.opt.on .ol{background:#fff;color:#111}.tf{border:2.5px solid #111;color:#111}.tf-t.on,.tf-f.on{background:#111;color:#fff;border-color:#111}.lines .ln{border-bottom:2px dotted #111}.reflect{border:2.5px dashed #111}.reflect h3{background:#111}.reflect textarea{border-color:#111}.foot{border:2.5px dashed #111;background:#fff;color:#111}.btn{border:2px solid #111}.meta input{border-color:#111;color:#111}' },
+  dark: { name: "Dark", icon: "🌙", layout: "dark", bg: "#0f172a", border: "#38bdf8", tx: "#38bdf8", ty: "#4ade80", steps: "#1e40af", mascot: "🌙⭐", reflect: "linear-gradient(90deg,#38bdf8,#818cf8)", pal: ["#818cf8", "#38bdf8", "#4ade80", "#fbbf24", "#f472b6", "#2dd4bf"], extraCss: 'body{background:#0f172a}.sheet{background:#1e293b;border-color:#38bdf8;box-shadow:0 20px 50px rgba(0,0,0,.5)}.steps{background:#0f172a;border-color:#334155}.steps li{color:#cbd5e1}.meta label{color:#cbd5e1}.meta input{color:#7dd3fc;border-color:#475569}.passage{background:#0f172a;border-color:#475569;color:#cbd5e1}.secins{color:#94a3b8}.qrow{background:#0f172a;border-color:#334155}.qtext{color:#f1f5f9}.opt{background:#1e293b;border-color:#334155;color:#e2e8f0}.tf{background:#1e293b;border-color:#334155;color:#e2e8f0}.lines .ln{border-color:#64748b}.reflect{border-color:#38bdf8}.reflect p{color:#e2e8f0}.reflect textarea{background:#0f172a;border-color:#475569;color:#e2e8f0}.foot{background:#0f172a;border-color:#475569;color:#cbd5e1}.btn.print,.btn.reset{background:#1e293b;color:#7dd3fc;border-color:#475569}.qtable td{border-color:#334155}.qtable .td-q{color:#f1f5f9}' },
+  notebook: { name: "Notebook", icon: "📓", layout: "notebook", bg: "#e7eefb", border: "#f87171", tx: "#1d4ed8", ty: "#dc2626", steps: "#2563eb", mascot: "📓✏️", reflect: "linear-gradient(90deg,#2563eb,#7c3aed)", pal: ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0d9488"], extraCss: '.sheet{background:repeating-linear-gradient(#ffffff,#ffffff 31px,#cfe0ff 32px);border:3px solid #cbd5e1;border-left:6px solid #f87171;border-radius:8px;padding-left:48px}.title{font-family:"Comic Sans MS","Comic Sans",cursive}.secpill{font-family:"Comic Sans MS",cursive}.qrow{background:rgba(255,255,255,.8);border-style:dashed}.opt{background:rgba(255,255,255,.88)}' },
+  comic: { name: "Comic", icon: "💥", layout: "comic", bg: "#fde68a", border: "#111111", tx: "#dc2626", ty: "#2563eb", steps: "#111111", mascot: "💥🦸", reflect: "linear-gradient(90deg,#dc2626,#2563eb)", pal: ["#dc2626", "#2563eb", "#16a34a", "#f59e0b", "#7c3aed", "#db2777"], extraCss: '.sheet{border:5px solid #111111;border-radius:10px;box-shadow:12px 12px 0 #111111}.title{-webkit-text-stroke:1.5px #111111;letter-spacing:0}.steps{border:3px solid #111111;box-shadow:6px 6px 0 #111111;border-radius:8px}.secpill{border:3px solid #111111;box-shadow:4px 4px 0 #111111}.qrow{border:3px solid #111111;border-left-width:9px;box-shadow:6px 6px 0 #111111;border-radius:8px}.opt{border:2.5px solid #111111;border-radius:7px;box-shadow:3px 3px 0 #111111}.opt.on{box-shadow:none}.tf{border:3px solid #111111;border-radius:7px;box-shadow:4px 4px 0 #111111}.reflect{border:3px solid #111111;box-shadow:8px 8px 0 #111111}.foot{border:3px solid #111111;box-shadow:4px 4px 0 #111111}.btn{border:2.5px solid #111111;box-shadow:3px 3px 0 #111111}' },
+  exam: { name: "Exam", icon: "📝", layout: "exam", bg: "#eff6ff", border: "#1d4ed8", tx: "#1e3a8a", ty: "#0891b2", steps: "#1d4ed8", mascot: "📝✅", reflect: "linear-gradient(90deg,#1d4ed8,#16a34a)", pal: ["#2563eb", "#16a34a", "#7c3aed", "#f97316", "#ec4899", "#0d9488"] },
+  activity: { name: "Activity", icon: "🎯", layout: "activity", bg: "#eef6ff", border: "#3b82f6", tx: "#1d4ed8", ty: "#16a34a", steps: "#3b82f6", mascot: "🛡️💻", reflect: "linear-gradient(90deg,#3b82f6,#22c55e)", pal: ["#3b82f6", "#16a34a", "#f97316", "#a855f7", "#ec4899", "#0d9488"] },
+};
+// One design per DISTINCT layout/look — recolor-only duplicates removed.
+const ZDESIGN_LIST = ["detective", "exam", "activity", "template", "rainbow", "doodle", "comic", "notebook", "dark"];
+function zEsc(s: any): string {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+// Map a sort/cut-out item label to a representative emoji icon (for the
+// "File or Not a File?" style cut-out cards). Falls back to 🧩.
+const ZICON_MAP: [RegExp, string][] = [
+  [/document|\bfile\b|\bdoc\b|essay|letter|report|paper\b/, "📄"],
+  [/picture|image|photo|jpeg|\bpng\b/, "🖼️"],
+  [/video|movie|film|\bmp4\b/, "🎬"],
+  [/\bmouse\b/, "🖱️"],
+  [/keyboard/, "⌨️"],
+  [/monitor|screen|display/, "🖥️"],
+  [/folder|directory/, "📁"],
+  [/headphone|headset|earphone/, "🎧"],
+  [/laptop|computer|\bpc\b/, "💻"],
+  [/phone|mobile|tablet/, "📱"],
+  [/printer/, "🖨️"],
+  [/speaker/, "🔊"],
+  [/camera/, "📷"],
+  [/email|mail/, "✉️"],
+  [/website|internet|browser|\bweb\b/, "🌐"],
+  [/song|music|audio|\bmp3\b/, "🎵"],
+  [/\bdog\b|puppy/, "🐶"],
+  [/\bcat\b|kitten/, "🐱"],
+  [/fish/, "🐟"],
+  [/bird/, "🐦"],
+  [/butterfly|insect|bug/, "🦋"],
+  [/tree|plant/, "🌳"],
+  [/flower/, "🌸"],
+  [/rock|stone|mineral/, "🪨"],
+  [/\bcar\b|vehicle|truck/, "🚗"],
+  [/\bsun\b/, "☀️"],
+  [/\bmoon\b/, "🌙"],
+  [/\bstar/, "⭐"],
+  [/water|rain|liquid/, "💧"],
+  [/\bice\b|snow|frozen/, "❄️"],
+  [/\bbook/, "📚"],
+  [/apple|fruit|food|\beat/, "🍎"],
+  [/number|\bmath|\bsum\b|add|multiply/, "🔢"],
+  [/animal|mammal/, "🐾"],
+  [/\brobot|machine/, "🤖"],
+  [/house|home|building/, "🏠"],
+  [/\bball\b|sport|game/, "⚽"],
+];
+function zIcon(s: any): string {
+  const t = String(s ?? "").toLowerCase();
+  for (const [re, em] of ZICON_MAP) if (re.test(t)) return em;
+  return "🧩";
+}
+function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detective"): string {
+  const T = ZTHEMES[themeKey] || ZTHEMES.detective;
+  const PAL: string[] = T.pal;
+  // Per request: do NOT show the topic description or section instructions in
+  // the worksheet — only the questions/activities themselves.
+  const desc = "";
+  const passage = String(ws?.readingPassage || "").trim();
+  const sections: any[] = (ws?.sections || []).map((s: any) => ({
+    ...s,
+    instructions: "",
+  }));
+  const words = String(title || "Worksheet").split(/\s+/);
+  const mid = Math.ceil(words.length / 2);
+  const tA = words.slice(0, mid).join(" ");
+  const tB = words.slice(mid).join(" ");
+
+  const renderAnswer = (q: any): string => {
+    const t = String(q?.type || "").toLowerCase();
+    const opts: string[] = q?.options || [];
+    const isTF =
+      t === "true-false" ||
+      (t.includes("true") && t.includes("false")) ||
+      (opts.length === 2 &&
+        opts.map((o) => String(o).toLowerCase()).sort().join(",") ===
+          "false,true");
+    if (t.includes("sort") || t.includes("cut") || t.includes("paste")) {
+      // Build CLEAN category headers — take only the category names after
+      // "into", stop at any colon (item lists usually follow), strip "(...)"
+      // answer hints, and drop long fragments (those are items, not labels).
+      // This stops the columns from leaking the answers; the items stay in the
+      // cut-out pool for students to sort and write in themselves.
+      let afterInto = (String(q?.text || "").match(/into\s+([^.?:]+)/i) || [])[1] || "";
+      afterInto = afterInto.replace(/\([^)]*\)/g, "");
+      let cats: string[] = afterInto
+        .split(/,|\band\b|\bor\b/i)
+        .map((s) => s.trim().replace(/[:;,.]+$/, ""))
+        .filter((s) => s && s.split(/\s+/).length <= 4);
+      if (cats.length < 2) cats = ["Group 1", "Group 2"];
+      cats = cats.slice(0, 4);
+      const colC = ["#16a34a", "#dc2626", "#2563eb", "#f97316"];
+      let h = '<div class="sortwrap"><div class="sortins"><span class="insbadge">Instructions</span> Tap a picture, then tap the column it belongs in.</div>';
+      h += '<div class="sorttable">';
+      cats.forEach((c, i) => {
+        h += `<div class="sortcol" onclick="zDrop(this)"><div class="sorthd" style="background:${colC[i % 4]}">${zEsc(c)}</div><div class="dropzone"></div></div>`;
+      });
+      h += '</div><div class="cutbar"><span>✂️ Cut-Out Pictures</span></div><div class="cutpool">';
+      opts.forEach((o) => {
+        h += `<div class="cutcard" onclick="zPickCard(this)"><div class="cutic">${zIcon(o)}</div><div class="cutlb">${zEsc(o)}</div></div>`;
+      });
+      h += "</div></div>";
+      return h;
+    }
+    if (isTF) {
+      return '<div class="tfrow"><button class="tf tf-t" onclick="zPick(this)"><span>✔</span> TRUE</button><button class="tf tf-f" onclick="zPick(this)"><span>✘</span> FALSE</button></div>';
+    }
+    if (opts.length) {
+      let h = '<div class="opts">';
+      opts.forEach((o, i) => {
+        h += `<button class="opt" onclick="zPick(this)"><span class="ol">${String.fromCharCode(65 + i)}</span><span>${zEsc(o)}</span></button>`;
+      });
+      h += "</div>";
+      return h;
+    }
+    return '<div class="lines"><span class="ln"></span><span class="ln"></span></div>';
+  };
+
+  const layout: string = T.layout || "stack";
+  let qn = 0;
+  let rows = "";
+  if (layout === "table") {
+    // Structured grid (like the Keyword-Detective table)
+    rows += '<table class="qtable"><thead><tr><th class="th-n">#</th><th class="th-q"><span class="thic">❓</span> Question</th><th class="th-a"><span class="thic">✍️</span> Your Answer</th></tr></thead><tbody>';
+    sections.forEach((sec: any, si: number) => {
+      rows += `<tr class="trsec" style="--sc:${PAL[si % PAL.length]}"><td colspan="3">📌 ${zEsc(sec?.title || "Activity")}${sec?.instructions ? ` <span class="trins">— ${zEsc(sec.instructions)}</span>` : ""}</td></tr>`;
+      (sec?.questions || []).forEach((q: any) => {
+        qn++;
+        const c = PAL[(qn - 1) % PAL.length];
+        rows += `<tr class="qtr" style="--qc:${c}"><td class="td-n"><span class="tnum">${qn}</span></td><td class="td-q">${zEsc(q?.text)}</td><td class="td-a">${renderAnswer(q)}</td></tr>`;
+      });
+    });
+    rows += "</tbody></table>";
+  } else if (layout === "doodle") {
+    // Hand-drawn black & white printable
+    sections.forEach((sec: any) => {
+      rows += `<div class="dsec">✏️ ${zEsc(sec?.title || "Activity")}</div>`;
+      if (sec?.instructions) rows += `<div class="dins">${zEsc(sec.instructions)}</div>`;
+      (sec?.questions || []).forEach((q: any) => {
+        qn++;
+        rows += `<div class="dbox"><div class="dq"><span class="dnum">${qn}</span><span>${zEsc(q?.text)}</span></div>${renderAnswer(q)}</div>`;
+      });
+    });
+  } else if (layout === "exam") {
+    // Multi-part exam: Part A multiple choice, Part B true/false, Part C written
+    const all: any[] = [];
+    sections.forEach((s: any) => (s?.questions || []).forEach((q: any) => all.push(q)));
+    const isTFq = (q: any) => {
+      const t = String(q?.type || "").toLowerCase();
+      const o: string[] = q?.options || [];
+      return (t.includes("true") && t.includes("false")) || t === "true-false" ||
+        (o.length === 2 && o.map((x) => String(x).toLowerCase()).sort().join(",") === "false,true");
+    };
+    const isMCQ = (q: any) => {
+      const t = String(q?.type || "").toLowerCase();
+      return !isTFq(q) && (q?.options || []).length > 0 && !/sort|cut|paste|match/.test(t);
+    };
+    const mcq = all.filter(isMCQ);
+    const tf = all.filter(isTFq);
+    const rest = all.filter((q) => !isMCQ(q) && !isTFq(q));
+    rows += `<div class="marksbadge"><span>Total Marks</span><b>${all.length}</b></div>`;
+    let n = 0;
+    if (mcq.length) {
+      rows += `<div class="part" style="--pc:#2563eb">PART A: MULTIPLE CHOICE (${mcq.length} marks) — Circle the correct answer.</div><div class="examgrid">`;
+      mcq.forEach((q) => {
+        n++;
+        rows += `<div class="examq"><div class="eqt"><span class="eqn">${n}.</span> ${zEsc(q?.text)}</div><div class="eopts">${(q?.options || []).map((o: string, i: number) => `<button class="eopt" onclick="zPick(this)"><span class="eol">${String.fromCharCode(65 + i)}</span><span>${zEsc(o)}</span></button>`).join("")}</div></div>`;
+      });
+      rows += `</div>`;
+    }
+    if (tf.length) {
+      rows += `<div class="part" style="--pc:#16a34a">PART B: TRUE OR FALSE (${tf.length} marks) — Tap the box for T or F.</div><div class="tfgrid">`;
+      tf.forEach((q) => {
+        n++;
+        rows += `<div class="tfq"><span><span class="eqn">${n}.</span> ${zEsc(q?.text)}</span><button class="tfbox" onclick="zCycleTF(this)"></button></div>`;
+      });
+      rows += `</div>`;
+    }
+    if (rest.length) {
+      rows += `<div class="part" style="--pc:#7c3aed">PART C: WRITTEN ANSWERS (${rest.length} marks) — Write your answer.</div>`;
+      rest.forEach((q) => {
+        n++;
+        rows += `<div class="examw"><div class="eqt"><span class="eqn">${n}.</span> ${zEsc(q?.text)}</div>${renderAnswer(q)}</div>`;
+      });
+    }
+  } else if (layout === "activity") {
+    // Colourful numbered activity boxes
+    sections.forEach((sec: any, si: number) => {
+      const c = PAL[si % PAL.length];
+      rows += `<div class="actbox" style="--ac:${c}"><div class="acthd"><span class="actnum">${si + 1}</span> ${zEsc(sec?.title || "Activity")}</div>`;
+      if (sec?.instructions) rows += `<div class="actins">${zEsc(sec.instructions)}</div>`;
+      (sec?.questions || []).forEach((q: any) => {
+        qn++;
+        rows += `<div class="actq"><div class="aqt">${zEsc(q?.text)}</div>${renderAnswer(q)}</div>`;
+      });
+      rows += `</div>`;
+    });
+  } else if (layout === "comic") {
+    // Comic panels: starburst number, speech-bubble question, 2-col panels
+    sections.forEach((sec: any, si: number) => {
+      rows += `<div class="comicban" style="--cc:${PAL[si % PAL.length]}">${zEsc(sec?.title || "Activity")}</div>`;
+      if (sec?.instructions) rows += `<div class="secins">${zEsc(sec.instructions)}</div>`;
+      rows += '<div class="comicgrid">';
+      (sec?.questions || []).forEach((q: any) => {
+        qn++;
+        rows += `<div class="cpanel"><div class="cburst">${qn}</div><div class="cbubble">${zEsc(q?.text)}</div>${renderAnswer(q)}</div>`;
+      });
+      rows += "</div>";
+    });
+  } else if (layout === "notebook") {
+    // Handwritten ruled-paper: number + question on a line, ruled answer space
+    sections.forEach((sec: any) => {
+      rows += `<div class="nbsec">${zEsc(sec?.title || "Activity")}</div>`;
+      if (sec?.instructions) rows += `<div class="nbins">${zEsc(sec.instructions)}</div>`;
+      (sec?.questions || []).forEach((q: any) => {
+        qn++;
+        rows += `<div class="nbq"><span class="nbnum">${qn}.</span> ${zEsc(q?.text)}</div><div class="nbans">${renderAnswer(q)}</div>`;
+      });
+    });
+  } else if (layout === "dark") {
+    // Quiz-app flashcards: glowing chip, big question, full-width pill options
+    sections.forEach((sec: any, si: number) => {
+      rows += `<div class="dksec" style="--dc:${PAL[si % PAL.length]}">${zEsc(sec?.title || "Activity")}</div>`;
+      if (sec?.instructions) rows += `<div class="dkins">${zEsc(sec.instructions)}</div>`;
+      (sec?.questions || []).forEach((q: any) => {
+        qn++;
+        const c = PAL[(qn - 1) % PAL.length];
+        rows += `<div class="dkcard" style="--dc:${c}"><div class="dkchip">Q${qn}</div><div class="dkq">${zEsc(q?.text)}</div>${renderAnswer(q)}</div>`;
+      });
+    });
+  } else {
+    // stack (single column) or grid (2-column bento)
+    const wrap = layout === "grid";
+    sections.forEach((sec: any, si: number) => {
+      rows += `<div class="secpill" style="--sc:${PAL[si % PAL.length]}">${zEsc(sec?.title || "Activity")}</div>`;
+      if (sec?.instructions)
+        rows += `<div class="secins">${zEsc(sec.instructions)}</div>`;
+      if (wrap) rows += '<div class="qgrid">';
+      (sec?.questions || []).forEach((q: any) => {
+        qn++;
+        const c = PAL[(qn - 1) % PAL.length];
+        rows += `<div class="qrow" style="--qc:${c}"><div class="qnum">${qn}</div><div class="qbody"><div class="qtext">${zEsc(q?.text)}</div>${renderAnswer(q)}</div></div>`;
+      });
+      if (wrap) rows += "</div>";
+    });
+  }
+  const passageHtml = passage ? `<div class="passage">📖 ${zEsc(passage)}</div>` : "";
+  const subtitleHtml = desc ? `<div class="subtitle">${zEsc(desc)}</div>` : "";
+
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>${zEsc(title)} — Interactive Worksheet</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Baloo 2','Segoe UI',system-ui,sans-serif;background:${T.bg};color:#1e293b;padding:22px 14px 60px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.sheet{max-width:960px;margin:0 auto;background:#fff;border:6px solid ${T.border};border-radius:30px;padding:26px 26px 30px;box-shadow:0 20px 50px rgba(0,0,0,.12)}
+.kd-head{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;margin-bottom:18px}
+.titlewrap{flex:1 1 380px}
+.brandrow{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.brandrow img{height:30px}
+.title{font-size:44px;line-height:.95;font-weight:900;letter-spacing:-1px;text-transform:uppercase}
+.title .x{color:${T.tx}} .title .y{color:${T.ty}}
+.mascot{font-size:32px;margin-left:6px}
+.subtitle{display:inline-block;margin-top:10px;background:#fef08a;color:#854d0e;font-weight:800;font-size:14px;padding:7px 14px;border-radius:12px}
+.steps{flex:1 1 280px;max-width:340px;border:3px solid #cbd5e1;border-radius:18px;overflow:hidden;background:#f8fafc}
+.steps h3{background:${T.steps};color:#fff;font-size:15px;font-weight:900;text-align:center;padding:8px;letter-spacing:1px}
+.steps ol{list-style:none;padding:12px 14px;counter-reset:s}
+.steps li{counter-increment:s;font-size:12.5px;font-weight:700;color:#334155;display:flex;gap:8px;margin:7px 0;align-items:flex-start}
+.steps li:before{content:counter(s);background:${T.steps};color:#fff;font-weight:900;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;font-size:11px}
+.meta{display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 20px}
+.meta label{flex:1;min-width:160px;font-weight:800;font-size:13px;color:#475569;display:flex;align-items:center;gap:8px}
+.meta input{flex:1;border:none;border-bottom:2.5px dotted #94a3b8;font-family:inherit;font-size:14px;font-weight:700;padding:4px;outline:none;color:#1d4ed8}
+.passage{background:#f1f5f9;border:2px dashed #94a3b8;border-radius:14px;padding:14px;font-size:14px;line-height:1.6;margin-bottom:18px;font-weight:600;color:#334155}
+.secpill{display:inline-block;background:var(--sc,#7c3aed);color:#fff;font-weight:900;font-size:14px;text-transform:uppercase;letter-spacing:.5px;padding:8px 18px;border-radius:999px;margin:18px 0 8px;box-shadow:0 5px 12px rgba(0,0,0,.12)}
+.secins{font-size:13px;font-weight:700;font-style:italic;color:#64748b;margin-bottom:12px}
+.qrow{display:flex;gap:14px;border:2.5px solid #e2e8f0;border-left:7px solid var(--qc,#7c3aed);border-radius:16px;padding:14px 16px;margin-bottom:12px;background:#fff;break-inside:avoid}
+.qnum{flex:none;width:34px;height:34px;border-radius:50%;background:var(--qc,#7c3aed);color:#fff;font-weight:900;display:flex;align-items:center;justify-content:center;font-size:16px}
+.qbody{flex:1;min-width:0}
+.qtext{font-weight:800;font-size:15.5px;color:#1e293b;margin-bottom:11px}
+.opts{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.opt{display:flex;align-items:center;gap:10px;border:2px solid #e2e8f0;background:#fff;border-radius:12px;padding:9px 12px;font-family:inherit;font-size:13.5px;font-weight:700;color:#334155;cursor:pointer;text-align:left;transition:.15s}
+.opt:hover{border-color:var(--qc,#7c3aed);transform:translateY(-1px)}
+.opt .ol{flex:none;width:24px;height:24px;border-radius:50%;border:2px solid var(--qc,#7c3aed);color:var(--qc,#7c3aed);font-weight:900;display:flex;align-items:center;justify-content:center;font-size:12px}
+.opt.on{background:var(--qc,#7c3aed);color:#fff;border-color:var(--qc,#7c3aed)}
+.opt.on .ol{background:#fff;color:var(--qc,#7c3aed)}
+.tfrow{display:flex;gap:12px}
+.tf{flex:1;border:2.5px solid #e2e8f0;background:#fff;border-radius:12px;padding:11px;font-family:inherit;font-weight:900;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:.15s;color:#334155}
+.tf-t.on{background:#16a34a;color:#fff;border-color:#16a34a}
+.tf-f.on{background:#dc2626;color:#fff;border-color:#dc2626}
+.lines{display:flex;flex-direction:column;gap:14px;margin-top:4px}
+.lines .ln{display:block;border-bottom:2.5px dotted #94a3b8;height:4px}
+.sortins{font-size:13px;font-weight:700;color:#334155;margin-bottom:10px}
+.insbadge{background:#fde047;color:#854d0e;font-weight:900;font-size:12px;padding:3px 10px;border-radius:8px;margin-right:6px}
+.sorttable{display:flex;border:3px solid #1e293b;border-radius:20px;overflow:hidden;margin-top:4px;background:#fff}
+.sortcol{flex:1;display:flex;flex-direction:column;min-height:240px;cursor:pointer}
+.sortcol+.sortcol{border-left:3px solid #1e293b}
+.sorthd{color:#fff;font-weight:900;text-align:center;padding:13px 10px;text-transform:uppercase;font-size:17px;letter-spacing:.5px}
+.dropzone{flex:1;display:flex;flex-wrap:wrap;gap:10px;align-content:flex-start;padding:14px;min-height:180px}
+.dropzone:empty:before{content:"drop here";color:#cbd5e1;font-weight:800;font-size:12px;font-style:italic;text-transform:uppercase;letter-spacing:1px;margin:auto}
+.cutbar{display:flex;align-items:center;gap:10px;margin:20px 0 14px}
+.cutbar:before,.cutbar:after{content:"";flex:1;border-top:2.5px dashed #7c3aed}
+.cutbar span{background:#5b21b6;color:#fff;font-weight:900;font-size:13px;padding:8px 18px;border-radius:999px}
+.cutpool{display:flex;flex-wrap:wrap;gap:13px;justify-content:center}
+.cutcard{border:2.5px dashed #94a3b8;border-radius:16px;padding:14px 12px 10px;width:128px;text-align:center;cursor:pointer;background:#fff;transition:.15s}
+.cutcard:hover{border-color:#7c3aed;transform:translateY(-2px);box-shadow:0 6px 14px rgba(0,0,0,.08)}
+.cutcard.active{border-style:solid;border-color:#7c3aed;background:#f3eaff;box-shadow:0 0 0 4px #ede9fe}
+.cutic{font-size:48px;line-height:1.05}
+.cutlb{font-weight:800;font-size:13.5px;margin-top:7px;color:#1e293b}
+.dropzone .cutcard{width:108px;padding:9px 7px 6px}
+.dropzone .cutcard .cutic{font-size:34px}
+.reflect{margin-top:24px;border:3px solid #2563eb;border-radius:18px;overflow:hidden}
+.reflect h3{background:${T.reflect};color:#fff;font-weight:900;font-size:15px;padding:9px 16px;letter-spacing:1px}
+.reflect{border-color:${T.border}}
+.reflect .rb{padding:14px 16px}
+.reflect p{font-weight:800;font-size:14px;color:#334155;margin:4px 0 8px}
+.reflect textarea{width:100%;min-height:64px;border:2px solid #cbd5e1;border-radius:12px;padding:10px;font-family:inherit;font-size:13.5px;font-weight:600;resize:vertical;outline:none}
+.reflect textarea:focus{border-color:#2563eb}
+.foot{margin-top:22px;border:2.5px dashed #cbd5e1;border-radius:14px;padding:12px 16px;font-weight:800;font-size:13.5px;color:#475569;text-align:center;background:#fdf4ff}
+.bar{display:flex;gap:10px;justify-content:center;margin-top:20px}
+.btn{border:none;cursor:pointer;border-radius:14px;padding:12px 20px;font-family:inherit;font-weight:800;font-size:14px;box-shadow:0 8px 18px rgba(0,0,0,.12)}
+.btn.print{background:#fff;color:#2563eb;border:2px solid #bfdbfe}
+.btn.reset{background:#fff;color:#7c3aed;border:2px solid #ddd6fe}
+/* layout: 2-column bento grid */
+.qgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:4px}
+.qgrid .qrow{margin-bottom:0;flex-direction:column}
+.qgrid .qrow .qnum{margin-bottom:6px}
+/* layout: table / template — polished Keyword-Detective look */
+.qtable{width:100%;border-collapse:separate;border-spacing:0;border:3px solid #c7d2fe;border-radius:20px;overflow:hidden;margin-top:8px;box-shadow:0 12px 30px rgba(99,102,241,.14)}
+.qtable thead th{color:#fff;font-size:12.5px;font-weight:900;text-transform:uppercase;letter-spacing:.7px;padding:14px 14px;text-align:left;vertical-align:middle}
+.qtable thead th.th-n{background:#7c3aed;text-align:center;width:54px}
+.qtable thead th.th-q{background:#2563eb;width:42%;border-left:2px solid rgba(255,255,255,.35)}
+.qtable thead th.th-a{background:#0d9488;border-left:2px solid rgba(255,255,255,.35)}
+.thic{font-size:15px;margin-right:3px}
+.qtable td{border-top:2px solid #eef2ff;padding:15px 14px;vertical-align:top}
+.qtable td+td{border-left:2px solid #eef2ff}
+.qtable .qtr:nth-child(odd) td{background:#fbfaff}
+.qtable .qtr:hover td{background:#f1f5ff}
+.qtable .td-n{text-align:center}
+.qtable .td-q{font-weight:800;color:#1e293b;font-size:14.5px;line-height:1.4}
+.tnum{display:inline-flex;width:34px;height:34px;border-radius:50%;background:var(--qc,#7c3aed);color:#fff;font-weight:900;align-items:center;justify-content:center;font-size:15px;box-shadow:0 0 0 4px color-mix(in srgb,var(--qc,#7c3aed) 18%,#fff)}
+.trsec td{background:linear-gradient(90deg,var(--sc,#7c3aed),color-mix(in srgb,var(--sc,#7c3aed) 65%,#fff));color:#fff;font-weight:900;text-transform:uppercase;font-size:13.5px;letter-spacing:.6px;padding:11px 15px}
+.trins{font-weight:600;font-style:italic;text-transform:none;opacity:.95}
+.qtable .opts{grid-template-columns:1fr}
+.qtable .lines{gap:16px}
+/* layout: doodle (hand-drawn b/w) */
+.dsec{display:inline-block;background:#111;color:#fff;font-weight:900;text-transform:uppercase;padding:7px 16px;border-radius:4px;transform:rotate(-1.2deg);margin:18px 0 8px;font-size:13px;letter-spacing:.5px}
+.dins{font-style:italic;font-weight:700;font-size:13px;margin-bottom:10px;color:#333}
+.dbox{border:2.5px solid #111;border-radius:30px 12px 28px 14px/14px 28px 12px 30px;padding:14px 16px;margin-bottom:14px;background:#fff;break-inside:avoid}
+.dbox:nth-child(even){border-radius:12px 30px 14px 28px/28px 14px 30px 12px}
+.dq{font-weight:800;font-size:15px;display:flex;gap:11px;align-items:center;margin-bottom:11px;color:#111}
+.dnum{flex:none;width:30px;height:30px;border:2.5px solid #111;border-radius:50% 45% 55% 48%/48% 55% 45% 50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:14px}
+/* layout: exam (multi-part) */
+.marksbadge{float:right;background:#facc15;color:#713f12;border-radius:50%;width:78px;height:78px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:900;box-shadow:0 6px 16px rgba(0,0,0,.15);margin:-4px 0 6px 10px}
+.marksbadge span{font-size:9px;text-transform:uppercase;line-height:1}.marksbadge b{font-size:26px;line-height:1}
+.part{clear:both;background:var(--pc,#2563eb);color:#fff;font-weight:900;font-size:14px;padding:9px 16px;border-radius:8px;margin:18px 0 12px;letter-spacing:.3px;box-shadow:0 4px 10px rgba(0,0,0,.12)}
+.examgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.examq{border:2px solid #e2e8f0;border-radius:14px;padding:12px 14px;background:#fff}
+.eqt{font-weight:800;font-size:14px;color:#1e293b;margin-bottom:9px;line-height:1.4}
+.eqn{color:#2563eb;font-weight:900}
+.eopts{display:flex;flex-direction:column;gap:6px}
+.eopt{display:flex;align-items:center;gap:8px;border:1.5px solid #e2e8f0;background:#fff;border-radius:9px;padding:6px 10px;font-family:inherit;font-size:12.5px;font-weight:700;color:#334155;cursor:pointer;text-align:left}
+.eopt:hover{border-color:#2563eb}
+.eol{flex:none;width:20px;height:20px;border-radius:50%;border:1.5px solid #2563eb;color:#2563eb;font-weight:900;display:flex;align-items:center;justify-content:center;font-size:10px}
+.eopt.on{background:#2563eb;color:#fff;border-color:#2563eb}.eopt.on .eol{background:#fff;color:#2563eb}
+.tfgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px 18px}
+.tfq{display:flex;align-items:center;gap:10px;justify-content:space-between;border-bottom:1.5px dashed #cbd5e1;padding:6px 0;font-weight:700;font-size:13.5px;color:#334155}
+.tfbox{flex:none;width:46px;height:34px;border:2.5px solid #16a34a;border-radius:8px;background:#fff;cursor:pointer;font-weight:900;font-size:17px;color:#16a34a;display:flex;align-items:center;justify-content:center}
+.examw{border:2px solid #e2e8f0;border-radius:12px;padding:12px 14px;margin-bottom:10px;background:#fff}
+@media(max-width:620px){.examgrid,.tfgrid{grid-template-columns:1fr}}
+/* layout: activity (numbered colourful boxes) */
+.actbox{border:3px solid var(--ac,#3b82f6);border-radius:20px;padding:0 18px 16px;margin-bottom:18px;background:color-mix(in srgb,var(--ac,#3b82f6) 6%,#fff);box-shadow:0 8px 20px rgba(0,0,0,.06)}
+.acthd{display:flex;align-items:center;gap:11px;font-weight:900;font-size:16px;color:var(--ac,#3b82f6);padding:14px 0 10px;text-transform:uppercase;letter-spacing:.3px}
+.actnum{flex:none;width:32px;height:32px;border-radius:50%;background:var(--ac,#3b82f6);color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:900}
+.actins{font-size:13px;font-weight:700;font-style:italic;color:#64748b;margin-bottom:12px}
+.actq{background:#fff;border:2px solid color-mix(in srgb,var(--ac,#3b82f6) 25%,#fff);border-radius:14px;padding:12px 14px;margin-bottom:10px}
+.aqt{font-weight:800;font-size:14.5px;color:#1e293b;margin-bottom:10px}
+/* layout: comic (speech-bubble panels) */
+.comicban{background:var(--cc,#dc2626);color:#fff;font-weight:900;text-transform:uppercase;font-size:16px;padding:8px 18px;border:3px solid #111;border-radius:6px;box-shadow:5px 5px 0 #111;display:inline-block;transform:skew(-6deg);margin:20px 0 16px}
+.comicgrid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.cpanel{position:relative;border:3px solid #111;border-radius:8px;background:#fff;padding:16px 14px 14px;box-shadow:6px 6px 0 #111;margin-top:12px}
+.cburst{position:absolute;top:-15px;left:-11px;width:40px;height:40px;background:#fde047;border:3px solid #111;color:#111;font-weight:900;font-size:17px;display:flex;align-items:center;justify-content:center;border-radius:50% 45% 55% 48%/48% 55% 45% 50%;box-shadow:2px 2px 0 #111}
+.cbubble{position:relative;background:#f1f5f9;border:2.5px solid #111;border-radius:14px;padding:11px 13px;font-weight:800;font-size:14px;color:#111;margin-bottom:14px}
+.cbubble:after{content:"";position:absolute;bottom:-13px;left:26px;border:7px solid transparent;border-top-color:#111}
+.cpanel .opt{border:2px solid #111;border-radius:7px;box-shadow:2px 2px 0 #111;font-weight:800}
+.cpanel .opt.on{box-shadow:none}
+@media(max-width:620px){.comicgrid{grid-template-columns:1fr}}
+/* layout: notebook (handwritten ruled lines) */
+.nbsec{font-family:"Comic Sans MS",cursive;font-weight:900;font-size:18px;color:#1d4ed8;border-bottom:3px solid #1d4ed8;display:inline-block;margin:18px 0 6px;padding-bottom:2px}
+.nbins{font-style:italic;font-weight:700;font-size:13px;color:#dc2626;margin-bottom:8px}
+.nbq{font-family:"Comic Sans MS","Comic Sans",cursive;font-weight:700;font-size:15.5px;color:#1e293b;margin:16px 0 6px}
+.nbnum{color:#dc2626;font-weight:900}
+.nbans{margin-bottom:8px}
+.nbans .opt{background:rgba(255,255,255,.85);font-family:"Comic Sans MS",cursive}
+/* layout: dark (quiz-app flashcards) */
+.dksec{color:var(--dc,#38bdf8);font-weight:900;text-transform:uppercase;font-size:15px;letter-spacing:1px;margin:22px 0 6px;border-left:4px solid var(--dc,#38bdf8);padding-left:10px}
+.dkins{color:#94a3b8;font-style:italic;font-weight:700;font-size:13px;margin-bottom:12px}
+.dkcard{background:#0b1220;border:1px solid #1e293b;border-radius:16px;padding:16px 18px;margin-bottom:14px;box-shadow:0 0 0 1px rgba(56,189,248,.12),0 10px 30px rgba(0,0,0,.45)}
+.dkchip{display:inline-block;background:var(--dc,#38bdf8);color:#0b1220;font-weight:900;font-size:12px;padding:4px 13px;border-radius:999px;margin-bottom:11px;box-shadow:0 0 14px var(--dc,#38bdf8)}
+.dkq{font-weight:800;font-size:16px;color:#f1f5f9;margin-bottom:13px;line-height:1.4}
+.dkcard .opts{grid-template-columns:1fr;gap:9px}
+.dkcard .opt{background:#0f172a;border:1.5px solid #334155;color:#e2e8f0;border-radius:12px;padding:12px 15px}
+.dkcard .opt .ol{border-color:var(--dc,#38bdf8);color:var(--dc,#38bdf8)}
+.dkcard .opt.on{background:var(--dc,#38bdf8);color:#0b1220;border-color:var(--dc,#38bdf8)}
+.dkcard .opt.on .ol{background:#0b1220;color:var(--dc,#38bdf8)}
+.dkcard .tf{background:#0f172a;border-color:#334155;color:#e2e8f0}
+.dkcard .lines .ln{border-color:#475569}
+@media(max-width:620px){.opts{grid-template-columns:1fr}.title{font-size:32px}.qgrid{grid-template-columns:1fr}}
+.printframe{display:none}
+@page{margin:10mm}
+@media print{
+  html,body{background:#fff!important;padding:0;margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  /* drop the on-screen sheet border/shadow; the repeating frame draws the
+     border instead. Pad content so it sits inside the per-page frame. */
+  .sheet{box-shadow:none!important;border:none!important;border-radius:0;max-width:100%;margin:0;padding:9mm 9mm 0}
+  .bar{display:none!important}
+  /* a position:fixed element repeats on EVERY printed page → a clean frame
+     around every page, never split. */
+  .printframe{display:block;position:fixed;top:0;left:0;right:0;bottom:0;border:4px solid ${T.border};border-radius:14px;pointer-events:none;z-index:9999}
+  /* never split a question / card / panel across two pages */
+  .qrow,.examq,.examw,.cpanel,.dkcard,.actbox,.actq,.nbq,.nbans,.tfq,.cutcard,.dbox,.qtable tr,.reflect,.steps,.sorttable{break-inside:avoid;page-break-inside:avoid}
+  /* keep a heading with the content that follows it */
+  .secpill,.part,.comicban,.dksec,.nbsec,.acthd,.qtable thead{break-after:avoid;page-break-after:avoid}
+  /* tidy interactive chrome for paper */
+  .opt,.eopt,.tf,.cutcard,.tfbox{box-shadow:none!important}
+  textarea,.meta input{background:#fff!important}
+  /* dark theme: print on white so it doesn't flood the page with ink */
+  .dkcard{background:#fff!important;border:2px solid #94a3b8!important;box-shadow:none!important}
+  .dkq{color:#111!important}.dkcard .opt{background:#fff!important;color:#222!important;border-color:#94a3b8!important}
+}
+${T.extraCss || ""}
+</style></head>
+<body>
+<div class="printframe"></div>
+<div class="sheet">
+  <div class="kd-head">
+    <div class="titlewrap">
+      <div class="brandrow"><img src="${ZERA_LOGO_B64}" alt="Zera Education"/></div>
+      <div class="title"><span class="x">My</span> <span class="y">Worksheet</span><span class="mascot">${T.mascot}</span></div>
+      ${subtitleHtml}
+    </div>
+    <div class="steps">
+      <h3>📋 HOW TO</h3>
+      <ol>
+        <li>Read each question carefully.</li>
+        <li>Think about what you already know.</li>
+        <li>Tap to select, or write your answer on the lines.</li>
+        <li>Check your work before you finish.</li>
+        <li>Do your best and have fun! ⭐</li>
+      </ol>
+    </div>
+  </div>
+  <div class="meta">
+    <label>🧑‍🎓 Name <input placeholder="Your name"/></label>
+    <label>📅 Date <input placeholder="Today"/></label>
+    <label>🏫 Class <input placeholder="Your class"/></label>
+  </div>
+  ${passageHtml}
+  ${rows}
+  <div class="reflect">
+    <h3>💭 REFLECTION</h3>
+    <div class="rb">
+      <p>⭐ What is the most important thing you learned today?</p>
+      <textarea placeholder="Write your answer like a real scholar..."></textarea>
+    </div>
+  </div>
+  <div class="foot">⭐ Remember: take your time, think carefully, and do your best! ⭐</div>
+  <div class="bar">
+    <button class="btn print" onclick="window.print()">🖨️ Print</button>
+    <button class="btn reset" onclick="zReset()">🔁 Reset</button>
+  </div>
+</div>
+<script>
+var picked=null;
+function zPick(btn){var g=btn.parentNode;var b=g.querySelectorAll('.opt,.tf,.eopt');for(var i=0;i<b.length;i++)b[i].classList.remove('on');btn.classList.add('on');}
+function zPickCard(c){var a=document.querySelectorAll('.cutcard.active');for(var i=0;i<a.length;i++)a[i].classList.remove('active');c.classList.add('active');picked=c;}
+function zDrop(col){if(!picked)return;col.querySelector('.dropzone').appendChild(picked);picked.classList.remove('active');picked=null;}
+function zCycleTF(b){var v=b.textContent.trim();b.textContent=v===''?'T':(v==='T'?'F':'');b.style.color=b.textContent==='F'?'#dc2626':'#16a34a';b.style.borderColor=b.textContent==='F'?'#dc2626':'#16a34a';}
+function zReset(){var on=document.querySelectorAll('.opt.on,.tf.on,.eopt.on,.cutcard.active');for(var i=0;i<on.length;i++)on[i].classList.remove('on','active');var tb=document.querySelectorAll('.tfbox');for(var t=0;t<tb.length;t++){tb[t].textContent='';tb[t].style.color='#16a34a';tb[t].style.borderColor='#16a34a';}var f=document.querySelectorAll('input,textarea');for(var j=0;j<f.length;j++)f[j].value='';var pool=document.querySelector('.cutpool');if(pool){var moved=document.querySelectorAll('.dropzone .cutcard');for(var k=0;k<moved.length;k++)pool.appendChild(moved[k]);}}
+</script>
+</body></html>`;
+}
 
 // Slide design templates — every designType is a visually DISTINCT slide
 // layout (band header, hand-drawn sketch, taped paper, gradient, chalkboard…)
@@ -2822,6 +3335,33 @@ export default function App() {
 
   const [activeTheme, setActiveTheme] = useState<AppTheme>(THEMES[0]);
   const [content, setContent] = useState<EduContent | null>(null);
+
+  // Bulletproofing for "Open Interactive HTML": keep a copy of the LAST
+  // worksheet that actually had real questions, so even if content.worksheet
+  // gets reset/cleared to an empty stub before the user clicks Open, the
+  // export can still recover the real assessment. Updated whenever a worksheet
+  // with at least one real question is present in state.
+  const lastGoodWorksheetRef = useRef<any>(null);
+  useEffect(() => {
+    const ws: any = content?.worksheet;
+    const count = (ws?.sections || []).reduce(
+      (n: number, s: any) =>
+        n +
+        (s?.questions || []).filter((q: any) => {
+          const t = (q?.text || "").trim();
+          return t && t !== "Enter your question here";
+        }).length,
+      0,
+    );
+    if (count > 0) {
+      try {
+        lastGoodWorksheetRef.current = JSON.parse(JSON.stringify(ws));
+      } catch {
+        lastGoodWorksheetRef.current = ws;
+      }
+    }
+  }, [content]);
+
   const [selectedSlideElement, setSelectedSlideElement] = useState<{
     type: "title" | "bullet";
     index?: number;
@@ -4605,7 +5145,10 @@ export default function App() {
   const [interactiveDoc, setInteractiveDoc] = useState<{
     html: string;
     title: string;
+    ws?: any;
+    design?: string;
   } | null>(null);
+  const [interactiveDesign, setInteractiveDesign] = useState<string>("detective");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
   const [generatingMessage, setGeneratingMessage] = useState("Generating...");
@@ -6485,6 +7028,60 @@ export default function App() {
         targetWordCount,
       },
       basedOnSlides ? content?.slides : undefined,
+      // PHASED RENDERING: paint the worksheet as each phase lands so it feels
+      // fast — outline/passage first, then questions stream in batch by batch.
+      (partial) => {
+        if (partial.phase === "header") {
+          setGeneratingMessage(
+            partial.total > 0
+              ? `Outline ready — generating questions (0/${partial.total})…`
+              : "Generating questions…",
+          );
+        } else if (partial.phase === "questions") {
+          setGeneratingMessage(
+            `Generating questions (${partial.done}/${partial.total})…`,
+          );
+        }
+        setContent((prev) => {
+          const base: EduContent =
+            prev ??
+            ({
+              lessonTitle: partial.title,
+              subject,
+              gradeLevel: yearGroup,
+              slides: [],
+              slidesMetadata: { description: "", methodology: "" },
+              worksheet: { title: partial.title, sections: [] },
+              readingProgram: {
+                title: "",
+                description: "",
+                gradeLevel: "",
+                focusArea: "",
+                duration: "",
+                weeklyGoals: [],
+                recommendedBooks: [],
+                milestones: [],
+              },
+              metadata: { yearGroup, lexileLevel, subject },
+            } as EduContent);
+          return {
+            ...base,
+            worksheet: {
+              ...(base.worksheet || {}),
+              title: partial.title || base.worksheet?.title || "",
+              readingPassage:
+                partial.readingPassage || base.worksheet?.readingPassage || "",
+              description:
+                base.worksheet?.description || partial.description || "",
+              methodology:
+                base.worksheet?.methodology || partial.methodology || "",
+              sections: partial.sections,
+            },
+          };
+        });
+        setWorkspaceMode("worksheet");
+        setCurrentView("worksheet");
+      },
     );
     if (result) {
       const initialLevel = lexileLevel || "400-500";
@@ -21310,6 +21907,7 @@ export default function App() {
                     className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold"
                   >
                     {[
+                      "General",
                       "Year 1",
                       "Year 2",
                       "Year 3",
@@ -21595,9 +22193,9 @@ export default function App() {
                     </button>
                     <button
                       onClick={() => openAssessmentHTML()}
-                      className="w-full py-3 bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white rounded-xl text-xs font-black uppercase tracking-widest hover:opacity-90 transition-all shadow-md flex items-center justify-center gap-2"
+                      className="w-full py-3 bg-gradient-to-r from-[#2563eb] to-[#7c3aed] text-white rounded-xl text-xs font-black uppercase tracking-widest hover:opacity-90 transition-all shadow-md flex items-center justify-center gap-2"
                     >
-                      <Sparkles size={16} /> Open Interactive HTML
+                      <Sparkles size={16} /> Open Interactive Worksheet
                     </button>
                     <button
                       onClick={() => generateOnlySlides(true)}
@@ -21614,176 +22212,108 @@ export default function App() {
                   </div>
                 )}
 
-                {/* DIFFERENTIATED LEVELS — same assessment per Lexile band */}
-                {content?.worksheet && (
-                  <div className="space-y-3 w-full pt-4 border-t-2 border-[#D1FAE5]">
-                    <div>
-                      <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest leading-none flex items-center gap-1.5">
-                        <Layers size={13} className="text-[#0d9488]" /> Level
-                        Versions
-                      </h3>
-                      <p className="text-[10px] font-semibold text-[#064E3B]/50 mt-1.5 leading-relaxed">
-                        Same topic & questions — reworded for each reading
-                        level, so every student gets this assessment at their
-                        own Lexile.
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {[
-                        "BR99-100",
-                        "100-200",
-                        "200-300",
-                        "300-400",
-                        "400-500",
-                        "500-600",
-                        "600-700",
-                        "700-800",
-                        "800-900",
-                        "900-1050",
-                      ].map((lvl) => {
-                        const on = wsLevels.includes(lvl);
-                        const made =
-                          !!content.worksheet?.leveledWorksheets?.[lvl];
-                        return (
-                          <button
-                            key={lvl}
-                            onClick={() =>
-                              setWsLevels((prev) =>
-                                prev.includes(lvl)
-                                  ? prev.filter((l) => l !== lvl)
-                                  : [...prev, lvl],
-                              )
-                            }
-                            className={cn(
-                              "flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wide border-2 transition-all",
-                              on
-                                ? "bg-[#0d9488] text-white border-[#0d9488]"
-                                : "bg-white text-[#7C7A65] border-gray-200 hover:border-[#0d9488]",
-                            )}
-                          >
-                            {made && (
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-300" />
-                            )}
-                            {lvl}L
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <button
-                      onClick={handleGenerateWorksheetLevels}
-                      disabled={isLevelingWorksheet}
-                      className="w-full py-3 bg-[#0d9488] text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-[#0f766e] transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
-                    >
-                      {isLevelingWorksheet ? (
-                        <Loader2 className="animate-spin" size={16} />
-                      ) : (
-                        <Layers size={16} />
-                      )}{" "}
-                      {isLevelingWorksheet
-                        ? "Building levels…"
-                        : "Create Level Versions"}
-                    </button>
-                    {isLevelingWorksheet && wsLevelProgress && (
-                      <p className="text-[10px] font-bold text-[#0d9488] text-center">
-                        {wsLevelProgress}
-                      </p>
-                    )}
-                    {content.worksheet.leveledWorksheets &&
-                      Object.keys(content.worksheet.leveledWorksheets).length >
-                        0 && (
-                        <div className="space-y-1.5 pt-1">
-                          {[
-                            "BR99-100",
-                            "100-200",
-                            "200-300",
-                            "300-400",
-                            "400-500",
-                            "500-600",
-                            "600-700",
-                            "700-800",
-                            "800-900",
-                            "900-1050",
-                          ]
-                            .filter(
-                              (lvl) =>
-                                content.worksheet?.leveledWorksheets?.[lvl],
-                            )
-                            .map((lvl) => {
-                              const lw =
-                                content.worksheet!.leveledWorksheets![lvl];
-                              return (
-                                <div
-                                  key={lvl}
-                                  className="flex items-center gap-1.5 bg-[#F0FDF4] border border-[#D1FAE5] rounded-xl p-1.5"
-                                >
-                                  <span className="text-[10px] font-black text-[#0d9488] uppercase px-1.5 flex-1">
-                                    {lvl}L
-                                  </span>
-                                  <button
-                                    onClick={() => openAssessmentHTML(lw)}
-                                    title="Open interactive worksheet"
-                                    className="px-2 py-1 bg-gradient-to-r from-[#7C3AED] to-[#A855F7] text-white rounded-lg text-[9px] font-black uppercase flex items-center gap-1 hover:opacity-90"
-                                  >
-                                    <Sparkles size={11} /> Open
-                                  </button>
-                                  <button
-                                    onClick={() => downloadDOCX(lw, lvl)}
-                                    title="Download DOCX"
-                                    className="px-2 py-1 bg-white text-[#064E3B] border border-[#059669] rounded-lg text-[9px] font-black uppercase flex items-center gap-1 hover:bg-[#D1FAE5]"
-                                  >
-                                    <Download size={11} /> DOCX
-                                  </button>
-                                </div>
-                              );
-                            })}
-                        </div>
-                      )}
-                  </div>
-                )}
               </div>
             </aside>
           )}
           <main className="flex-1 p-8 overflow-y-auto bg-[#F0FDF4]/50 custom-scrollbar">
-            {content?.worksheet?.sections &&
-              content.worksheet.sections.length > 0 ? (
-              <div className="space-y-6">
-                {/* INTERACTIVE TOGGLE BANNER */}
-                <div className="flex items-center justify-center mb-6 print:hidden">
-                  <div className="bg-white p-1.5 rounded-3xl border-2 border-[#D1FAE5] flex gap-2 shadow-sm">
+            {/* INLINE interactive worksheet — renders right here in the
+                worksheet view instead of opening a separate full-screen tab. */}
+            {interactiveDoc && (
+              <div className="mb-6 rounded-2xl overflow-hidden border-2 border-[#064E3B] shadow-lg">
+                <div className="bg-[#064E3B] text-white px-4 py-2.5 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Sparkles size={16} className="text-[#FACC15] shrink-0" />
+                    <span className="font-black uppercase tracking-wide text-xs truncate">
+                      {interactiveDoc.title}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
                     <button
-                      onClick={() => setShowPlayfulOrganizer(false)}
                       type="button"
-                      className={cn(
-                        "px-6 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer border-none outline-none",
-                        !showPlayfulOrganizer
-                          ? "bg-[#0d9488] text-white shadow"
-                          : "text-[#064E3B]/70 hover:bg-[#D1FAE5]/40"
-                      )}
+                      onClick={() => {
+                        try {
+                          const f = document.getElementById(
+                            "assessmentFrame",
+                          ) as HTMLIFrameElement | null;
+                          f?.contentWindow?.focus();
+                          f?.contentWindow?.print();
+                        } catch {
+                          /* ignore */
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-colors"
                     >
-                      <FileText size={14} /> Paper Assessment
+                      <Printer size={13} /> Print
                     </button>
                     <button
-                      onClick={() => setShowPlayfulOrganizer(true)}
                       type="button"
-                      className={cn(
-                        "px-6 py-2.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer border-none outline-none",
-                        showPlayfulOrganizer
-                          ? "bg-[#059669] text-white shadow"
-                          : "text-[#064E3B]/70 hover:bg-[#D1FAE5]/40"
-                      )}
+                      onClick={() => {
+                        const blob = new Blob([interactiveDoc.html], {
+                          type: "text/html;charset=utf-8",
+                        });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `${interactiveDoc.title
+                          .replace(/[\\/:*?"<>|]+/g, "")
+                          .replace(/\s+/g, "_")}_Interactive.html`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        setTimeout(() => URL.revokeObjectURL(url), 60000);
+                      }}
+                      className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-colors"
                     >
-                      <Sparkles size={14} className="text-yellow-500 animate-pulse" /> Interactive Organizer
+                      <Download size={13} /> Download
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setInteractiveDoc(null)}
+                      className="px-3 py-1.5 bg-red-500 hover:bg-red-600 rounded-lg text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-colors"
+                    >
+                      <X size={13} /> Close
                     </button>
                   </div>
                 </div>
-
-                {showPlayfulOrganizer ? (
-                  <InteractiveOrganizerWorksheet 
-                    lessonTitle={content?.lessonTitle || lessonInput} 
-                    onClose={() => setShowPlayfulOrganizer(false)}
-                    worksheet={content?.worksheet}
-                  />
-                ) : (
+                {/* DESIGN PICKER — choose between the worksheet themes */}
+                <div className="bg-[#F0FDF4] border-b-2 border-[#D1FAE5] px-4 py-2.5 flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[#064E3B]/50 mr-1">
+                    🎨 Design:
+                  </span>
+                  {ZDESIGN_LIST.map((key) => {
+                    const th = ZTHEMES[key];
+                    const active = (interactiveDoc.design || "detective") === key;
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => pickInteractiveDesign(key)}
+                        className={cn(
+                          "px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all border-2",
+                          active
+                            ? "text-white shadow-md border-transparent"
+                            : "bg-white text-[#064E3B]/70 border-[#D1FAE5] hover:border-[#059669]",
+                        )}
+                        style={active ? { background: th.border } : undefined}
+                      >
+                        <span>{th.icon}</span> {th.name}
+                      </button>
+                    );
+                  })}
+                </div>
+                <iframe
+                  id="assessmentFrame"
+                  title="Interactive Assessment"
+                  srcDoc={interactiveDoc.html}
+                  className="w-full bg-white"
+                  style={{ height: "75vh", border: "none" }}
+                />
+              </div>
+            )}
+            {content?.worksheet?.sections &&
+              content.worksheet.sections.length > 0 ? (
+              <div className="space-y-6">
+                {(
                   <div
                     className="max-w-4xl mx-auto bg-white p-16 pt-16 shadow-2xl border-t-[32px] border-[#1B4332] min-h-[1200px] relative font-sans text-left"
                     ref={worksheetRef}
@@ -27338,44 +27868,195 @@ export default function App() {
     readingPassage?: string;
     sections: WorksheetSection[];
   }) => {
-    const ws = override || content?.worksheet;
-    if (!ws) {
-      alert("No assessment available to open yet.");
-      return;
+    // Count the real (non-placeholder) questions in any worksheet-shaped object.
+    const countQuestions = (w: any) =>
+      (w?.sections || []).reduce(
+        (n: number, s: any) =>
+          n +
+          (s?.questions || []).filter((q: any) => {
+            const t = (q?.text || "").trim();
+            return t && t !== "Enter your question here";
+          }).length,
+        0,
+      );
+
+    // Bulletproof resolution: find the worksheet that actually has questions,
+    // no matter where it currently lives. Try, in order: the explicit override,
+    // the current worksheet, every leveled version, a deep scan of the whole
+    // content object for anything with a populated `sections` array, and
+    // finally the last-good snapshot captured while questions were on screen.
+    const candidates: any[] = [];
+    if (override) candidates.push(override);
+    if (content?.worksheet) candidates.push(content.worksheet);
+    const leveled = (content?.worksheet as any)?.leveledWorksheets;
+    if (leveled && typeof leveled === "object")
+      Object.values(leveled).forEach((v) => candidates.push(v));
+    // deep scan of content for any worksheet-shaped object
+    try {
+      const seen = new Set<any>();
+      const stack: any[] = [content];
+      while (stack.length) {
+        const o = stack.pop();
+        if (!o || typeof o !== "object" || seen.has(o)) continue;
+        seen.add(o);
+        if (Array.isArray((o as any).sections)) candidates.push(o);
+        for (const k in o) {
+          const v = (o as any)[k];
+          if (v && typeof v === "object") stack.push(v);
+        }
+      }
+    } catch (e) {}
+    if (lastGoodWorksheetRef.current)
+      candidates.push(lastGoodWorksheetRef.current);
+
+    // LAST-RESORT FALLBACK: scrape the questions straight from the worksheet
+    // preview on screen. If you can SEE the questions, the export can read them
+    // — completely independent of React state. Only wins if state has fewer.
+    try {
+      const titleEls = Array.from(
+        document.querySelectorAll(
+          '[data-worksheet-section][data-worksheet-field="title"]',
+        ),
+      );
+      if (titleEls.length) {
+        const domSections = titleEls.map((tEl) => {
+          const si = tEl.getAttribute("data-worksheet-section");
+          const instrEl = document.querySelector(
+            `[data-worksheet-section="${si}"][data-worksheet-field="instructions"]`,
+          );
+          const qEls = Array.from(
+            document.querySelectorAll(
+              `[data-worksheet-section="${si}"][data-worksheet-question]`,
+            ),
+          );
+          return {
+            title: (tEl.textContent || "").trim(),
+            instructions: (instrEl?.textContent || "").trim(),
+            questions: qEls
+              .map((qEl) => ({
+                text: (qEl.textContent || "").trim(),
+                type: "short-answer",
+                options: undefined as string[] | undefined,
+              }))
+              .filter((q) => q.text),
+          };
+        });
+        const domTotal = domSections.reduce(
+          (n, s) => n + s.questions.length,
+          0,
+        );
+        if (domTotal > 0)
+          candidates.push({
+            title:
+              (
+                document.querySelector(
+                  '[data-worksheet-field="worksheet-title"]',
+                )?.textContent || ""
+              ).trim() ||
+              content?.worksheet?.title ||
+              content?.lessonTitle ||
+              "",
+            description: "",
+            readingPassage: "",
+            sections: domSections,
+          });
+      }
+    } catch (e) {}
+
+    // Pick the candidate with the most real questions.
+    let ws: any = null;
+    let best = 0;
+    for (const cand of candidates) {
+      const n = countQuestions(cand);
+      if (n > best) {
+        best = n;
+        ws = cand;
+      }
+    }
+    // Fall back to whatever exists so we never crash, even if empty.
+    if (!ws) ws = override || content?.worksheet || null;
+
+    try {
+      console.log(
+        "%c[Zera][openAssessmentHTML] DIAGNOSTIC",
+        "color:#7c3aed;font-weight:bold",
+        {
+          calledWithOverride: !!override,
+          contentWorksheetSections: content?.worksheet?.sections?.length ?? null,
+          candidatesScanned: candidates.length,
+          chosenQuestionCount: best,
+          lastGoodAvailable: !!lastGoodWorksheetRef.current,
+          chosenWsSections: (ws as any)?.sections?.length ?? null,
+        },
+      );
+    } catch (e) {}
+
+    // IMPORTANT: never early-return here. Browsers can suppress alert() after
+    // repeated dialogs, which would make the button look dead. Instead we ALWAYS
+    // open the viewer — with the real worksheet if we found one, or with an
+    // on-screen diagnostic worksheet if it's empty, so the result is always
+    // visible and nothing can be silently swallowed.
+    if (best === 0) {
+      const stateSecs = content?.worksheet?.sections?.length ?? 0;
+      const stateQ = (content?.worksheet?.sections || []).reduce(
+        (n: number, s: any) => n + (s?.questions?.length || 0),
+        0,
+      );
+      const domQ = document.querySelectorAll(
+        "[data-worksheet-section][data-worksheet-question]",
+      ).length;
+      ws = {
+        title: "Diagnostic — no questions found",
+        description:
+          "The interactive page opened, but no questions were found to put in it.",
+        readingPassage: "",
+        sections: [
+          {
+            title: "What the export found (v2 build)",
+            instructions:
+              "Send a screenshot of this to fix it. If 'visible on page' is greater than 0, the questions are on screen but weren't captured. If everything is 0, the generation produced an empty worksheet — generate again and wait for questions to appear.",
+            questions: [
+              { text: `Sections in worksheet state: ${stateSecs}`, type: "short-answer" },
+              { text: `Questions in worksheet state: ${stateQ}`, type: "short-answer" },
+              { text: `Candidate sources scanned: ${candidates.length}`, type: "short-answer" },
+              { text: `Questions visible on the page right now: ${domQ}`, type: "short-answer" },
+            ],
+          },
+        ],
+      };
     }
 
     // Prefer the AI-generated worksheet title; never fall back to the raw prompt.
     const title = ws.title || content?.lessonTitle || "Assessment";
-    // Trim to the fields the standalone player needs, then escape "<" so any
-    // user text containing "</script>" cannot break out of the embedded script.
-    const wsPayload = {
-      title: ws.title || "",
-      description: ws.description || "",
-      readingPassage: ws.readingPassage || "",
-      sections: (ws.sections || []).map((s) => ({
-        title: s.title || "",
-        instructions: s.instructions || "",
-        questions: (s.questions || []).map((q) => ({
-          text: q.text || "",
-          type: q.type || "short-answer",
-          options: q.options || undefined,
-        })),
-      })),
-    };
-    const wsJson = JSON.stringify(wsPayload).replace(/</g, "\\u003c");
-    const titleJson = JSON.stringify(title).replace(/</g, "\\u003c");
+    // Build the colourful, interactive worksheet using the chosen design.
+    // Store `ws` so the design picker can re-render other themes instantly.
+    const html = buildInteractiveHTML(ws, title, interactiveDesign);
 
-    // Use function replacements so "$" sequences in user text are not treated
-    // as special replacement patterns by String.replace.
-    const html = ASSESSMENT_HTML_TEMPLATE.replace(
-      "/*__WS__*/null",
-      () => wsJson,
-    ).replace("/*__TITLE__*/null", () => titleJson);
+    // Show the interactive assessment inline in the worksheet view. Scroll it
+    // into view so it can never look like "nothing happened" when the user is
+    // scrolled down among the questions.
+    setInteractiveDoc({ html, title, ws, design: interactiveDesign });
+    setCurrentView("worksheet");
+    setTimeout(() => {
+      try {
+        document
+          .getElementById("assessmentFrame")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      } catch {
+        /* ignore */
+      }
+    }, 150);
+  };
 
-    // Show the interactive assessment in an in-app full-screen viewer. This
-    // always works — no new tab, no pop-up blocker. The viewer has its own
-    // buttons to open in a new tab, print, or download the file.
-    setInteractiveDoc({ html, title });
+  // Re-render the currently-open interactive worksheet in a different design,
+  // instantly (no regeneration) — used by the design picker.
+  const pickInteractiveDesign = (key: string) => {
+    setInteractiveDesign(key);
+    setInteractiveDoc((prev) =>
+      prev && prev.ws
+        ? { ...prev, html: buildInteractiveHTML(prev.ws, prev.title, key), design: key }
+        : prev,
+    );
   };
 
   // Differentiated assessment: reword the current worksheet (same topic, same
@@ -27421,7 +28102,7 @@ export default function App() {
     };
     try {
       await Promise.all(
-        Array.from({ length: Math.min(2, wsLevels.length) }, worker),
+        Array.from({ length: Math.min(5, wsLevels.length) }, worker),
       );
       const built = Object.keys(results).length;
       if (built === 0) {
@@ -27798,7 +28479,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* ===== Interactive Assessment viewer (in-app, no pop-up needed) ===== */}
-      {interactiveDoc && (
+      {interactiveDoc && currentView !== "worksheet" && (
         <div className="fixed inset-0 z-[9998] bg-black/60 flex flex-col">
           <div className="bg-[#064E3B] text-white px-5 py-3 flex items-center justify-between gap-3 shrink-0">
             <div className="flex items-center gap-2 min-w-0">
