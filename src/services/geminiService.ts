@@ -1279,68 +1279,97 @@ export async function relevelReadingPassage(
 // Retries a generateContent call on transient errors (503 model overloaded,
 // 429 rate limit) with backoff, then falls back to the next model in the list.
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// ===== Groq (OpenAI-compatible) text generation =====
+// The app's text generation now runs on Groq instead of Google Gemini.
+// We translate the existing Gemini-style request ({contents:{parts}, config})
+// into a Groq chat completion and return an object exposing `.text`, so every
+// existing caller keeps working unchanged. The key stays SERVER-SIDE (it is not
+// injected into the browser bundle); the browser falls back to the /api/ai
+// proxy which holds the key.
+const GROQ_API_KEY = (process.env.GROQ_API_KEY as string) || "";
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+
+async function groqGenerate(
+  request: { contents: any; config?: any },
+  model: string,
+): Promise<{ text: string }> {
+  const rawParts = request?.contents?.parts;
+  const parts = Array.isArray(rawParts) ? rawParts : rawParts ? [rawParts] : [];
+  const promptText = parts
+    .map((p: any) => (typeof p === "string" ? p : p?.text || ""))
+    .filter(Boolean)
+    .join("\n\n");
+  const wantsJson = request?.config?.responseMimeType === "application/json";
+  const messages: any[] = [];
+  if (wantsJson) {
+    messages.push({
+      role: "system",
+      content:
+        "You are an expert Cambridge educator. Respond with a SINGLE valid JSON object only — no markdown, no code fences, no commentary.",
+    });
+  }
+  messages.push({ role: "user", content: promptText });
+  const body: any = { model, messages, temperature: 0.7, max_tokens: 8000 };
+  if (wantsJson) body.response_format = { type: "json_object" };
+  const res = await fetch(GROQ_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${GROQ_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => "");
+    throw new Error(`Groq ${res.status}: ${errBody.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  const text = data?.choices?.[0]?.message?.content || "";
+  if (!text) throw new Error("Empty response");
+  return { text };
+}
+
 async function generateContentWithRetry(
   request: { contents: any; config?: any },
-  models: string[] = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
+  models: string[] = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
   attemptsPerModel = 2,
 ): Promise<any> {
+  if (!GROQ_API_KEY) {
+    throw new Error(
+      "GROQ_API_KEY is not configured. Add it to .env and restart the server.",
+    );
+  }
   let lastErr: any;
-  // Some models reject thinkingBudget:0 (or other thinkingConfig values) with a
-  // non-retryable 400. If that happens, transparently retry the same request
-  // WITHOUT thinkingConfig so an aggressive low-latency setting can never break
-  // generation — we just lose the latency win on that model.
-  let strippedThinking = false;
   for (const model of models) {
     for (let attempt = 0; attempt < attemptsPerModel; attempt++) {
       try {
-        return await ai.models.generateContent({ model, ...request });
+        return await groqGenerate(request, model);
       } catch (err: any) {
         lastErr = err;
         const msg = String(err?.message || err);
-        const isThinkingReject =
-          (msg.includes("400") ||
-            msg.toLowerCase().includes("invalid_argument") ||
-            msg.toLowerCase().includes("invalid argument")) &&
-          msg.toLowerCase().includes("thinking");
-        if (isThinkingReject && !strippedThinking && request.config?.thinkingConfig) {
-          strippedThinking = true;
-          const { thinkingConfig, ...restConfig } = request.config;
-          request = { ...request, config: restConfig };
-          continue; // retry same model without thinkingConfig
-        }
-        // If THIS model is unavailable for the key (404 / not found / not
-        // supported / permission), don't abort — fall through to the NEXT model
-        // in the list. This makes `models` a real fallback chain and prevents a
-        // single bad/unavailable model id from breaking all generation.
         const lower = msg.toLowerCase();
-        const isModelUnavailable =
+        // decommissioned / unknown model → try the next model in the list
+        if (
           msg.includes("404") ||
-          lower.includes("not_found") ||
           lower.includes("not found") ||
-          lower.includes("is not supported") ||
-          lower.includes("does not exist") ||
-          lower.includes("permission_denied") ||
-          lower.includes("permission denied");
-        if (isModelUnavailable) break; // stop retrying this model, try the next
-
-        const isRateLimit =
-          msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED");
+          lower.includes("decommission") ||
+          lower.includes("does not exist")
+        )
+          break;
+        const isRateLimit = msg.includes("429") || lower.includes("rate limit");
         const transient =
           isRateLimit ||
+          msg.includes("500") ||
+          msg.includes("502") ||
           msg.includes("503") ||
-          msg.includes("UNAVAILABLE") ||
-          msg.toLowerCase().includes("overloaded") ||
-          msg.toLowerCase().includes("high demand");
+          lower.includes("timeout") ||
+          lower.includes("fetch failed") ||
+          lower.includes("econnreset");
         if (!transient) throw err;
-        // 429 responses often carry a server-suggested retryDelay — honor it;
-        // otherwise wait much longer for rate limits than for 503 blips.
-        const suggested = msg.match(/retryDelay"?\s*:?\s*"?(\d+)/);
-        const wait = suggested
-          ? (parseInt(suggested[1], 10) + 1) * 1000
-          : isRateLimit
-            ? 6000 * (attempt + 1)
-            : 800 * (attempt + 1);
-        await sleep(Math.min(wait, 65000));
+        await sleep(
+          Math.min((isRateLimit ? 4000 : 800) * (attempt + 1), 8000),
+        );
       }
     }
   }

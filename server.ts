@@ -33,7 +33,7 @@ async function startServer() {
   app.post("/api/ai/generate", async (req, res) => {
     const { type, lessonInput, options } = req.body;
     
-    const keyNames = ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'VITE_GEMINI_API_KEY', 'API_KEY'];
+    const keyNames = ['GROQ_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'VITE_GEMINI_API_KEY', 'API_KEY'];
     let key = "";
     
     for (const name of keyNames) {
