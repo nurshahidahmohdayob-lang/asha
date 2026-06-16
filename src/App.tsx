@@ -908,12 +908,19 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       if (cats.length < 2) cats = ["Group 1", "Group 2"];
       cats = cats.slice(0, 4);
       const colC = ["#16a34a", "#dc2626", "#2563eb", "#f97316"];
-      let h = '<div class="sortwrap"><div class="sortins"><span class="insbadge">Instructions</span> Tap a picture, then tap the column it belongs in.</div>';
+      // Cut-and-paste tasks tell students to cut & paste; plain sorting tasks
+      // just sort (no cut/paste wording, no scissors label).
+      const isCutPaste = t.includes("cut") || t.includes("paste");
+      const instr = isCutPaste
+        ? "Cut out the pictures and paste them into the correct column."
+        : "Sort the items into the correct column.";
+      const poolLabel = isCutPaste ? "✂️ Cut-Out Pictures" : "Items to Sort";
+      let h = `<div class="sortwrap"><div class="sortins"><span class="insbadge">Instructions</span> ${instr}</div>`;
       h += '<div class="sorttable">';
       cats.forEach((c, i) => {
         h += `<div class="sortcol" onclick="zDrop(this)"><div class="sorthd" style="background:${colC[i % 4]}">${zEsc(c)}</div><div class="dropzone"></div></div>`;
       });
-      h += '</div><div class="cutbar"><span>✂️ Cut-Out Pictures</span></div><div class="cutpool">';
+      h += `</div><div class="cutbar"><span>${poolLabel}</span></div><div class="cutpool">`;
       opts.forEach((o) => {
         h += `<div class="cutcard" onclick="zPickCard(this)"><div class="cutic">${zIcon(o)}</div><div class="cutlb">${zEsc(o)}</div></div>`;
       });
@@ -987,7 +994,7 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       rows += `</div>`;
     }
     if (tf.length) {
-      rows += `<div class="part" style="--pc:#16a34a">PART B: TRUE OR FALSE (${tf.length} marks) — Tap the box for T or F.</div><div class="tfgrid">`;
+      rows += `<div class="part" style="--pc:#16a34a">PART B: TRUE OR FALSE (${tf.length} marks) — Write T for True or F for False.</div><div class="tfgrid">`;
       tf.forEach((q) => {
         n++;
         rows += `<div class="tfq"><span><span class="eqn">${n}.</span> ${zEsc(q?.text)}</span><button class="tfbox" onclick="zCycleTF(this)"></button></div>`;
@@ -1262,7 +1269,7 @@ ${T.extraCss || ""}
       <ol>
         <li>Read each question carefully.</li>
         <li>Think about what you already know.</li>
-        <li>Tap to select, or write your answer on the lines.</li>
+        <li>Use your pencil to circle or write your answer on the lines.</li>
         <li>Check your work before you finish.</li>
         <li>Do your best and have fun! ⭐</li>
       </ol>

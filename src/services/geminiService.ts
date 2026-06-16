@@ -297,6 +297,23 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
   }
 }
 
+// Enforce the requested question count: never return MORE questions than the
+// user asked for. Walks sections in order, keeps questions until the total
+// reaches `max`, then drops the rest (and any now-empty trailing sections).
+function capWorksheetQuestions<T extends { sections?: any[] }>(ws: T, max: number): T {
+  if (!ws || !Array.isArray(ws.sections) || !max || max <= 0) return ws;
+  let count = 0;
+  const sections: any[] = [];
+  for (const s of ws.sections) {
+    if (count >= max) break;
+    const qs = Array.isArray(s?.questions) ? s.questions : [];
+    const kept = qs.slice(0, max - count);
+    count += kept.length;
+    sections.push({ ...s, questions: kept });
+  }
+  return { ...ws, sections };
+}
+
 export async function generateWorksheet(lessonInput: string, options: EduOptions, slideContext?: SlideContent[], onPartial?: (partial: { phase: string; title: string; readingPassage?: string; description?: string; methodology?: string; sections: WorksheetSection[]; done: number; total: number }) => void): Promise<{ title: string; readingPassage?: string; leveledPassages?: Record<string, string>; description?: string; methodology?: string; sections: WorksheetSection[] }> {
   try {
     const contents: any[] = [];
@@ -321,7 +338,7 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
          Subject: ${options.subject}, Year Group: ${options.yearGroup}, Lexile: ${options.lexileLevel}.
          The passage should be informative, engaging, and strictly follow the Lexile level complexity. 
          DO NOT generate any assessment questions or sections. Return exactly one empty section to satisfy the schema.`
-      : `As an expert Cambridge Educator, generate a worksheet for: "${lessonInput}" with ${options.numQuestions} questions. Subject: ${options.subject}, Year Group: ${options.yearGroup}. Allowed Types: ${options.questionTypes.join(", ")}. ${storyPrompt}`;
+      : `As an expert Cambridge Educator, generate a worksheet for: "${lessonInput}". You MUST produce a FULL set of ${options.numQuestions} questions IN TOTAL across all sections — keep writing questions until you reach ${options.numQuestions}; do not stop early. (A few extra is acceptable; we keep the first ${options.numQuestions}.) Subject: ${options.subject}, Year Group: ${options.yearGroup}. Allowed Types: ${options.questionTypes.join(", ")}. ${storyPrompt}`;
 
     mainPrompt += `\n\nCURRICULUM ALIGNMENT:
     - Align with Cambridge International Framework, Scheme of Work, and official textbooks/references.
@@ -407,7 +424,62 @@ Only use the types that appear in the "Allowed Types" list above.`;
       });
       const text = response.text;
       if (!text) throw new Error("Empty response");
-      return JSON.parse(text);
+      let ws: any = JSON.parse(text);
+      // The model often stops short on large counts. Top up the shortfall with
+      // a couple of quick follow-up calls so we actually reach numQuestions,
+      // then cap to the exact number.
+      const countQ = (w: any) =>
+        (w?.sections || []).reduce(
+          (n: number, s: any) => n + (s?.questions?.length || 0),
+          0,
+        );
+      const want = options.numQuestions || 0;
+      let topups = 0;
+      while (want > 0 && countQ(ws) < want && topups < 3) {
+        topups++;
+        const need = want - countQ(ws);
+        const existing = (ws?.sections || [])
+          .flatMap((s: any) => s?.questions || [])
+          .map((q: any) => q?.text)
+          .filter(Boolean)
+          .slice(-20);
+        try {
+          const more = await generateContentWithRetry({
+            contents: {
+              parts: [
+                {
+                  text: `As an expert Cambridge Educator, write ${need} ADDITIONAL distinct assessment questions about "${lessonInput}" (Subject: ${options.subject}, Year Group: ${options.yearGroup}). They MUST be different from these existing questions: ${JSON.stringify(existing)}. Allowed Types: ${options.questionTypes.join(", ")}.\n${encodingRules}\nReturn ONLY JSON: {"questions": [{"text","type","options"}]}`,
+                },
+              ],
+            },
+            config: {
+              thinkingConfig: { thinkingBudget: 0 },
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  questions: { type: Type.ARRAY, items: questionItemSchema },
+                },
+                required: ["questions"],
+              },
+            },
+          });
+          const extra = JSON.parse(more.text || "{}")?.questions || [];
+          if (!extra.length) break;
+          const secs =
+            ws?.sections && ws.sections.length
+              ? ws.sections
+              : [{ title: "More Questions", instructions: "", questions: [] }];
+          secs[secs.length - 1].questions = [
+            ...(secs[secs.length - 1].questions || []),
+            ...extra,
+          ];
+          ws = { ...ws, sections: secs };
+        } catch {
+          break; // keep whatever we have if a top-up fails
+        }
+      }
+      return capWorksheetQuestions(ws, want);
     }
 
     // SPEED: generate the questions in CONCURRENT batches (each call produces
@@ -1310,7 +1382,11 @@ async function groqGenerate(
     });
   }
   messages.push({ role: "user", content: promptText });
-  const body: any = { model, messages, temperature: 0.7, max_tokens: 8000 };
+  // Give enough room for large worksheets (e.g. 50 questions). The 70B model
+  // has a high per-minute token budget; the small fallback model has a tighter
+  // one, so we use a smaller cap only for that model (see model loop).
+  const maxTokens = /8b|instant/i.test(model) ? 3500 : 8000;
+  const body: any = { model, messages, temperature: 0.7, max_tokens: maxTokens };
   if (wantsJson) body.response_format = { type: "json_object" };
   const res = await fetch(GROQ_URL, {
     method: "POST",
