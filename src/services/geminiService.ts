@@ -686,7 +686,24 @@ function lexilePassageGuidance(levelRaw: string): string {
   if (isNaN(approx)) return "";
   let rules: string;
   if (approx < 100) {
-    rules = `This is a BEGINNING-READER level. Use EXTREMELY simple text: ONE idea per sentence, 3-6 words per sentence MAXIMUM. Use only the most common, mostly one-syllable words. Present tense. Short, repetitive, predictable sentence patterns. Put EACH short sentence on its OWN line (separate lines, not run together). Example feel: "John has a bag.\\nHe has food.\\nHe walks in the woods.\\nHe sees a tree.\\nJohn is happy."`;
+    rules = `This is a BEGINNING-READER level. Match this EXACT style and simplicity (this is the required template):
+"""
+John has a bag.
+He has food.
+He has water.
+He has a map.
+John walks in the woods.
+He sees a tree.
+He sees a flower.
+He sees a small stream.
+John sits on a rock.
+He eats his food.
+Then he walks again.
+He climbs a hill.
+John sees the woods below.
+He is happy.
+"""
+STRICT RULES: ONE simple idea per sentence; 3-5 words per sentence MAXIMUM; use only the most common one-syllable words; present tense; plain Subject-Verb-Object order; repeat names and sentence patterns (e.g. "He has …", "He sees …"). Write about 12-16 such tiny sentences. Do NOT join ideas with commas, "and", "but", "so", or any clause. FORMAT (critical): put EACH sentence on its OWN line — separate EVERY sentence with a blank line so each sentence sits alone on its own line, exactly like the template above.`;
   } else if (approx < 200) {
     rules = `Very early reader. 4-7 words per sentence. Only common, familiar one- and two-syllable words. Simple subject-verb-object sentences, ONE idea each. Avoid clauses and conjunctions beyond a rare "and".`;
   } else if (approx < 300) {
@@ -781,6 +798,17 @@ Return ONLY a JSON object in exactly this shape: {"title": "<a short, fitting pa
         if (!passage) passage = String(resp.text || "").trim();
       }
       if (!passage) throw new Error("Empty reading passage");
+      // BEGINNING-READER: force one sentence per line (blank line between each)
+      // so the output always matches the required template, no matter how the
+      // model formatted it.
+      if (!isNaN(approxLx) && approxLx < 100) {
+        const sentences = passage
+          .replace(/\s*\n+\s*/g, " ")
+          .match(/[^.!?]+[.!?]+/g);
+        if (sentences && sentences.length > 1) {
+          passage = sentences.map((s) => s.trim()).filter(Boolean).join("\n\n");
+        }
+      }
       return {
         title,
         readingPassage: passage,
