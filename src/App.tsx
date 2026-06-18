@@ -793,6 +793,91 @@ function showTab(which){
 </body>
 </html>`;
 
+// Draw exact text onto a generated image using a real font (so spelling is
+// always perfect — AI image models garble text). Title goes in a top gradient
+// band; optional subtitle below it. Returns a composited JPEG data URL.
+function overlayTextOnImage(
+  src: string,
+  title: string,
+  subtitle: string,
+): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const W = img.naturalWidth || 1024;
+        const H = img.naturalHeight || 1024;
+        const canvas = document.createElement("canvas");
+        canvas.width = W;
+        canvas.height = H;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return resolve(src);
+        ctx.drawImage(img, 0, 0, W, H);
+        ctx.textAlign = "center";
+        const pad = W * 0.06;
+        const maxW = W - pad * 2;
+        const wrap = (text: string, font: string) => {
+          ctx.font = font;
+          const out: string[] = [];
+          let cur = "";
+          for (const w of text.split(/\s+/).filter(Boolean)) {
+            const test = cur ? cur + " " + w : w;
+            if (ctx.measureText(test).width > maxW && cur) {
+              out.push(cur);
+              cur = w;
+            } else cur = test;
+          }
+          if (cur) out.push(cur);
+          return out;
+        };
+        const tSize = Math.round(W * 0.085);
+        const sSize = Math.round(W * 0.045);
+        const tFont = `900 ${tSize}px Arial, Helvetica, sans-serif`;
+        const sFont = `700 ${sSize}px Arial, Helvetica, sans-serif`;
+        const tLines = title ? wrap(title, tFont) : [];
+        const sLines = subtitle ? wrap(subtitle, sFont) : [];
+        const gap = tSize * 0.18;
+        const blockH =
+          tLines.length * (tSize + gap) +
+          (sLines.length ? sSize * 0.5 + sLines.length * sSize * 1.25 : 0);
+        const bandH = blockH + pad * 1.4;
+        const grad = ctx.createLinearGradient(0, 0, 0, bandH);
+        grad.addColorStop(0, "rgba(15,23,42,0.80)");
+        grad.addColorStop(1, "rgba(15,23,42,0)");
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, W, bandH);
+        ctx.lineJoin = "round";
+        let y = pad + tSize * 0.85;
+        ctx.font = tFont;
+        ctx.fillStyle = "#ffffff";
+        ctx.strokeStyle = "rgba(0,0,0,0.5)";
+        ctx.lineWidth = Math.max(2, tSize * 0.06);
+        for (const line of tLines) {
+          ctx.strokeText(line, W / 2, y);
+          ctx.fillText(line, W / 2, y);
+          y += tSize + gap;
+        }
+        if (sLines.length) {
+          y += sSize * 0.25;
+          ctx.font = sFont;
+          ctx.fillStyle = "#fde047";
+          ctx.lineWidth = Math.max(1.5, sSize * 0.06);
+          for (const line of sLines) {
+            ctx.strokeText(line, W / 2, y);
+            ctx.fillText(line, W / 2, y);
+            y += sSize * 1.25;
+          }
+        }
+        resolve(canvas.toDataURL("image/jpeg", 0.92));
+      } catch {
+        resolve(src);
+      }
+    };
+    img.onerror = () => resolve(src);
+    img.src = src;
+  });
+}
+
 // ===== Colourful interactive worksheet (Keyword-Detective style) =====
 // Builds a self-contained, offline HTML worksheet from a worksheet object.
 // Rendered inside an isolated iframe (srcDoc), so its class names never clash
@@ -821,6 +906,11 @@ function zEsc(s: any): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+// Question text with any "____" blank turned into a proper inline blank line
+// the student can write on (used for fill-in-the-blanks).
+function zQText(s: any): string {
+  return zEsc(s).replace(/_{3,}/g, '<span class="zblank"></span>');
 }
 // Map a sort/cut-out item label to a representative emoji icon (for the
 // "File or Not a File?" style cut-out cards). Falls back to 🧩.
@@ -868,9 +958,12 @@ function zIcon(s: any): string {
   for (const [re, em] of ZICON_MAP) if (re.test(t)) return em;
   return "🧩";
 }
-function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detective", kind: string = "worksheet"): string {
+function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detective", kind: string = "worksheet", subject: string = ""): string {
   const T = ZTHEMES[themeKey] || ZTHEMES.detective;
   const kindWord = kind === "assessment" ? "Assessment" : "Worksheet";
+  // Heading reads "<Subject> <Assessment/Worksheet>" (e.g. "Digital Literacy
+  // Assessment"). Fall back to "My" only when no subject was provided.
+  const headLead = (subject || "").trim() || "My";
   const PAL: string[] = T.pal;
   // Per request: do NOT show the topic description or section instructions in
   // the worksheet — only the questions/activities themselves.
@@ -929,7 +1022,15 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       return h;
     }
     if (isTF) {
-      return '<div class="tfrow"><button class="tf tf-t" onclick="zPick(this)"><span>✔</span> TRUE</button><button class="tf tf-f" onclick="zPick(this)"><span>✘</span> FALSE</button></div>';
+      // Grouped under a "True or False" heading already, so each question only
+      // needs a small box to write T or F (no repeated TRUE/FALSE on every one).
+      return '<div class="tfrow"><span class="tflabel">Answer:</span><button class="tfbox" onclick="zCycleTF(this)"></button></div>';
+    }
+    if (t.includes("fill") || t.includes("blank")) {
+      // Fill-in-the-blanks: the blank ("____") is already inside the sentence
+      // and the shared word bank is shown once at the top of the section, so
+      // each question needs no separate answer area.
+      return "";
     }
     if (opts.length) {
       let h = '<div class="opts">';
@@ -942,6 +1043,33 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
     return '<div class="lines"><span class="ln"></span><span class="ln"></span></div>';
   };
 
+  // Shared WORD BANK for a fill-in-the-blanks section: a grid of the answer
+  // words (correct word of each question, shuffled) shown once at the top, plus
+  // the "Fill in the blanks…" instruction. Returns "" if the section has none.
+  const fillBank = (sec: any): string => {
+    const fills = (sec?.questions || []).filter((q: any) => {
+      const t = String(q?.type || "").toLowerCase();
+      return t.includes("fill") || t.includes("blank");
+    });
+    if (!fills.length) return "";
+    // One word per fill-in question so the bank ALWAYS tallies with the number
+    // of questions. (Distinctness is enforced at generation by the prompt.)
+    const words = fills
+      .map((q: any) => String((q?.options && q.options[0]) || "").trim())
+      .filter(Boolean);
+    if (!words.length) return "";
+    // shuffle so the bank order doesn't match the question order
+    const shuffled = words.slice();
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    const cells = shuffled
+      .map((w: string) => `<span class="wbword">${zEsc(w)}</span>`)
+      .join("");
+    return `<div class="wbbank"><span class="wblabel">📋 Word Bank</span><span class="wbwords">${cells}</span></div><div class="wbinstr">✏️ Fill in the blanks using the words from the word bank.</div>`;
+  };
+
   const layout: string = T.layout || "stack";
   let qn = 0;
   let rows = "";
@@ -950,10 +1078,11 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
     rows += '<table class="qtable"><thead><tr><th class="th-n">#</th><th class="th-q"><span class="thic">❓</span> Question</th><th class="th-a"><span class="thic">✍️</span> Your Answer</th></tr></thead><tbody>';
     sections.forEach((sec: any, si: number) => {
       rows += `<tr class="trsec" style="--sc:${PAL[si % PAL.length]}"><td colspan="3">📌 ${zEsc(sec?.title || "Activity")}${sec?.instructions ? ` <span class="trins">— ${zEsc(sec.instructions)}</span>` : ""}</td></tr>`;
+      { const fb = fillBank(sec); if (fb) rows += `<tr><td colspan="3">${fb}</td></tr>`; }
       (sec?.questions || []).forEach((q: any) => {
         qn++;
         const c = PAL[(qn - 1) % PAL.length];
-        rows += `<tr class="qtr" style="--qc:${c}"><td class="td-n"><span class="tnum">${qn}</span></td><td class="td-q">${zEsc(q?.text)}</td><td class="td-a">${renderAnswer(q)}</td></tr>`;
+        rows += `<tr class="qtr" style="--qc:${c}"><td class="td-n"><span class="tnum">${qn}</span></td><td class="td-q">${zQText(q?.text)}</td><td class="td-a">${renderAnswer(q)}</td></tr>`;
       });
     });
     rows += "</tbody></table>";
@@ -961,10 +1090,11 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
     // Hand-drawn black & white printable
     sections.forEach((sec: any) => {
       rows += `<div class="dsec">✏️ ${zEsc(sec?.title || "Activity")}</div>`;
+      rows += fillBank(sec);
       if (sec?.instructions) rows += `<div class="dins">${zEsc(sec.instructions)}</div>`;
       (sec?.questions || []).forEach((q: any) => {
         qn++;
-        rows += `<div class="dbox"><div class="dq"><span class="dnum">${qn}</span><span>${zEsc(q?.text)}</span></div>${renderAnswer(q)}</div>`;
+        rows += `<div class="dbox"><div class="dq"><span class="dnum">${qn}</span><span>${zQText(q?.text)}</span></div>${renderAnswer(q)}</div>`;
       });
     });
   } else if (layout === "exam") {
@@ -977,20 +1107,25 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       return (t.includes("true") && t.includes("false")) || t === "true-false" ||
         (o.length === 2 && o.map((x) => String(x).toLowerCase()).sort().join(",") === "false,true");
     };
+    const isFill = (q: any) => {
+      const t = String(q?.type || "").toLowerCase();
+      return t.includes("fill") || t.includes("blank");
+    };
     const isMCQ = (q: any) => {
       const t = String(q?.type || "").toLowerCase();
-      return !isTFq(q) && (q?.options || []).length > 0 && !/sort|cut|paste|match/.test(t);
+      return !isTFq(q) && !isFill(q) && (q?.options || []).length > 0 && !/sort|cut|paste|match/.test(t);
     };
     const mcq = all.filter(isMCQ);
     const tf = all.filter(isTFq);
-    const rest = all.filter((q) => !isMCQ(q) && !isTFq(q));
+    const fill = all.filter(isFill);
+    const rest = all.filter((q) => !isMCQ(q) && !isTFq(q) && !isFill(q));
     rows += `<div class="marksbadge"><span>Total Marks</span><b>${all.length}</b></div>`;
     let n = 0;
     if (mcq.length) {
       rows += `<div class="part" style="--pc:#2563eb">PART A: MULTIPLE CHOICE (${mcq.length} marks) — Circle the correct answer.</div><div class="examgrid">`;
       mcq.forEach((q) => {
         n++;
-        rows += `<div class="examq"><div class="eqt"><span class="eqn">${n}.</span> ${zEsc(q?.text)}</div><div class="eopts">${(q?.options || []).map((o: string, i: number) => `<button class="eopt" onclick="zPick(this)"><span class="eol">${String.fromCharCode(65 + i)}</span><span>${zEsc(o)}</span></button>`).join("")}</div></div>`;
+        rows += `<div class="examq"><div class="eqt"><span class="eqn">${n}.</span> ${zQText(q?.text)}</div><div class="eopts">${(q?.options || []).map((o: string, i: number) => `<button class="eopt" onclick="zPick(this)"><span class="eol">${String.fromCharCode(65 + i)}</span><span>${zEsc(o)}</span></button>`).join("")}</div></div>`;
       });
       rows += `</div>`;
     }
@@ -998,15 +1133,23 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       rows += `<div class="part" style="--pc:#16a34a">PART B: TRUE OR FALSE (${tf.length} marks) — Write T for True or F for False.</div><div class="tfgrid">`;
       tf.forEach((q) => {
         n++;
-        rows += `<div class="tfq"><span><span class="eqn">${n}.</span> ${zEsc(q?.text)}</span><button class="tfbox" onclick="zCycleTF(this)"></button></div>`;
+        rows += `<div class="tfq"><span><span class="eqn">${n}.</span> ${zQText(q?.text)}</span><button class="tfbox" onclick="zCycleTF(this)"></button></div>`;
       });
       rows += `</div>`;
+    }
+    if (fill.length) {
+      rows += `<div class="part" style="--pc:#f97316">FILL IN THE BLANKS (${fill.length} marks) — Use the words in the box.</div>`;
+      rows += fillBank({ questions: fill });
+      fill.forEach((q) => {
+        n++;
+        rows += `<div class="examw"><div class="eqt"><span class="eqn">${n}.</span> ${zQText(q?.text)}</div></div>`;
+      });
     }
     if (rest.length) {
       rows += `<div class="part" style="--pc:#7c3aed">PART C: WRITTEN ANSWERS (${rest.length} marks) — Write your answer.</div>`;
       rest.forEach((q) => {
         n++;
-        rows += `<div class="examw"><div class="eqt"><span class="eqn">${n}.</span> ${zEsc(q?.text)}</div>${renderAnswer(q)}</div>`;
+        rows += `<div class="examw"><div class="eqt"><span class="eqn">${n}.</span> ${zQText(q?.text)}</div>${renderAnswer(q)}</div>`;
       });
     }
   } else if (layout === "activity") {
@@ -1014,10 +1157,11 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
     sections.forEach((sec: any, si: number) => {
       const c = PAL[si % PAL.length];
       rows += `<div class="actbox" style="--ac:${c}"><div class="acthd"><span class="actnum">${si + 1}</span> ${zEsc(sec?.title || "Activity")}</div>`;
+      rows += fillBank(sec);
       if (sec?.instructions) rows += `<div class="actins">${zEsc(sec.instructions)}</div>`;
       (sec?.questions || []).forEach((q: any) => {
         qn++;
-        rows += `<div class="actq"><div class="aqt">${zEsc(q?.text)}</div>${renderAnswer(q)}</div>`;
+        rows += `<div class="actq"><div class="aqt">${zQText(q?.text)}</div>${renderAnswer(q)}</div>`;
       });
       rows += `</div>`;
     });
@@ -1025,11 +1169,12 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
     // Comic panels: starburst number, speech-bubble question, 2-col panels
     sections.forEach((sec: any, si: number) => {
       rows += `<div class="comicban" style="--cc:${PAL[si % PAL.length]}">${zEsc(sec?.title || "Activity")}</div>`;
+      rows += fillBank(sec);
       if (sec?.instructions) rows += `<div class="secins">${zEsc(sec.instructions)}</div>`;
       rows += '<div class="comicgrid">';
       (sec?.questions || []).forEach((q: any) => {
         qn++;
-        rows += `<div class="cpanel"><div class="cburst">${qn}</div><div class="cbubble">${zEsc(q?.text)}</div>${renderAnswer(q)}</div>`;
+        rows += `<div class="cpanel"><div class="cburst">${qn}</div><div class="cbubble">${zQText(q?.text)}</div>${renderAnswer(q)}</div>`;
       });
       rows += "</div>";
     });
@@ -1037,21 +1182,23 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
     // Handwritten ruled-paper: number + question on a line, ruled answer space
     sections.forEach((sec: any) => {
       rows += `<div class="nbsec">${zEsc(sec?.title || "Activity")}</div>`;
+      rows += fillBank(sec);
       if (sec?.instructions) rows += `<div class="nbins">${zEsc(sec.instructions)}</div>`;
       (sec?.questions || []).forEach((q: any) => {
         qn++;
-        rows += `<div class="nbq"><span class="nbnum">${qn}.</span> ${zEsc(q?.text)}</div><div class="nbans">${renderAnswer(q)}</div>`;
+        rows += `<div class="nbq"><span class="nbnum">${qn}.</span> ${zQText(q?.text)}</div><div class="nbans">${renderAnswer(q)}</div>`;
       });
     });
   } else if (layout === "dark") {
     // Quiz-app flashcards: glowing chip, big question, full-width pill options
     sections.forEach((sec: any, si: number) => {
       rows += `<div class="dksec" style="--dc:${PAL[si % PAL.length]}">${zEsc(sec?.title || "Activity")}</div>`;
+      rows += fillBank(sec);
       if (sec?.instructions) rows += `<div class="dkins">${zEsc(sec.instructions)}</div>`;
       (sec?.questions || []).forEach((q: any) => {
         qn++;
         const c = PAL[(qn - 1) % PAL.length];
-        rows += `<div class="dkcard" style="--dc:${c}"><div class="dkchip">Q${qn}</div><div class="dkq">${zEsc(q?.text)}</div>${renderAnswer(q)}</div>`;
+        rows += `<div class="dkcard" style="--dc:${c}"><div class="dkchip">Q${qn}</div><div class="dkq">${zQText(q?.text)}</div>${renderAnswer(q)}</div>`;
       });
     });
   } else {
@@ -1059,13 +1206,14 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
     const wrap = layout === "grid";
     sections.forEach((sec: any, si: number) => {
       rows += `<div class="secpill" style="--sc:${PAL[si % PAL.length]}">${zEsc(sec?.title || "Activity")}</div>`;
+      rows += fillBank(sec);
       if (sec?.instructions)
         rows += `<div class="secins">${zEsc(sec.instructions)}</div>`;
       if (wrap) rows += '<div class="qgrid">';
       (sec?.questions || []).forEach((q: any) => {
         qn++;
         const c = PAL[(qn - 1) % PAL.length];
-        rows += `<div class="qrow" style="--qc:${c}"><div class="qnum">${qn}</div><div class="qbody"><div class="qtext">${zEsc(q?.text)}</div>${renderAnswer(q)}</div></div>`;
+        rows += `<div class="qrow" style="--qc:${c}"><div class="qnum">${qn}</div><div class="qbody"><div class="qtext">${zQText(q?.text)}</div>${renderAnswer(q)}</div></div>`;
       });
       if (wrap) rows += "</div>";
     });
@@ -1110,12 +1258,21 @@ body{font-family:'Baloo 2','Segoe UI',system-ui,sans-serif;background:${T.bg};co
 .opt .ol{flex:none;width:24px;height:24px;border-radius:50%;border:2px solid var(--qc,#7c3aed);color:var(--qc,#7c3aed);font-weight:900;display:flex;align-items:center;justify-content:center;font-size:12px}
 .opt.on{background:var(--qc,#7c3aed);color:#fff;border-color:var(--qc,#7c3aed)}
 .opt.on .ol{background:#fff;color:var(--qc,#7c3aed)}
-.tfrow{display:flex;gap:12px}
+.tfrow{display:flex;gap:10px;align-items:center}
+.tflabel{font-weight:800;font-size:14px;color:#475569}
 .tf{flex:1;border:2.5px solid #e2e8f0;background:#fff;border-radius:12px;padding:11px;font-family:inherit;font-weight:900;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:.15s;color:#334155}
 .tf-t.on{background:#16a34a;color:#fff;border-color:#16a34a}
 .tf-f.on{background:#dc2626;color:#fff;border-color:#dc2626}
 .lines{display:flex;flex-direction:column;gap:14px;margin-top:4px}
 .lines .ln{display:block;border-bottom:2.5px dotted #94a3b8;height:4px}
+.wbbank{background:#eef2ff;border:1.5px solid #c7d2fe;border-radius:16px;padding:13px 18px 14px;margin:4px 0 10px}
+.wbbank .wblabel{display:block;font-weight:900;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#4338ca;margin-bottom:9px}
+.wbbank .wbwords{display:flex;flex-wrap:wrap;align-items:center;row-gap:8px}
+.wbword{font-weight:800;font-size:15px;color:#1e293b;padding:2px 18px;line-height:1.2;white-space:nowrap}
+.wbword:not(:last-child){border-right:2px solid #c7d2fe}
+.wbword:first-child{padding-left:0}
+.wbinstr{font-weight:800;font-size:14px;color:#1e293b;margin:0 0 12px}
+.zblank{display:inline-block;min-width:96px;border-bottom:2px solid #1e293b;margin:0 5px;vertical-align:baseline}
 .sortins{font-size:13px;font-weight:700;color:#334155;margin-bottom:10px}
 .insbadge{background:#fde047;color:#854d0e;font-weight:900;font-size:12px;padding:3px 10px;border-radius:8px;margin-right:6px}
 .sorttable{display:flex;border:3px solid #1e293b;border-radius:20px;overflow:hidden;margin-top:4px;background:#fff}
@@ -1262,7 +1419,7 @@ ${T.extraCss || ""}
   <div class="kd-head">
     <div class="titlewrap">
       <div class="brandrow"><img src="${ZERA_LOGO_B64}" alt="Zera Education"/></div>
-      <div class="title"><span class="x">My</span> <span class="y">${kindWord}</span><span class="mascot">${T.mascot}</span></div>
+      <div class="title"><span class="x">${zEsc(headLead)}</span> <span class="y">${kindWord}</span><span class="mascot">${T.mascot}</span></div>
       ${subtitleHtml}
     </div>
     <div class="steps">
@@ -1283,13 +1440,13 @@ ${T.extraCss || ""}
   </div>
   ${passageHtml}
   ${rows}
-  <div class="reflect">
+  ${kind === "assessment" ? "" : `<div class="reflect">
     <h3>💭 REFLECTION</h3>
     <div class="rb">
       <p>⭐ What is the most important thing you learned today?</p>
       <textarea placeholder="Write your answer like a real scholar..."></textarea>
     </div>
-  </div>
+  </div>`}
   <div class="foot">⭐ Remember: take your time, think carefully, and do your best! ⭐</div>
   <div class="bar">
     <button class="btn print" onclick="window.print()">🖨️ Print</button>
@@ -4303,6 +4460,8 @@ export default function App() {
   };
 
   const [lessonInput, setLessonInput] = useState("");
+  // Optional extra instructions for generation, separate from the topic.
+  const [lessonInstructions, setLessonInstructions] = useState("");
   // --- Zera Assistant chat (ChatGPT-style Q&A + poster/image generation) ---
   type ChatMessage = { role: "user" | "model"; text: string; image?: string };
   const [chatOpen, setChatOpen] = useState(false);
@@ -5142,9 +5301,19 @@ export default function App() {
   } | null>(null);
   const [selectedQuestionTypes, setSelectedQuestionTypes] = useState<string[]>([
     "Multiple Choice",
-    "Fill in the Blanks",
     "Short Answer",
   ]);
+  // How many questions of each type to generate. The total (numQuestions) and
+  // the selected types are kept in sync from this.
+  const [typeCounts, setTypeCounts] = useState<Record<string, number>>({
+    "Multiple Choice": 3,
+    "Short Answer": 2,
+  });
+  useEffect(() => {
+    const types = Object.keys(typeCounts).filter((t) => typeCounts[t] > 0);
+    setSelectedQuestionTypes(types);
+    setNumQuestions(types.reduce((s, t) => s + (typeCounts[t] || 0), 0));
+  }, [typeCounts]);
   // Differentiated assessment levels — same worksheet reworded per Lexile band
   const [wsLevels, setWsLevels] = useState<string[]>([
     "200-300",
@@ -5160,6 +5329,7 @@ export default function App() {
     ws?: any;
     design?: string;
     kind?: string;
+    subject?: string;
   } | null>(null);
   const [interactiveDesign, setInteractiveDesign] = useState<string>("detective");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -7022,11 +7192,15 @@ export default function App() {
       }
     }
 
-    const result = await generateWorksheet(
+    const baseTopic =
       lessonInput.trim() ||
-        (fileContext
-          ? `Analysis and answer sheet for uploaded exam: ${fileContext.name}`
-          : content?.lessonTitle || ""),
+      (fileContext
+        ? `Analysis and answer sheet for uploaded exam: ${fileContext.name}`
+        : content?.lessonTitle || "");
+    const result = await generateWorksheet(
+      lessonInstructions.trim()
+        ? `${baseTopic}\n\nADDITIONAL INSTRUCTIONS (follow these): ${lessonInstructions.trim()}`
+        : baseTopic,
       {
         yearGroup,
         lexileLevel,
@@ -7034,6 +7208,7 @@ export default function App() {
         numSlides,
         numQuestions,
         questionTypes: selectedQuestionTypes,
+        typeCounts,
         includeStory,
         readingPassageOnly,
         metadataHints: content?.worksheet,
@@ -7582,7 +7757,6 @@ export default function App() {
   const QUESTION_TYPES = [
     "Multiple Choice",
     "True/False",
-    "Fill in the Blanks",
     "Short Answer",
     "Matching",
     "Vocabulary Check",
@@ -7612,6 +7786,9 @@ export default function App() {
   >("home");
   // Poster Studio state
   const [posterPrompt, setPosterPrompt] = useState("");
+  // Optional text to overlay on the image with a real font (perfect spelling).
+  const [posterText, setPosterText] = useState("");
+  const [posterSubtext, setPosterSubtext] = useState("");
   const [posterStyle, setPosterStyle] = useState("Playful cartoon");
   const [posterGallery, setPosterGallery] = useState<
     { url: string; prompt: string }[]
@@ -18921,18 +19098,31 @@ export default function App() {
   const handleGeneratePoster = async () => {
     const topic = posterPrompt.trim();
     if (!topic) {
-      alert("Describe the poster you want to create first.");
+      alert("Describe the image you want to create first.");
       return;
     }
     setIsGeneratingPoster(true);
     try {
-      const composed = `${topic}. Art style: ${posterStyle}. Audience: ${yearGroup} students.`;
+      const title = posterText.trim();
+      const subtitle = posterSubtext.trim();
+      const wantsText = !!(title || subtitle);
+      // When text is wanted, ask the model for a TEXT-FREE background (AI text
+      // is unreliable) — we overlay the exact wording afterwards with a real
+      // font for perfect spelling.
+      let composed = topic;
+      if (wantsText) {
+        composed += `. Do NOT include any words, letters or numbers in the image; leave clean, uncluttered space near the top for a title.`;
+      }
+      if (posterStyle) composed += ` Style: ${posterStyle}.`;
       const res = await generatePosterImage(composed);
       if (!res?.image) {
         throw new Error("No image was returned — please try again.");
       }
+      const finalImage = wantsText
+        ? await overlayTextOnImage(res.image, title, subtitle)
+        : res.image;
       setPosterGallery((prev) =>
-        [{ url: res.image, prompt: topic }, ...prev].slice(0, 12),
+        [{ url: finalImage, prompt: title || topic }, ...prev].slice(0, 12),
       );
     } catch (e: any) {
       const msg = String(e?.message || e);
@@ -18964,7 +19154,7 @@ export default function App() {
         <div className="flex items-center gap-3">
           <Palette size={20} className="text-[#059669]" />
           <h2 className="text-lg font-black text-[#064E3B] uppercase tracking-wide">
-            Poster Studio
+            Image Generator
           </h2>
         </div>
         <ZeraBrandLogo size="sm" variant="original" />
@@ -18973,14 +19163,35 @@ export default function App() {
         <aside className="w-96 bg-white border-r-2 border-[#D1FAE5] p-6 overflow-y-auto custom-scrollbar space-y-6 shrink-0">
           <div className="space-y-2">
             <label className="text-[10px] font-black uppercase text-[#7C7A65] tracking-widest">
-              What is the poster about?
+              Describe the image you want
             </label>
             <textarea
               value={posterPrompt}
               onChange={(e) => setPosterPrompt(e.target.value)}
-              placeholder='e.g. "The water cycle with labels", "Classroom rules", "Recycling — reduce, reuse, recycle"'
+              placeholder='Type anything — e.g. "a friendly robot reading a book", "a poster for Reading Week", "a watercolour mountain landscape"'
               className="w-full h-28 p-3 bg-[#F9F8F0] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold resize-none focus:border-[#059669] outline-none transition-all"
             />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase text-[#7C7A65] tracking-widest">
+              Text on the image (optional — added with perfect spelling)
+            </label>
+            <input
+              value={posterText}
+              onChange={(e) => setPosterText(e.target.value)}
+              placeholder="Big title — e.g. Sports Day 2026"
+              className="w-full p-2.5 bg-[#F9F8F0] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold focus:border-[#059669] outline-none transition-all"
+            />
+            <input
+              value={posterSubtext}
+              onChange={(e) => setPosterSubtext(e.target.value)}
+              placeholder="Smaller line — e.g. 15 March · Green Field"
+              className="w-full p-2.5 bg-[#F9F8F0] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold focus:border-[#059669] outline-none transition-all"
+            />
+            <p className="text-[10px] font-semibold text-[#7C7A65]/70 leading-snug">
+              Leave blank for a plain image. Any text here is drawn onto the
+              image afterward, so it's always spelled correctly.
+            </p>
           </div>
           <div className="space-y-2">
             <label className="text-[10px] font-black uppercase text-[#7C7A65] tracking-widest">
@@ -19012,32 +19223,6 @@ export default function App() {
               ))}
             </div>
           </div>
-          <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-[#7C7A65] tracking-widest">
-              Audience
-            </label>
-            <select
-              value={yearGroup}
-              onChange={(e) => setYearGroup(e.target.value)}
-              className="w-full p-2.5 text-sm font-bold bg-[#F9F8F0] rounded-xl border-2 border-[#D1FAE5] focus:border-[#059669] outline-none"
-            >
-              {[
-                "Year 1",
-                "Year 2",
-                "Year 3",
-                "Year 4",
-                "Year 5",
-                "Year 6",
-                "Year 7",
-                "Year 8",
-                "Year 9",
-              ].map((y) => (
-                <option key={y} value={y}>
-                  {y}
-                </option>
-              ))}
-            </select>
-          </div>
           <button
             onClick={handleGeneratePoster}
             disabled={isGeneratingPoster}
@@ -19049,10 +19234,10 @@ export default function App() {
               <Sparkles size={16} />
             )}
             {isGeneratingPoster
-              ? "Painting your poster…"
+              ? "Creating your image…"
               : posterGallery.length
                 ? "Generate Another"
-                : "Generate Poster"}
+                : "Generate Image"}
           </button>
           <p className="text-[10px] font-semibold text-[#7C7A65] leading-relaxed">
             Tip: mention any text you want ON the poster (title, labels) and it
@@ -19284,9 +19469,9 @@ export default function App() {
                 },
                 {
                   id: "poster",
-                  name: "Poster Studio",
+                  name: "Image Generator",
                   icon: Palette,
-                  desc: "AI Posters & Classroom Art",
+                  desc: "Create any image from a description",
                 },
               ].map((tool) => (
                 <button
@@ -22008,48 +22193,49 @@ export default function App() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                    Number of Questions
-                  </label>
-                  <input
-                    type="number"
-                    value={isNaN(numQuestions) ? "" : numQuestions}
-                    onChange={(e) =>
-                      setNumQuestions(
-                        e.target.value === ""
-                          ? 0
-                          : parseInt(e.target.value) || 0,
-                      )
-                    }
-                    className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                    Question Types
-                  </label>
-                  <div className="grid grid-cols-1 gap-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
+                      Question Types &amp; Counts
+                    </label>
+                    <span className="text-[10px] font-black text-[#059669]">
+                      Total: {numQuestions}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 gap-1.5">
                     {QUESTION_TYPES.map((type) => (
-                      <label
+                      <div
                         key={type}
-                        className="flex items-center gap-2 text-xs font-bold text-[#064E3B]"
+                        className="flex items-center justify-between gap-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl px-3 py-1.5"
                       >
+                        <span className="text-xs font-bold text-[#064E3B]">
+                          {type}
+                        </span>
                         <input
-                          type="checkbox"
-                          className="rounded border-[#D1FAE5] text-[#059669] focus:ring-[#059669]"
-                          checked={selectedQuestionTypes.includes(type)}
-                          onChange={() =>
-                            setSelectedQuestionTypes((prev) =>
-                              prev.includes(type)
-                                ? prev.filter((t) => t !== type)
-                                : [...prev, type],
-                            )
-                          }
+                          type="number"
+                          min={0}
+                          inputMode="numeric"
+                          placeholder="0"
+                          value={typeCounts[type] ? String(typeCounts[type]) : ""}
+                          onChange={(e) => {
+                            // Strip leading zeros so the field can't get stuck on "0".
+                            const raw = e.target.value.replace(/^0+(?=\d)/, "");
+                            const n = raw === "" ? 0 : Math.max(0, parseInt(raw, 10) || 0);
+                            setTypeCounts((prev) => {
+                              const next = { ...prev };
+                              if (n > 0) next[type] = n;
+                              else delete next[type];
+                              return next;
+                            });
+                          }}
+                          className="w-16 p-1 text-center bg-white border border-[#D1FAE5] rounded-lg text-sm font-bold"
                         />
-                        {type}
-                      </label>
+                      </div>
                     ))}
                   </div>
+                  <p className="text-[10px] font-semibold text-[#7C7A65]/70 leading-snug">
+                    Choose how many questions of each type (0 = none). The total
+                    is {numQuestions}.
+                  </p>
                 </div>
                 {/* Selection Styles Removed */}
 
@@ -22141,54 +22327,17 @@ export default function App() {
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                      Topic / Instructions
+                      Instructions <span className="normal-case opacity-60">(optional)</span>
                     </label>
                     <textarea
-                      value={lessonInput}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setLessonInput(val);
-                        if (content)
-                          setContent((prev) =>
-                            prev ? { ...prev, lessonTitle: val } : null,
-                          );
-                      }}
-                      className="w-full h-24 p-2 bg-[#F9F8F0] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold resize-none shadow-sm focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 outline-none transition-all"
-                      placeholder="e.g. Geometry for Year 4 or Scientific Inquiry..."
+                      value={lessonInstructions}
+                      onChange={(e) => setLessonInstructions(e.target.value)}
+                      className="w-full h-20 p-2 bg-[#F9F8F0] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold resize-none shadow-sm focus:border-[#059669] focus:ring-1 focus:ring-[#059669]/20 outline-none transition-all"
+                      placeholder="Extra guidance — e.g. focus on word problems, keep it easy, include real-world examples..."
                     />
                   </div>
                 </div>
 
-                <div className="space-y-4 pt-4 border-t-2 border-[#D1FAE5]">
-                  <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest leading-none">
-                    Lesson Overview
-                  </h3>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                      Description
-                    </label>
-                    <textarea
-                      value={content?.worksheet?.description || ""}
-                      onChange={(e) =>
-                        updateWorksheetMetadata("description", e.target.value)
-                      }
-                      className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold resize-none h-20"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                      Methodology
-                    </label>
-                    <textarea
-                      value={content?.worksheet?.methodology || ""}
-                      onChange={(e) =>
-                        updateWorksheetMetadata("methodology", e.target.value)
-                      }
-                      placeholder="e.g. Aligned with Cambridge standards, focusing on interactive conceptual depth and scaffolded exercises."
-                      className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold resize-none h-20 italic"
-                    />
-                  </div>
-                </div>
                 <button
                   onClick={() => generateOnlyWorksheet(false)}
                   disabled={
@@ -22717,6 +22866,44 @@ export default function App() {
                             ></p>
                           </div>
                         </div>
+                        {(() => {
+                          const fills = section.questions.filter((q) =>
+                            /fill|blank/.test((q.type || "").toLowerCase()),
+                          );
+                          // One word per fill-in question so the bank always
+                          // tallies with the number of questions.
+                          const words = fills
+                            .map((q) => String((q.options && q.options[0]) || "").trim())
+                            .filter(Boolean)
+                            .sort((a, b) => a.localeCompare(b));
+                          if (!words.length) return null;
+                          return (
+                            <div className="pl-14">
+                              <div className="bg-indigo-50 border border-indigo-200 rounded-2xl px-4 py-3 mb-2">
+                                <span className="block text-[11px] font-black uppercase tracking-widest text-indigo-700 mb-2">
+                                  📋 Word Bank
+                                </span>
+                                <div className="flex flex-wrap items-center gap-y-2">
+                                  {words.map((w, i) => (
+                                    <span
+                                      key={i}
+                                      className={cn(
+                                        "font-bold text-[15px] text-[#1e293b] px-[18px] leading-tight whitespace-nowrap",
+                                        i === 0 && "pl-0",
+                                        i !== words.length - 1 && "border-r-2 border-indigo-200",
+                                      )}
+                                    >
+                                      {w}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                              <p className="font-bold text-sm mb-2 text-[#1e293b]">
+                                ✏️ Fill in the blanks using the words from the word bank.
+                              </p>
+                            </div>
+                          );
+                        })()}
                         <div className="grid grid-cols-1 gap-8 pl-14">
                           {section.questions.map((q, qi) => (
                             <div key={qi} className="space-y-3">
@@ -22763,9 +22950,17 @@ export default function App() {
                                       : tt.includes("cut") ||
                                           tt.includes("paste")
                                         ? "cut"
-                                        : q.options && q.options.length
-                                          ? "mcq"
-                                          : "write";
+                                        : tt.includes("fill") ||
+                                            tt.includes("blank")
+                                          ? "fill"
+                                          : q.options && q.options.length
+                                            ? "mcq"
+                                            : "write";
+                                if (kind === "fill") {
+                                  // The blank ("____") is in the sentence and the
+                                  // word bank is shown above — no answer area.
+                                  return null;
+                                }
                                 if (kind === "draw") {
                                   return (
                                     <div className="h-40 w-full border-2 border-dashed border-[#E5E2C8] rounded-xl mt-4" />
@@ -28037,12 +28232,13 @@ export default function App() {
     const title = ws.title || content?.lessonTitle || "Assessment";
     // Build the colourful, interactive worksheet using the chosen design.
     // Store `ws` so the design picker can re-render other themes instantly.
-    const html = buildInteractiveHTML(ws, title, interactiveDesign, docKind);
+    const subjectName = (content?.lessonPlan?.subject || subject || "").trim();
+    const html = buildInteractiveHTML(ws, title, interactiveDesign, docKind, subjectName);
 
     // Show the interactive assessment inline in the worksheet view. Scroll it
     // into view so it can never look like "nothing happened" when the user is
     // scrolled down among the questions.
-    setInteractiveDoc({ html, title, ws, design: interactiveDesign, kind: docKind });
+    setInteractiveDoc({ html, title, ws, design: interactiveDesign, kind: docKind, subject: subjectName });
     setCurrentView("worksheet");
     setTimeout(() => {
       try {
@@ -28061,7 +28257,7 @@ export default function App() {
     setInteractiveDesign(key);
     setInteractiveDoc((prev) =>
       prev && prev.ws
-        ? { ...prev, html: buildInteractiveHTML(prev.ws, prev.title, key, prev.kind || "worksheet"), design: key }
+        ? { ...prev, html: buildInteractiveHTML(prev.ws, prev.title, key, prev.kind || "worksheet", prev.subject || ""), design: key }
         : prev,
     );
   };

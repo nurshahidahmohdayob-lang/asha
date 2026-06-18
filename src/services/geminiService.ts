@@ -33,6 +33,8 @@ export interface EduOptions {
   numSlides: number;
   numQuestions: number;
   questionTypes: string[];
+  // Optional per-type counts, e.g. { "Multiple Choice": 5, "Short Answer": 3 }.
+  typeCounts?: Record<string, number>;
   includeStory?: boolean;
   readingPassageOnly?: boolean;
   readingProgramOnly?: boolean;
@@ -314,6 +316,179 @@ function capWorksheetQuestions<T extends { sections?: any[] }>(ws: T, max: numbe
   return { ...ws, sections };
 }
 
+// Reorganize an assessment so questions are MIXED across topics and GROUPED by
+// type in a fixed order (multiple-choice, true/false, fill-in, matching,
+// sorting, cut-and-paste, short-answer, scenario, drawing) — one section per
+// type, no topic-based sections.
+const QTYPE_ORDER = [
+  "multiple-choice",
+  "true-false",
+  "fill-in-the-blanks",
+  "matching",
+  "sorting",
+  "cut-and-paste",
+  "scenario",
+  "short-answer",
+  "drawing",
+];
+const QTYPE_TITLE: Record<string, string> = {
+  "multiple-choice": "Multiple Choice",
+  "true-false": "True or False",
+  "fill-in-the-blanks": "Fill in the Blanks",
+  matching: "Matching",
+  sorting: "Sorting",
+  "cut-and-paste": "Cut and Paste",
+  scenario: "Scenario Questions",
+  "short-answer": "Short Answer",
+  drawing: "Drawing",
+};
+function normQType(t: any): string {
+  const s = String(t || "short-answer").toLowerCase();
+  if (s.includes("multiple") || s.includes("mcq") || s.includes("choice")) return "multiple-choice";
+  if (s.includes("true") || s.includes("false")) return "true-false";
+  if (s.includes("fill") || s.includes("blank")) return "fill-in-the-blanks";
+  if (s.includes("match")) return "matching";
+  if (s.includes("sort")) return "sorting";
+  if (s.includes("cut") || s.includes("paste")) return "cut-and-paste";
+  if (s.includes("scenario")) return "scenario";
+  if (s.includes("draw")) return "drawing";
+  return "short-answer";
+}
+// Best-effort recovery of question objects from a possibly-truncated JSON string.
+// Groq can cut a response off at max_tokens, leaving invalid JSON; rather than
+// lose the whole batch we extract every complete {"text":...,"type":...} object.
+function salvageQuestions(text: string): any[] {
+  if (!text) return [];
+  try {
+    const obj = JSON.parse(text);
+    if (Array.isArray(obj?.questions)) return obj.questions;
+    if (Array.isArray(obj?.sections))
+      return obj.sections.flatMap((s: any) => s?.questions || []);
+  } catch {
+    /* fall through to regex salvage below */
+  }
+  const out: any[] = [];
+  // Question objects have no nested objects (options is a flat array), so a
+  // brace-balanced-free match is safe.
+  const re = /\{[^{}]*?"text"\s*:\s*"(?:[^"\\]|\\.)*"[^{}]*?\}/g;
+  for (const m of text.match(re) || []) {
+    try {
+      out.push(JSON.parse(m));
+    } catch {
+      /* skip a malformed fragment */
+    }
+  }
+  return out;
+}
+
+// Dedupe questions GLOBALLY across all sections (top-ups can repeat a question).
+function dedupeSections(sections: any[]): any[] {
+  const seen = new Set<string>();
+  return (sections || []).map((s: any) => ({
+    ...s,
+    questions: (s?.questions || []).filter((q: any) => {
+      const k = String(q?.text || "").toLowerCase().replace(/\s+/g, " ").trim();
+      if (!k || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    }),
+  }));
+}
+
+// Make sure every fill-in-the-blank sentence keeps ONE clean blank to complete.
+// This is NON-DESTRUCTIVE: it never reorders words (which would break grammar).
+// It only normalizes the underscores, and — if the sentence somehow has no blank
+// — replaces the correct answer word in place so the gap lands mid-sentence.
+function normalizeFillBlanks<T extends { sections?: any[] }>(ws: T): T {
+  if (!ws || !Array.isArray(ws.sections)) return ws;
+  const BLANK = "____";
+  for (const sec of ws.sections) {
+    for (const q of sec?.questions || []) {
+      if (normQType(q?.type) !== "fill-in-the-blanks") continue;
+      let text = String(q?.text || "").replace(/_{2,}/g, BLANK).trim();
+      const answer = String((q?.options && q.options[0]) || "").trim();
+
+      // No blank at all? Replace the answer word in place (stays mid-sentence).
+      if (!text.includes(BLANK) && answer) {
+        const re = new RegExp(`\\b${answer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+        if (re.test(text)) text = text.replace(re, BLANK);
+      }
+
+      // Collapse any extra blanks down to the first one only.
+      let seen = false;
+      text = text.replace(/____/g, () => (seen ? "" : ((seen = true), BLANK)));
+
+      // Ensure a single space on each side of the blank (fixes "of____ head"),
+      // then tidy spaces and remove a space before punctuation.
+      text = text
+        .replace(/\s*____\s*/g, " ____ ")
+        .replace(/\s+([.?!,;:])/g, "$1")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+      q.text = text;
+    }
+  }
+  return ws;
+}
+function organizeByType<T extends { sections?: any[] }>(ws: T): T {
+  if (!ws || !Array.isArray(ws.sections)) return ws;
+  const all = ws.sections.flatMap((s: any) => s?.questions || []);
+  if (!all.length) return ws;
+  const groups: Record<string, any[]> = {};
+  for (const q of all) {
+    const k = normQType(q?.type);
+    (groups[k] ||= []).push(q);
+  }
+  const sections: any[] = [];
+  for (const k of QTYPE_ORDER) {
+    if (groups[k]?.length)
+      sections.push({ title: QTYPE_TITLE[k], instructions: "", questions: groups[k] });
+  }
+  for (const k of Object.keys(groups)) {
+    if (!QTYPE_ORDER.includes(k))
+      sections.push({ title: QTYPE_TITLE[k] || "Questions", instructions: "", questions: groups[k] });
+  }
+  return { ...ws, sections };
+}
+
+// Cap to the per-type counts the user chose (e.g. at most 5 multiple-choice,
+// 3 short-answer). Returns a single flat section; organizeByType regroups it.
+function capByTypeCounts<T extends { sections?: any[] }>(
+  ws: T,
+  typeCounts: Record<string, number> | undefined,
+  totalMax: number,
+): T {
+  if (!ws || !Array.isArray(ws.sections)) return ws;
+  const canon: Record<string, number> = {};
+  if (typeCounts)
+    for (const [k, v] of Object.entries(typeCounts)) {
+      const c = normQType(k);
+      canon[c] = (canon[c] || 0) + (Number(v) || 0);
+    }
+  if (Object.keys(canon).length === 0) return capWorksheetQuestions(ws, totalMax);
+  const used: Record<string, number> = {};
+  const kept: any[] = [];
+  for (const q of ws.sections.flatMap((s: any) => s?.questions || [])) {
+    const t = normQType(q?.type);
+    if ((used[t] || 0) < (canon[t] || 0)) {
+      used[t] = (used[t] || 0) + 1;
+      kept.push(q);
+    }
+  }
+  return { ...ws, sections: [{ title: "Questions", instructions: "", questions: kept }] };
+}
+
+// Drop any question whose type wasn't among the user's selected types, so the
+// worksheet only ever contains the question types that were requested.
+function filterWorksheetTypes<T extends { sections?: any[] }>(ws: T, allowed: Set<string>): T {
+  if (!ws || !Array.isArray(ws.sections) || allowed.size === 0) return ws;
+  const sections = ws.sections.map((s: any) => ({
+    ...s,
+    questions: (s?.questions || []).filter((q: any) => allowed.has(normQType(q?.type))),
+  }));
+  return { ...ws, sections };
+}
+
 export async function generateWorksheet(lessonInput: string, options: EduOptions, slideContext?: SlideContent[], onPartial?: (partial: { phase: string; title: string; readingPassage?: string; description?: string; methodology?: string; sections: WorksheetSection[]; done: number; total: number }) => void): Promise<{ title: string; readingPassage?: string; leveledPassages?: Record<string, string>; description?: string; methodology?: string; sections: WorksheetSection[] }> {
   try {
     const contents: any[] = [];
@@ -324,9 +499,21 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
     const requestedWordCount = options.targetWordCount ? `${options.targetWordCount} words` : "300-500 words";
     const requestedWorksheetPassageWordCount = options.targetWordCount ? `${options.targetWordCount} words` : "500-800 words";
 
-    const storyPrompt = options.includeStory 
+    const storyPrompt = options.includeStory
       ? `IMPORTANT: Start by writing a short story or reading passage (around ${requestedWordCount}) about "${lessonInput}" suitable for ${options.yearGroup} students. Include this story in the "readingPassage" field.`
       : "DO NOT include a reading passage. Leave the 'readingPassage' field as an empty string \"\".";
+
+    // Per-type breakdown (e.g. "5 Multiple Choice, 3 Short Answer") when the
+    // user chose counts per type; otherwise a plain total.
+    const typeBreakdown = options.typeCounts
+      ? Object.entries(options.typeCounts)
+          .filter(([, n]) => (n as number) > 0)
+          .map(([t, n]) => `${n} ${t}`)
+          .join(", ")
+      : "";
+    const countSpec = typeBreakdown
+      ? `Produce EXACTLY this breakdown of question types: ${typeBreakdown} (${options.numQuestions} questions in total). Use ONLY these question types in these amounts — keep writing until every count is met.`
+      : `You MUST produce a FULL set of ${options.numQuestions} questions IN TOTAL across all sections — keep writing questions until you reach ${options.numQuestions}; do not stop early. (A few extra is acceptable; we keep the first ${options.numQuestions}.) Allowed Types: ${options.questionTypes.join(", ")}.`;
 
     if (slideContext) {
       contents.push(`CONTEXT FROM SLIDES: ${JSON.stringify(slideContext.map(s => ({ title: s.title, content: s.content })))}`);
@@ -338,13 +525,15 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
          Subject: ${options.subject}, Year Group: ${options.yearGroup}, Lexile: ${options.lexileLevel}.
          The passage should be informative, engaging, and strictly follow the Lexile level complexity. 
          DO NOT generate any assessment questions or sections. Return exactly one empty section to satisfy the schema.`
-      : `As an expert Cambridge Educator, generate a worksheet for: "${lessonInput}". You MUST produce a FULL set of ${options.numQuestions} questions IN TOTAL across all sections — keep writing questions until you reach ${options.numQuestions}; do not stop early. (A few extra is acceptable; we keep the first ${options.numQuestions}.) Subject: ${options.subject}, Year Group: ${options.yearGroup}. Allowed Types: ${options.questionTypes.join(", ")}. ${storyPrompt}`;
+      : `As an expert Cambridge Educator, generate a worksheet for: "${lessonInput}". ${countSpec} Subject: ${options.subject}, Year Group: ${options.yearGroup}. ${storyPrompt}`;
 
-    mainPrompt += `\n\nCURRICULUM ALIGNMENT:
-    - Align with Cambridge International Framework, Scheme of Work, and official textbooks/references.
-    - Reference relevant subject codes and use the OFFICIAL LO CODE FORMAT (Stage+Strand+Number, e.g., 3TC.01) from the following list: ${CAMBRIDGE_CURRICULUM_INFO}
-    - Ensure logical progression and high academic terminology consistent with Cambridge standards.
-    - CRITICAL: Use the provided subject "${options.subject}" exactly as given. Do not substitute it with a similar subject (e.g. do not change Digital Literacy to Computer Science).`;
+    mainPrompt += `\n\nQUESTION QUALITY (MANDATORY):
+    - Align with the Cambridge International Framework; keep terminology age-appropriate for ${options.yearGroup}. Use the subject "${options.subject}" exactly as given (do not substitute a similar subject).
+    - Produce the FULL requested number of questions — do NOT stop early. ${countSpec}
+    - EVERY question MUST be directly about the topic "${lessonInput}" — do not drift to a loosely related subject.
+    - Every question must be FACTUALLY CORRECT, logically sound, unambiguous, and exam-style (like Cambridge textbooks/past papers).
+    - For "multiple-choice", EXACTLY ONE option may be correct — the other options must be clearly WRONG, never also-true or partially-correct (e.g. do NOT ask "What is a robot used for in the home?" with both "clean the house" and "cook meals" as options). Make the question specific enough that only ONE option is right. For "true-false", the statement must be verifiably true or false.
+    - Do NOT repeat questions; keep them distinct.`;
 
     if (options.metadataHints?.description) {
       mainPrompt += `\nIntegration Goal: ${options.metadataHints.description}`;
@@ -354,9 +543,9 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
     }
 
     const encodingRules = `QUESTION "type" FIELD — set it to one of these exact lowercase values based on the question, and follow the encoding rules for each:
-- "multiple-choice": put 3-4 answer choices in "options".
+- "multiple-choice": put 3-4 answer choices in "options". EXACTLY ONE option may be correct — the other options must be clearly WRONG, never also-true or partially-correct. Do not write options where more than one could be a valid answer; the student must be able to pick a single, unambiguous answer. Place the correct option in a VARYING position (not always first).
 - "true-false": put exactly ["True","False"] in "options".
-- "fill-in-the-blanks": include a blank shown as "____" inside "text"; leave "options" empty.
+- "fill-in-the-blanks": a short, concise exam-style sentence (8-14 words) with exactly one "____" blank and a normal space around it. The FIRST option is the correct answer (ONE or TWO words; use DIGITS for numbers); add 1-2 short distractors. Each fill-in must have a different answer.
 - "short-answer" / "scenario": an open written response; leave "options" empty.
 - "matching": a left-to-right matching task; leave "options" empty.
 - "drawing": a creative DRAWING task — the student draws their answer in an empty box. Write a clear drawing instruction in "text" and DO NOT provide "options".
@@ -424,31 +613,112 @@ Only use the types that appear in the "Allowed Types" list above.`;
       });
       const text = response.text;
       if (!text) throw new Error("Empty response");
-      let ws: any = JSON.parse(text);
-      // The model often stops short on large counts. Top up the shortfall with
-      // a couple of quick follow-up calls so we actually reach numQuestions,
-      // then cap to the exact number.
-      const countQ = (w: any) =>
-        (w?.sections || []).reduce(
-          (n: number, s: any) => n + (s?.questions?.length || 0),
-          0,
-        );
+      // Only keep the question types the user actually selected (the model can
+      // slip in extra types like drawing).
+      const allowedTypes = new Set(
+        (options.questionTypes || []).map((x) => normQType(x)),
+      );
+      // The response can be truncated at max_tokens (large counts) leaving
+      // invalid JSON — salvage whatever questions we can instead of failing.
+      let parsed: any;
+      try {
+        parsed = JSON.parse(text);
+        if (!Array.isArray(parsed?.sections) || !parsed.sections.length) {
+          const qs = salvageQuestions(text);
+          if (qs.length) parsed.sections = [{ title: "Questions", instructions: "", questions: qs }];
+        }
+      } catch {
+        const titleM = text.match(/"title"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+        const passM = text.match(/"readingPassage"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+        parsed = {
+          title: titleM ? titleM[1] : (lessonInput || "Worksheet"),
+          readingPassage: passM ? passM[1] : "",
+          sections: [{ title: "Questions", instructions: "", questions: salvageQuestions(text) }],
+        };
+      }
+      let ws: any = filterWorksheetTypes(parsed, allowedTypes);
       const want = options.numQuestions || 0;
+
+      // Desired count per CANONICAL type (when the user chose per-type counts).
+      const desiredByType: Record<string, number> = {};
+      if (options.typeCounts)
+        for (const [k, v] of Object.entries(options.typeCounts)) {
+          const c = normQType(k);
+          desiredByType[c] = (desiredByType[c] || 0) + (Number(v) || 0);
+        }
+      const hasTypeCounts = Object.keys(desiredByType).length > 0;
+
+      const countByType = (w: any) => {
+        const m: Record<string, number> = {};
+        for (const q of (w?.sections || []).flatMap((s: any) => s?.questions || [])) {
+          const t = normQType(q?.type);
+          m[t] = (m[t] || 0) + 1;
+        }
+        return m;
+      };
+      const countTotal = (w: any) =>
+        (w?.sections || []).reduce((n: number, s: any) => n + (s?.questions?.length || 0), 0);
+
+      // Compute what's still missing. With per-type counts we top up EACH short
+      // type specifically (so capByTypeCounts won't trim away the wrong types);
+      // otherwise we just chase the total.
+      const computeDeficit = (): { byType: Record<string, number>; total: number } => {
+        if (hasTypeCounts) {
+          const cur = countByType(ws);
+          const byType: Record<string, number> = {};
+          let total = 0;
+          for (const [t, n] of Object.entries(desiredByType)) {
+            const miss = n - (cur[t] || 0);
+            if (miss > 0) {
+              byType[t] = miss;
+              total += miss;
+            }
+          }
+          return { byType, total };
+        }
+        return { byType: {}, total: Math.max(0, want - countTotal(ws)) };
+      };
+
+      // The model usually stops short on large counts (token cap). Top up the
+      // shortfall in SAFE-SIZED batches (each small enough to return complete
+      // JSON) until every requested count is met, then cap to the exact numbers.
+      const BATCH = 12; // questions per top-up call — stays well under the token cap
+      const maxTopups = want > 0 ? Math.ceil(want / BATCH) + 6 : 0;
       let topups = 0;
-      while (want > 0 && countQ(ws) < want && topups < 3) {
+      let dry = 0;
+      while (want > 0 && topups < maxTopups && dry < 3) {
+        const deficit = computeDeficit();
+        if (deficit.total <= 0) break;
         topups++;
-        const need = want - countQ(ws);
+
+        // Build the batch request — fill the shortest types first, up to BATCH.
+        let need = Math.min(deficit.total, BATCH);
+        let breakdownLine = `${need} questions`;
+        if (hasTypeCounts) {
+          const parts: string[] = [];
+          let budget = BATCH;
+          for (const [t, miss] of Object.entries(deficit.byType)) {
+            if (budget <= 0) break;
+            const take = Math.min(miss, budget);
+            parts.push(`${take} "${t}"`);
+            budget -= take;
+          }
+          need = BATCH - budget;
+          breakdownLine = parts.join(", ");
+        }
+
         const existing = (ws?.sections || [])
           .flatMap((s: any) => s?.questions || [])
           .map((q: any) => q?.text)
           .filter(Boolean)
-          .slice(-20);
+          .slice(-25);
+        let extra: any[] = [];
         try {
           const more = await generateContentWithRetry({
             contents: {
               parts: [
                 {
-                  text: `As an expert Cambridge Educator, write ${need} ADDITIONAL distinct assessment questions about "${lessonInput}" (Subject: ${options.subject}, Year Group: ${options.yearGroup}). They MUST be different from these existing questions: ${JSON.stringify(existing)}. Allowed Types: ${options.questionTypes.join(", ")}.\n${encodingRules}\nReturn ONLY JSON: {"questions": [{"text","type","options"}]}`,
+                  text: `As an expert Cambridge Educator, write EXACTLY these ADDITIONAL distinct, exam-style assessment questions STRICTLY about the topic "${lessonInput}" (Subject: ${options.subject}, Year Group: ${options.yearGroup}): ${breakdownLine}. EVERY question must be directly about "${lessonInput}" — do not drift off-topic. Use ONLY these exact lowercase "type" values. Every question must be factually accurate, logically sound, and aligned with Cambridge textbooks/past papers, with a clearly correct answer. For multiple-choice, EXACTLY ONE option may be correct — the other options must be clearly WRONG (never also-true or partially-correct) so the student can pick a single unambiguous answer. Fill-in-the-blank answers must be SHORT (one or two words). They MUST be different from these existing questions: ${JSON.stringify(existing)}.\n${encodingRules}\nReturn ONLY JSON: {"questions": [{"text","type","options"}]}`,
                 },
               ],
             },
@@ -464,22 +734,33 @@ Only use the types that appear in the "Allowed Types" list above.`;
               },
             },
           });
-          const extra = JSON.parse(more.text || "{}")?.questions || [];
-          if (!extra.length) break;
-          const secs =
-            ws?.sections && ws.sections.length
-              ? ws.sections
-              : [{ title: "More Questions", instructions: "", questions: [] }];
-          secs[secs.length - 1].questions = [
-            ...(secs[secs.length - 1].questions || []),
-            ...extra,
-          ];
-          ws = { ...ws, sections: secs };
+          // Salvage handles truncated top-up responses too. When per-type counts
+          // are set, only accept types we still need (so we converge).
+          extra = salvageQuestions(more.text || "").filter((q: any) => {
+            const t = normQType(q?.type);
+            if (!allowedTypes.has(t)) return false;
+            return hasTypeCounts ? (deficit.byType[t] || 0) > 0 : true;
+          });
         } catch {
-          break; // keep whatever we have if a top-up fails
+          extra = []; // network/parse failure — try another batch rather than give up
         }
+        void need;
+        if (!extra.length) {
+          dry++;
+          continue;
+        }
+        dry = 0;
+        const secs =
+          ws?.sections && ws.sections.length
+            ? ws.sections
+            : [{ title: "More Questions", instructions: "", questions: [] }];
+        secs[secs.length - 1].questions = [
+          ...(secs[secs.length - 1].questions || []),
+          ...extra,
+        ];
+        ws = { ...ws, sections: dedupeSections(secs) };
       }
-      return capWorksheetQuestions(ws, want);
+      return normalizeFillBlanks(organizeByType(capByTypeCounts(ws, options.typeCounts, want)));
     }
 
     // SPEED: generate the questions in CONCURRENT batches (each call produces
@@ -1385,7 +1666,9 @@ async function groqGenerate(
   // Give enough room for large worksheets (e.g. 50 questions). The 70B model
   // has a high per-minute token budget; the small fallback model has a tighter
   // one, so we use a smaller cap only for that model (see model loop).
-  const maxTokens = /8b|instant/i.test(model) ? 3500 : 8000;
+  // The 8B fallback has a tight 6000 TPM budget; keep input+output under it so
+  // it can actually serve as a fallback (a larger cap returns 413 every time).
+  const maxTokens = /8b|instant/i.test(model) ? 2600 : 7000;
   const body: any = { model, messages, temperature: 0.7, max_tokens: maxTokens };
   if (wantsJson) body.response_format = { type: "json_object" };
   const res = await fetch(GROQ_URL, {
@@ -1879,13 +2162,76 @@ export async function askAI(question: string, history: ChatTurn[] = []): Promise
 
 // Generate a poster / picture image from a text prompt. Returns a data URL.
 export async function generatePosterImage(prompt: string): Promise<{ image: string; text: string }> {
-  const fullPrompt = `Create a visually striking, print-ready educational POSTER image about: "${prompt}".
-Requirements:
-- A bold, clear, legible title and any supporting text rendered accurately (no gibberish text).
-- Organized, balanced layout with vibrant, harmonious colors.
-- Age-appropriate, classroom-friendly illustration style with rich detail.
-- Portrait poster composition suitable for printing.`;
+  const fullPrompt = `${prompt}
 
+Create a high-quality, detailed, visually appealing image exactly as described above. If the image includes any text, write it in ENGLISH using the Latin (A–Z) alphabet only, spelled exactly and clearly — no gibberish, no other languages or scripts.`;
+
+  // In the browser, route image generation through the server proxy. The
+  // provider credentials and API calls live server-side, and these APIs block
+  // direct browser (CORS) calls anyway.
+  if (typeof window !== "undefined") {
+    return callAiProxy("image", prompt, {});
+  }
+
+  // Server-side, prefer OpenAI gpt-image-1 (best at rendering text), then fall
+  // back to Cloudflare Flux, then Gemini. Any OpenAI failure (e.g. a billing
+  // limit) silently falls through so image generation still works.
+  const openaiKey = (process.env.OPENAI_API_KEY as string) || "";
+  if (openaiKey) {
+    try {
+      const res = await fetch("https://api.openai.com/v1/images/generations", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${openaiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-image-1",
+          prompt: fullPrompt,
+          n: 1,
+          size: "1024x1024",
+          quality: "medium",
+        }),
+      });
+      const data = await res.json();
+      const b64 = data?.data?.[0]?.b64_json;
+      if (res.ok && b64) return { image: `data:image/png;base64,${b64}`, text: "" };
+      console.error(
+        "OpenAI image error, falling back:",
+        data?.error?.message || res.status,
+      );
+    } catch (e: any) {
+      console.error("OpenAI image call failed, falling back:", e?.message || e);
+    }
+  }
+
+  // Cloudflare Workers AI (Flux).
+  const cfAccount = (process.env.CLOUDFLARE_ACCOUNT_ID as string) || "";
+  const cfToken = (process.env.CLOUDFLARE_API_TOKEN as string) || "";
+  if (cfAccount && cfToken) {
+    const res = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${cfAccount}/ai/run/@cf/black-forest-labs/flux-1-schnell`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${cfToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ prompt: fullPrompt }),
+      },
+    );
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      throw new Error(`Cloudflare image ${res.status}: ${t.slice(0, 220)}`);
+    }
+    const data = await res.json();
+    // flux-1-schnell returns { result: { image: "<base64 jpeg>" } }
+    const b64 = data?.result?.image;
+    if (b64) return { image: `data:image/jpeg;base64,${b64}`, text: "" };
+    throw new Error("Cloudflare did not return an image. Please try again.");
+  }
+
+  // Fallback: Gemini image models if Cloudflare isn't configured.
   const models = ["gemini-2.5-flash-image", "gemini-3-pro-image-preview"];
   let lastErr: any;
   for (const model of models) {
@@ -1910,12 +2256,8 @@ Requirements:
     } catch (err: any) {
       lastErr = err;
       const msg = (err?.message || "").toLowerCase();
-      // Quota / rate-limit won't be fixed by trying the next model — stop early.
       if (msg.includes("429") || msg.includes("quota") || msg.includes("rate")) break;
     }
-  }
-  if (typeof window !== 'undefined' && (lastErr?.message?.includes('API Key') || lastErr?.message?.includes('configured'))) {
-    return callAiProxy('image', prompt, {});
   }
   throw lastErr || new Error("Image generation failed");
 }
