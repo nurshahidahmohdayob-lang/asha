@@ -7837,52 +7837,63 @@ export default function App() {
 
     setGeneratingMessage("Generating Strategic Plan...");
     setIsGenerating(true);
-    const result = await generateReadingProgram(titleInput, {
-      yearGroup,
-      lexileLevel,
-      subject,
-      numSlides: 0,
-      numQuestions: 0,
-      questionTypes: [],
-      worksheetContext: content?.readingProgram?.readingPassage ? {
-        title: content.readingProgram.passageTitle || "Reading Passage",
-        readingPassage: content.readingProgram.readingPassage,
-        sections: [],
-      } : undefined,
-    });
-    if (result) {
-      const targetLvl = lexileLevel || "400-500";
-      const updatedReadingProgram = {
-        ...result,
-        readingPassage: content?.readingProgram?.readingPassage || result.readingPassage,
-        passageTitle: content?.readingProgram?.passageTitle || result.passageTitle || result.title,
-        leveledPassages: content?.readingProgram?.leveledPassages || result.leveledPassages || {},
-        leveledVocabulary: {
-          ...(content?.readingProgram?.leveledVocabulary || {}),
-          [targetLvl]: result?.oneDayPlan?.vocabulary || [],
-        },
-        leveledQuestions: {
-          ...(content?.readingProgram?.leveledQuestions || {}),
-          [targetLvl]: result?.oneDayPlan?.questions || [],
-        },
-      };
+    try {
+      const result = await generateReadingProgram(titleInput, {
+        yearGroup,
+        lexileLevel,
+        subject,
+        numSlides: 0,
+        numQuestions: 0,
+        questionTypes: [],
+        worksheetContext: content?.readingProgram?.readingPassage ? {
+          title: content.readingProgram.passageTitle || "Reading Passage",
+          readingPassage: content.readingProgram.readingPassage,
+          sections: [],
+        } : undefined,
+      });
+      if (result) {
+        const targetLvl = lexileLevel || "400-500";
+        const updatedReadingProgram = {
+          ...result,
+          readingPassage: content?.readingProgram?.readingPassage || result.readingPassage,
+          passageTitle: content?.readingProgram?.passageTitle || result.passageTitle || result.title,
+          leveledPassages: content?.readingProgram?.leveledPassages || result.leveledPassages || {},
+          leveledVocabulary: {
+            ...(content?.readingProgram?.leveledVocabulary || {}),
+            [targetLvl]: result?.oneDayPlan?.vocabulary || [],
+          },
+          leveledQuestions: {
+            ...(content?.readingProgram?.leveledQuestions || {}),
+            [targetLvl]: result?.oneDayPlan?.questions || [],
+          },
+        };
 
-      const eduContent: EduContent = content
-        ? { ...content, readingProgram: updatedReadingProgram }
-        : {
-            lessonTitle: lessonInput,
-            subject,
-            gradeLevel: yearGroup,
-            slides: [],
-            readingProgram: updatedReadingProgram,
-            metadata: { yearGroup, lexileLevel, subject },
-          };
-      setContent(eduContent);
-      setWorkspaceMode("reading-program");
-      setCurrentView("reading-program");
-      setReadingProgramTab("curriculum");
+        const eduContent: EduContent = content
+          ? { ...content, readingProgram: updatedReadingProgram }
+          : {
+              lessonTitle: lessonInput,
+              subject,
+              gradeLevel: yearGroup,
+              slides: [],
+              readingProgram: updatedReadingProgram,
+              metadata: { yearGroup, lexileLevel, subject },
+            };
+        setContent(eduContent);
+        setWorkspaceMode("reading-program");
+        setCurrentView("reading-program");
+        setReadingProgramTab("curriculum");
+      }
+    } catch (err) {
+      console.error("Strategic plan generation failed:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(
+        /timeout|rate limit|429|fetch failed/i.test(msg)
+          ? "The strategic plan is taking too long — the AI service is busy or rate-limited. Please wait a moment and try again."
+          : "Could not generate the strategic plan:\n\n" + msg + "\n\nPlease try again.",
+      );
+    } finally {
+      setIsGenerating(false);
     }
-    setIsGenerating(false);
   };
 
   const generateSP = async () => {
