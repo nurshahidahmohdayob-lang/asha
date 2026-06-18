@@ -907,6 +907,22 @@ function zEsc(s: any): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
+// A Word Bank cell must be a WORD, never a sentence. Strip wrapping quotes and
+// trailing punctuation, collapse spaces, and if a full phrase/sentence slipped
+// through (more than `maxWords` words), keep only the first few words so the
+// bank shows words, not sentences. `maxWords` defaults to 2 (fill-in answers are
+// one or two words); sorting items allow a little more.
+function bankWord(raw: any, maxWords = 2): string {
+  let w = String(raw ?? "")
+    .trim()
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+    .replace(/[.,;:!?]+$/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  const parts = w.split(/\s+/).filter(Boolean);
+  if (parts.length > maxWords) w = parts.slice(0, maxWords).join(" ");
+  return w;
+}
 // Question text with any "____" blank turned into a proper inline blank line
 // the student can write on (used for fill-in-the-blanks).
 function zQText(s: any): string {
@@ -958,6 +974,164 @@ function zIcon(s: any): string {
   for (const [re, em] of ZICON_MAP) if (re.test(t)) return em;
   return "🧩";
 }
+// Self-contained interactive HTML for a READING PASSAGE: 4 kid-friendly design
+// themes (switchable inside the page), an optional AI hero image, and themed
+// decorative graphics. Works standalone (download / new tab / print).
+function buildInteractivePassageHTML(
+  passageRaw: string,
+  title: string,
+  heroImage: string = "",
+): string {
+  const esc = (s: string) => zEsc(s);
+  // Normalise the passage (which may contain <p>/<br> from re-leveling) into
+  // clean paragraphs.
+  const plain = String(passageRaw || "")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\r/g, "")
+    .trim();
+  let paras = plain
+    .split(/\n\s*\n+/)
+    .map((p) => p.replace(/\n+/g, " ").trim())
+    .filter(Boolean);
+  if (paras.length <= 1) {
+    const sentences = plain.replace(/\n+/g, " ").match(/[^.!?]+[.!?]+(\s|$)/g) || [plain];
+    paras = [];
+    for (let i = 0; i < sentences.length; i += 3)
+      paras.push(sentences.slice(i, i + 3).join(" ").trim());
+    paras = paras.filter(Boolean);
+  }
+  const body = paras.map((p) => `<p>${esc(p)}</p>`).join("");
+  const safeTitle = esc(title || "Reading Passage");
+  const hasImg = !!heroImage;
+  // The SAME story image is used twice: blurred as the full-page background and
+  // sharp as the hero at the top — so the background is always story-related.
+  const bgLayer = hasImg
+    ? `<div class="bg bg--img" style="background-image:url('${heroImage}')"></div>`
+    : `<div class="bg bg--themed"></div>`;
+  const hero = hasImg
+    ? `<div class="hero"><img src="${heroImage}" alt="Illustration for ${safeTitle}"/></div>`
+    : `<div class="hero hero--emoji"><span class="heroEmoji" role="img" aria-label="story">📖</span></div>`;
+
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>${safeTitle}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Comic+Neue:wght@400;700&display=swap');
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;min-height:100%}
+  body{font-family:'Comic Neue','Segoe UI',system-ui,sans-serif;color:var(--ink);position:relative;overflow-x:hidden}
+  /* Full-page story background + readability scrim */
+  .bg{position:fixed;inset:-12px;z-index:-2;background-size:cover;background-position:center}
+  .bg--img{filter:blur(7px) brightness(.62) saturate(1.05);transform:scale(1.08)}
+  .bg--themed{background:var(--bgGrad)}
+  .scrim{position:fixed;inset:0;z-index:-1;background:var(--scrim)}
+  /* Top design switcher */
+  .topbar{position:sticky;top:0;z-index:10;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;padding:12px;background:rgba(15,18,30,.42);backdrop-filter:blur(8px)}
+  .topbar .lbl{font-family:'Baloo 2',sans-serif;font-weight:800;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#fff;opacity:.85;margin-right:4px}
+  .tbtn{cursor:pointer;border:3px solid rgba(255,255,255,.5);background:rgba(255,255,255,.9);color:#222;font-family:'Baloo 2',sans-serif;font-weight:700;font-size:12px;padding:7px 14px;border-radius:999px;transition:transform .18s ease,background .18s,box-shadow .18s;box-shadow:0 3px 0 rgba(0,0,0,.18)}
+  .tbtn:hover{transform:translateY(-2px)}
+  .tbtn:focus-visible{outline:3px solid #fff;outline-offset:2px}
+  .tbtn.active{background:var(--accent);border-color:#fff;color:#fff}
+  /* Frosted, readable passage card (claymorphism) */
+  .wrap{max-width:820px;margin:28px auto 70px;padding:0 18px}
+  .card{position:relative;background:var(--card);backdrop-filter:blur(14px) saturate(1.25);-webkit-backdrop-filter:blur(14px) saturate(1.25);border:5px solid var(--cardEdge);border-radius:34px;padding:36px 36px 42px;box-shadow:0 26px 70px rgba(0,0,0,.40),inset 0 3px 0 rgba(255,255,255,.45);overflow:hidden}
+  .deco{position:absolute;font-size:34px;opacity:.55;pointer-events:none;user-select:none}
+  .deco.d1{top:16px;right:22px}.deco.d2{bottom:18px;left:20px}.deco.d3{top:42%;right:-4px;font-size:26px}.deco.d4{bottom:42%;left:-4px;font-size:26px}
+  .title{font-family:'Baloo 2',sans-serif;font-size:34px;font-weight:800;line-height:1.1;margin:0 0 6px;color:var(--accent);text-align:center;text-shadow:0 1px 0 rgba(255,255,255,.4)}
+  .titleRule{height:6px;width:96px;margin:10px auto 24px;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+  .hero{margin:0 auto 26px;max-width:480px}
+  .hero img{width:100%;height:auto;display:block;border-radius:24px;border:6px solid #fff;box-shadow:0 12px 34px rgba(0,0,0,.30)}
+  .hero--emoji{display:flex;align-items:center;justify-content:center;height:170px;background:linear-gradient(135deg,var(--accent2),var(--accent));border-radius:24px;border:6px solid #fff;box-shadow:0 12px 34px rgba(0,0,0,.30)}
+  .heroEmoji{font-size:80px;filter:drop-shadow(0 3px 4px rgba(0,0,0,.25))}
+  .passage{font-size:18.5px;line-height:1.9}
+  .passage p{margin:0 0 17px;text-indent:20px}
+  /* The drop-cap paragraph must NOT also be indented, or the second letter is
+     pushed far from the big first letter. */
+  .passage p:first-of-type{text-indent:0}
+  .passage p:first-of-type::first-letter{font-family:'Baloo 2',sans-serif;font-size:2.7em;font-weight:800;color:var(--accent);float:left;line-height:.66;margin:6px 6px 0 0}
+  .footer{margin-top:28px;text-align:center;font-family:'Baloo 2',sans-serif;font-weight:700;font-size:12px;opacity:.5;letter-spacing:.06em;text-transform:uppercase}
+  /* THEMES — card stays near-opaque for 4.5:1 text contrast over any background */
+  body.theme-storybook{--ink:#3a2c22;--accent:#c2710c;--accent2:#e9a23b;--card:rgba(255,252,245,.95);--cardEdge:#f0dcc0;--bgGrad:linear-gradient(135deg,#ffe9c7,#f6c98a);--scrim:linear-gradient(160deg,rgba(120,60,0,.20),rgba(0,0,0,.30))}
+  body.theme-space{--ink:#eaeeff;--accent:#a78bfa;--accent2:#39d0ff;--card:rgba(22,28,56,.82);--cardEdge:#3a4690;--bgGrad:radial-gradient(120% 90% at 50% 0%,#1b2356,#0a0e22);--scrim:linear-gradient(160deg,rgba(20,10,60,.35),rgba(0,0,0,.45))}
+  body.theme-jungle{--ink:#173d14;--accent:#1f8a1f;--accent2:#8bd14f;--card:rgba(247,255,244,.95);--cardEdge:#bfe6bd;--bgGrad:linear-gradient(135deg,#bde6a6,#5fb35a);--scrim:linear-gradient(160deg,rgba(10,60,10,.22),rgba(0,0,0,.30))}
+  body.theme-ocean{--ink:#0c3a4d;--accent:#0d8bbd;--accent2:#46d3e0;--card:rgba(245,253,255,.95);--cardEdge:#bce6f2;--bgGrad:linear-gradient(135deg,#aee6f5,#3fb6d6);--scrim:linear-gradient(160deg,rgba(0,50,70,.22),rgba(0,0,0,.30))}
+  @media (prefers-reduced-motion:reduce){.tbtn{transition:none}.tbtn:hover{transform:none}}
+  /* Edit mode — title + passage paragraphs become directly editable */
+  .tbtn.on{background:#16a34a;border-color:#fff;color:#fff}
+  body.zediting .title,body.zediting .passage p{outline:2px dashed #f59e0b;outline-offset:3px;border-radius:6px;background:rgba(255,253,245,.65)}
+  body.zediting .title:focus,body.zediting .passage p:focus{outline:2px solid #2563eb;background:#fff}
+  /* Clean, framed look for Print / Save-as-PDF */
+  @page{margin:14mm}
+  @media print{
+    .topbar{display:none}
+    .bg,.scrim{display:none}
+    .deco{display:none}
+    html,body{background:#fff}
+    body{color:var(--ink);-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .wrap{margin:0 auto;padding:0;max-width:100%}
+    .card{box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;background:#fff;border:3px solid var(--accent);border-radius:18px;padding:30px 34px}
+    .title{color:var(--accent)}
+    .hero{max-width:60%;break-inside:avoid;page-break-inside:avoid}
+    .hero img{border-width:4px;box-shadow:none}
+    .passage p{break-inside:avoid}
+    body.zediting .title,body.zediting .passage p{outline:none;background:transparent}
+  }
+</style></head>
+<body class="theme-storybook">
+  ${bgLayer}<div class="scrim"></div>
+  <div class="topbar">
+    <span class="lbl">Design</span>
+    <button class="tbtn active" data-t="storybook" onclick="setTheme('storybook',this)">📖 Storybook</button>
+    <button class="tbtn" data-t="space" onclick="setTheme('space',this)">🚀 Space</button>
+    <button class="tbtn" data-t="jungle" onclick="setTheme('jungle',this)">🌿 Jungle</button>
+    <button class="tbtn" data-t="ocean" onclick="setTheme('ocean',this)">🌊 Ocean</button>
+    <button class="tbtn edit" id="zEditBtn" onclick="zEdit()">✏️ Edit Text</button>
+    <button class="tbtn" onclick="window.print()">🖨️ Print</button>
+  </div>
+  <div class="wrap">
+    <div class="card">
+      <span class="deco d1">✨</span><span class="deco d2">✨</span><span class="deco d3">⭐</span><span class="deco d4">⭐</span>
+      <h1 class="title">${safeTitle}</h1>
+      <div class="titleRule"></div>
+      ${hero}
+      <div class="passage">${body}</div>
+      <div class="footer">Reading Passage</div>
+    </div>
+  </div>
+  <script>
+    var HAS_IMG=${hasImg ? "true" : "false"};
+    var DECOS={storybook:['📖','✨','🖋️','🌟'],space:['🚀','🪐','⭐','🌙'],jungle:['🌿','🐯','🦜','🍃'],ocean:['🌊','🐠','🐚','🫧']};
+    var HERO={storybook:'📚',space:'🪐',jungle:'🐯',ocean:'🐠'};
+    function setTheme(t,btn){
+      document.body.className='theme-'+t;
+      var ds=document.querySelectorAll('.deco');
+      for(var i=0;i<ds.length;i++){ds[i].textContent=DECOS[t][i%4];}
+      if(!HAS_IMG){var he=document.querySelector('.heroEmoji');if(he)he.textContent=HERO[t];}
+      var bs=document.querySelectorAll('.topbar .tbtn[data-t]');
+      for(var j=0;j<bs.length;j++){bs[j].classList.remove('active');}
+      if(btn)btn.classList.add('active');
+    }
+    setTheme('storybook',document.querySelector('.tbtn[data-t="storybook"]'));
+    // Edit mode: make the title and every passage paragraph directly editable.
+    var zEditing=false;
+    function zEdit(){
+      zEditing=!zEditing;
+      var els=document.querySelectorAll('.title,.passage p');
+      for(var i=0;i<els.length;i++){
+        if(zEditing){els[i].setAttribute('contenteditable','true');els[i].spellcheck=false;}
+        else{els[i].removeAttribute('contenteditable');}
+      }
+      document.body.classList.toggle('zediting',zEditing);
+      var b=document.getElementById('zEditBtn');
+      if(b){b.textContent=zEditing?'✅ Done':'✏️ Edit Text';b.classList.toggle('on',zEditing);}
+      if(zEditing){var t=document.querySelector('.title');if(t)t.focus();}
+    }
+  </script>
+</body></html>`;
+}
+
 function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detective", kind: string = "worksheet", subject: string = ""): string {
   const T = ZTHEMES[themeKey] || ZTHEMES.detective;
   const kindWord = kind === "assessment" ? "Assessment" : "Worksheet";
@@ -965,14 +1139,16 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
   // Assessment"). Fall back to "My" only when no subject was provided.
   const headLead = (subject || "").trim() || "My";
   const PAL: string[] = T.pal;
-  // Per request: do NOT show the topic description or section instructions in
-  // the worksheet — only the questions/activities themselves.
+  // Per request: do NOT show the topic description/methodology — but DO keep the
+  // short per-section exam instruction (e.g. "Choose the best answer.").
   const desc = "";
   const passage = String(ws?.readingPassage || "").trim();
-  const sections: any[] = (ws?.sections || []).map((s: any) => ({
-    ...s,
-    instructions: "",
-  }));
+  const sections: any[] = (ws?.sections || []).map((s: any) => ({ ...s }));
+  // Total marks = 1 per question across all sections (shown in the header).
+  const totalMarks = sections.reduce(
+    (n: number, s: any) => n + (s?.questions?.length || 0),
+    0,
+  );
   const words = String(title || "Worksheet").split(/\s+/);
   const mid = Math.ceil(words.length / 2);
   const tA = words.slice(0, mid).join(" ");
@@ -993,12 +1169,12 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       // answer hints, and drop long fragments (those are items, not labels).
       // This stops the columns from leaking the answers; the items stay in the
       // cut-out pool for students to sort and write in themselves.
-      let afterInto = (String(q?.text || "").match(/into\s+([^.?:]+)/i) || [])[1] || "";
+      let afterInto = (String(q?.text || "").match(/into\s*:?\s*([^.?]+)/i) || [])[1] || "";
       afterInto = afterInto.replace(/\([^)]*\)/g, "");
       let cats: string[] = afterInto
         .split(/,|\band\b|\bor\b/i)
         .map((s) => s.trim().replace(/[:;,.]+$/, ""))
-        .filter((s) => s && s.split(/\s+/).length <= 4);
+        .filter((s) => s && s.split(/\s+/).length <= 7);
       if (cats.length < 2) cats = ["Group 1", "Group 2"];
       cats = cats.slice(0, 4);
       const colC = ["#16a34a", "#dc2626", "#2563eb", "#f97316"];
@@ -1008,17 +1184,31 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       const instr = isCutPaste
         ? "Cut out the pictures and paste them into the correct column."
         : "Sort the items into the correct column.";
-      const poolLabel = isCutPaste ? "✂️ Cut-Out Pictures" : "Items to Sort";
+      const poolLabel = "✂️ Cut-Out Pictures";
       let h = `<div class="sortwrap"><div class="sortins"><span class="insbadge">Instructions</span> ${instr}</div>`;
+      // Plain sorting shows a WORD BANK of the items to place into the categories
+      // (the student writes each word into the correct box). Cut-and-paste uses
+      // cut-out cards instead (added below the category boxes).
+      if (!isCutPaste) {
+        const wb = opts
+          .map((o) => `<span class="wbword">${zEsc(bankWord(o, 4))}</span>`)
+          .join("");
+        h += `<div class="wbbank"><span class="wblabel">📋 Word Bank</span><span class="wbwords">${wb}</span></div>`;
+      }
       h += '<div class="sorttable">';
       cats.forEach((c, i) => {
         h += `<div class="sortcol" onclick="zDrop(this)"><div class="sorthd" style="background:${colC[i % 4]}">${zEsc(c)}</div><div class="dropzone"></div></div>`;
       });
-      h += `</div><div class="cutbar"><span>${poolLabel}</span></div><div class="cutpool">`;
-      opts.forEach((o) => {
-        h += `<div class="cutcard" onclick="zPickCard(this)"><div class="cutic">${zIcon(o)}</div><div class="cutlb">${zEsc(o)}</div></div>`;
-      });
-      h += "</div></div>";
+      h += `</div>`;
+      // Cut-and-paste needs the cut-out cards to paste below the category boxes.
+      if (isCutPaste) {
+        h += `<div class="cutbar"><span>${poolLabel}</span></div><div class="cutpool">`;
+        opts.forEach((o) => {
+          h += `<div class="cutcard" onclick="zPickCard(this)"><div class="cutic">${zIcon(o)}</div><div class="cutlb">${zEsc(o)}</div></div>`;
+        });
+        h += "</div>";
+      }
+      h += "</div>";
       return h;
     }
     if (isTF) {
@@ -1065,7 +1255,7 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
     const cells = shuffled
-      .map((w: string) => `<span class="wbword">${zEsc(w)}</span>`)
+      .map((w: string) => `<span class="wbword">${zEsc(bankWord(w))}</span>`)
       .join("");
     return `<div class="wbbank"><span class="wblabel">📋 Word Bank</span><span class="wbwords">${cells}</span></div><div class="wbinstr">✏️ Fill in the blanks using the words from the word bank.</div>`;
   };
@@ -1280,7 +1470,6 @@ body{font-family:'Baloo 2','Segoe UI',system-ui,sans-serif;background:${T.bg};co
 .sortcol+.sortcol{border-left:3px solid #1e293b}
 .sorthd{color:#fff;font-weight:900;text-align:center;padding:13px 10px;text-transform:uppercase;font-size:17px;letter-spacing:.5px}
 .dropzone{flex:1;display:flex;flex-wrap:wrap;gap:10px;align-content:flex-start;padding:14px;min-height:180px}
-.dropzone:empty:before{content:"drop here";color:#cbd5e1;font-weight:800;font-size:12px;font-style:italic;text-transform:uppercase;letter-spacing:1px;margin:auto}
 .cutbar{display:flex;align-items:center;gap:10px;margin:20px 0 14px}
 .cutbar:before,.cutbar:after{content:"";flex:1;border-top:2.5px dashed #7c3aed}
 .cutbar span{background:#5b21b6;color:#fff;font-weight:900;font-size:13px;padding:8px 18px;border-radius:999px}
@@ -1304,6 +1493,10 @@ body{font-family:'Baloo 2','Segoe UI',system-ui,sans-serif;background:${T.bg};co
 .btn{border:none;cursor:pointer;border-radius:14px;padding:12px 20px;font-family:inherit;font-weight:800;font-size:14px;box-shadow:0 8px 18px rgba(0,0,0,.12)}
 .btn.print{background:#fff;color:#2563eb;border:2px solid #bfdbfe}
 .btn.reset{background:#fff;color:#7c3aed;border:2px solid #ddd6fe}
+.btn.edit{background:#fff;color:#d97706;border:2px solid #fde68a}
+body.zediting [contenteditable]{outline:2px dashed #f59e0b;outline-offset:3px;border-radius:5px;background:#fffdf5}
+body.zediting [contenteditable]:focus{outline:2px solid #2563eb;background:#fff}
+@media print{.bar{display:none}body.zediting [contenteditable]{outline:none;background:transparent}}
 /* layout: 2-column bento grid */
 .qgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:4px}
 .qgrid .qrow{margin-bottom:0;flex-direction:column}
@@ -1435,8 +1628,9 @@ ${T.extraCss || ""}
   </div>
   <div class="meta">
     <label>🧑‍🎓 Name <input placeholder="Your name"/></label>
-    <label>📅 Date <input placeholder="Today"/></label>
     <label>🏫 Class <input placeholder="Your class"/></label>
+    <label>📅 Date <input placeholder="Today"/></label>
+    ${kind === "assessment" ? `<label class="marks">🏆 Total Marks <input value="${totalMarks}"/></label>` : ""}
   </div>
   ${passageHtml}
   ${rows}
@@ -1449,17 +1643,34 @@ ${T.extraCss || ""}
   </div>`}
   <div class="foot">⭐ Remember: take your time, think carefully, and do your best! ⭐</div>
   <div class="bar">
+    <button class="btn edit" id="zEditBtn" onclick="zEdit()">✏️ Edit</button>
     <button class="btn print" onclick="window.print()">🖨️ Print</button>
     <button class="btn reset" onclick="zReset()">🔁 Reset</button>
   </div>
 </div>
 <script>
 var picked=null;
-function zPick(btn){var g=btn.parentNode;var b=g.querySelectorAll('.opt,.tf,.eopt');for(var i=0;i<b.length;i++)b[i].classList.remove('on');btn.classList.add('on');}
+// Toggle edit mode: make all the text on the sheet directly editable (titles,
+// questions, options, word-bank words, category labels, instructions). Clicking
+// "Edit" again turns it off. Edits stay in this page (use Print/Save to keep them).
+var zEditing=false;
+var Z_EDIT_SEL='.title,.subtitle,.secpill,.secins,.dsec,.nbsec,.dksec,.actbox .acthd,.comicban,.qtext,.qbody .qtext,.examq,.examw .eqt,.aqt,.cbubble,.nbq,.dkq,.td-q,.opt span:last-child,.eopt,.wbword,.sorthd,.cutlb,.wbinstr,.sortins,.reflect p,.passage';
+function zEdit(){
+  zEditing=!zEditing;
+  var els=document.querySelectorAll(Z_EDIT_SEL);
+  for(var i=0;i<els.length;i++){
+    if(zEditing){els[i].setAttribute('contenteditable','true');els[i].spellcheck=false;}
+    else{els[i].removeAttribute('contenteditable');}
+  }
+  document.body.classList.toggle('zediting',zEditing);
+  var b=document.getElementById('zEditBtn');
+  if(b)b.textContent=zEditing?'✅ Done':'✏️ Edit';
+}
+function zPick(btn){if(zEditing)return;var g=btn.parentNode;var b=g.querySelectorAll('.opt,.tf,.eopt');for(var i=0;i<b.length;i++)b[i].classList.remove('on');btn.classList.add('on');}
 function zPickCard(c){var a=document.querySelectorAll('.cutcard.active');for(var i=0;i<a.length;i++)a[i].classList.remove('active');c.classList.add('active');picked=c;}
 function zDrop(col){if(!picked)return;col.querySelector('.dropzone').appendChild(picked);picked.classList.remove('active');picked=null;}
 function zCycleTF(b){var v=b.textContent.trim();b.textContent=v===''?'T':(v==='T'?'F':'');b.style.color=b.textContent==='F'?'#dc2626':'#16a34a';b.style.borderColor=b.textContent==='F'?'#dc2626':'#16a34a';}
-function zReset(){var on=document.querySelectorAll('.opt.on,.tf.on,.eopt.on,.cutcard.active');for(var i=0;i<on.length;i++)on[i].classList.remove('on','active');var tb=document.querySelectorAll('.tfbox');for(var t=0;t<tb.length;t++){tb[t].textContent='';tb[t].style.color='#16a34a';tb[t].style.borderColor='#16a34a';}var f=document.querySelectorAll('input,textarea');for(var j=0;j<f.length;j++)f[j].value='';var pool=document.querySelector('.cutpool');if(pool){var moved=document.querySelectorAll('.dropzone .cutcard');for(var k=0;k<moved.length;k++)pool.appendChild(moved[k]);}}
+function zReset(){var on=document.querySelectorAll('.opt.on,.tf.on,.eopt.on,.cutcard.active');for(var i=0;i<on.length;i++)on[i].classList.remove('on','active');var tb=document.querySelectorAll('.tfbox');for(var t=0;t<tb.length;t++){tb[t].textContent='';tb[t].style.color='#16a34a';tb[t].style.borderColor='#16a34a';}var f=document.querySelectorAll('input,textarea');for(var j=0;j<f.length;j++){if(f[j].closest('.marks'))continue;f[j].value='';}var pool=document.querySelector('.cutpool');if(pool){var moved=document.querySelectorAll('.dropzone .cutcard');for(var k=0;k<moved.length;k++)pool.appendChild(moved[k]);}}
 </script>
 </body></html>`;
 }
@@ -3114,6 +3325,7 @@ const CAMBRIDGE_SUBJECTS = [
   {
     group: "Cambridge Primary (Stages 1–6)",
     subjects: [
+      "Bahasa Melayu",
       "Art & Design (0067)",
       "Computing (0059)",
       "Digital Literacy (0072)",
@@ -3132,6 +3344,7 @@ const CAMBRIDGE_SUBJECTS = [
   {
     group: "Cambridge Lower Secondary (Stages 7–9)",
     subjects: [
+      "Bahasa Melayu",
       "Art & Design (0073)",
       "Computing (0860)",
       "Digital Literacy (0082)",
@@ -3170,6 +3383,22 @@ const CAMBRIDGE_SUBJECTS = [
       "Malay (Foreign Language) (0546)",
     ],
   },
+];
+
+// The 10 Lexile bands used by the Reading Program's level-adapted passages and
+// the "Generate Pack" action. Single source of truth for the grid, the pack
+// level picker, and the pack generator.
+const PASSAGE_LEXILE_LEVELS: { id: string; name: string }[] = [
+  { id: "BR99-100", name: "BR99-100L" },
+  { id: "100-200", name: "100-200L" },
+  { id: "200-300", name: "200-300L" },
+  { id: "300-400", name: "300-400L" },
+  { id: "400-500", name: "400-500L" },
+  { id: "500-600", name: "500-600L" },
+  { id: "600-700", name: "600-700L" },
+  { id: "700-800", name: "700-800L" },
+  { id: "800-900", name: "800-900L" },
+  { id: "900-1050", name: "900-1050L" },
 ];
 
 interface SearchableSelectProps {
@@ -4534,6 +4763,16 @@ export default function App() {
   const [lexileLevel, setLexileLevel] = useState("400-500");
   const [targetRelevelLexile, setTargetRelevelLexile] = useState("400-500");
   const [isReleveling, setIsReleveling] = useState(false);
+  // True while the "Generate Pack" action is creating the chosen Lexile levels
+  // of the reading passage.
+  const [isGeneratingPassagePack, setIsGeneratingPassagePack] = useState(false);
+  // Which Lexile levels the "Generate Pack" action will create. Defaults to all;
+  // the teacher can pick a subset.
+  const [packLevels, setPackLevels] = useState<string[]>(
+    PASSAGE_LEXILE_LEVELS.map((l) => l.id),
+  );
+  // True while building the interactive HTML passage (incl. AI hero image).
+  const [isBuildingInteractivePassage, setIsBuildingInteractivePassage] = useState(false);
   const [targetWordCount, setTargetWordCount] = useState<string>("300-500");
   const [selectedSuiteLevel, setSelectedSuiteLevel] =
     useState<string>("400-500");
@@ -5309,11 +5548,17 @@ export default function App() {
     "Multiple Choice": 3,
     "Short Answer": 2,
   });
+  // Total used when NO per-type counts are chosen — question types become
+  // automatic and the model picks a suitable mix for this many questions.
+  const [autoQuestionCount, setAutoQuestionCount] = useState(10);
   useEffect(() => {
     const types = Object.keys(typeCounts).filter((t) => typeCounts[t] > 0);
     setSelectedQuestionTypes(types);
-    setNumQuestions(types.reduce((s, t) => s + (typeCounts[t] || 0), 0));
-  }, [typeCounts]);
+    const sum = types.reduce((s, t) => s + (typeCounts[t] || 0), 0);
+    // When the teacher leaves every type at 0, types are automatic — keep a
+    // sensible total instead of collapsing to 0 (which would generate nothing).
+    setNumQuestions(sum > 0 ? sum : autoQuestionCount);
+  }, [typeCounts, autoQuestionCount]);
   // Differentiated assessment levels — same worksheet reworded per Lexile band
   const [wsLevels, setWsLevels] = useState<string[]>([
     "200-300",
@@ -5574,6 +5819,32 @@ export default function App() {
       const newSections = [...prev.worksheet.sections];
       const newQuestions = [...newSections[sectionIdx].questions];
       newQuestions[questionIdx] = { ...newQuestions[questionIdx], text: value };
+      newSections[sectionIdx] = {
+        ...newSections[sectionIdx],
+        questions: newQuestions,
+      };
+      return {
+        ...prev,
+        worksheet: { ...prev.worksheet, sections: newSections },
+      };
+    });
+  };
+
+  // Edit a single answer option / sortable item / word-bank word in place.
+  const updateWorksheetOption = (
+    sectionIdx: number,
+    questionIdx: number,
+    optionIdx: number,
+    value: string,
+  ) => {
+    setContent((prev) => {
+      if (!prev || !prev.worksheet) return prev;
+      const newSections = [...prev.worksheet.sections];
+      const newQuestions = [...newSections[sectionIdx].questions];
+      const q = newQuestions[questionIdx];
+      const newOptions = [...(q.options || [])];
+      newOptions[optionIdx] = value;
+      newQuestions[questionIdx] = { ...q, options: newOptions };
       newSections[sectionIdx] = {
         ...newSections[sectionIdx],
         questions: newQuestions,
@@ -19114,7 +19385,8 @@ export default function App() {
         composed += `. Do NOT include any words, letters or numbers in the image; leave clean, uncluttered space near the top for a title.`;
       }
       if (posterStyle) composed += ` Style: ${posterStyle}.`;
-      const res = await generatePosterImage(composed);
+      // When we overlay the title ourselves, force a fully text-free background.
+      const res = await generatePosterImage(composed, wantsText ? { noText: true } : undefined);
       if (!res?.image) {
         throw new Error("No image was returned — please try again.");
       }
@@ -22195,7 +22467,8 @@ export default function App() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                      Question Types &amp; Counts
+                      Question Types &amp; Counts{" "}
+                      <span className="text-[#7C7A65]/60 normal-case font-bold">(optional)</span>
                     </label>
                     <span className="text-[10px] font-black text-[#059669]">
                       Total: {numQuestions}
@@ -22232,9 +22505,29 @@ export default function App() {
                       </div>
                     ))}
                   </div>
+                  {selectedQuestionTypes.length === 0 && (
+                    <div className="flex items-center justify-between gap-2 bg-[#ECFDF5] border-2 border-dashed border-[#A7F3D0] rounded-xl px-3 py-1.5">
+                      <span className="text-xs font-bold text-[#064E3B]">
+                        Auto — total questions
+                      </span>
+                      <input
+                        type="number"
+                        min={1}
+                        inputMode="numeric"
+                        value={autoQuestionCount ? String(autoQuestionCount) : ""}
+                        onChange={(e) => {
+                          const raw = e.target.value.replace(/^0+(?=\d)/, "");
+                          const n = raw === "" ? 0 : Math.max(1, parseInt(raw, 10) || 0);
+                          setAutoQuestionCount(n || 1);
+                        }}
+                        className="w-16 p-1 text-center bg-white border border-[#D1FAE5] rounded-lg text-sm font-bold"
+                      />
+                    </div>
+                  )}
                   <p className="text-[10px] font-semibold text-[#7C7A65]/70 leading-snug">
-                    Choose how many questions of each type (0 = none). The total
-                    is {numQuestions}.
+                    Choose how many questions of each type (0 = none). Leave every
+                    type at 0 to let the system pick suitable question types
+                    automatically — it will generate {numQuestions} questions.
                   </p>
                 </div>
                 {/* Selection Styles Removed */}
@@ -22942,6 +23235,14 @@ export default function App() {
                               </div>
                               {(() => {
                                 const tt = (q.type || "").toLowerCase();
+                                const isTF =
+                                  tt.includes("true") ||
+                                  tt.includes("false") ||
+                                  ((q.options || []).length === 2 &&
+                                    (q.options || [])
+                                      .map((o) => String(o).toLowerCase())
+                                      .sort()
+                                      .join(",") === "false,true");
                                 const kind =
                                   /draw|creative/.test(tt)
                                     ? "draw"
@@ -22953,13 +23254,28 @@ export default function App() {
                                         : tt.includes("fill") ||
                                             tt.includes("blank")
                                           ? "fill"
-                                          : q.options && q.options.length
-                                            ? "mcq"
-                                            : "write";
+                                          : isTF
+                                            ? "tf"
+                                            : q.options && q.options.length
+                                              ? "mcq"
+                                              : "write";
                                 if (kind === "fill") {
                                   // The blank ("____") is in the sentence and the
                                   // word bank is shown above — no answer area.
                                   return null;
+                                }
+                                if (kind === "tf") {
+                                  // Grouped under "True or False" with its own
+                                  // instruction — just a box to write T or F (no
+                                  // repeated True/False on every question).
+                                  return (
+                                    <div className="flex items-center gap-3 mt-1">
+                                      <span className="text-sm font-bold text-[#7C7A65]">
+                                        Answer:
+                                      </span>
+                                      <div className="w-12 h-9 border-2 border-[#E5E2C8] rounded-lg" />
+                                    </div>
+                                  );
                                 }
                                 if (kind === "draw") {
                                   return (
@@ -22974,53 +23290,129 @@ export default function App() {
                                           key={oi}
                                           className="p-3 border-2 border-[#E5E2C8] rounded-xl text-sm font-bold flex items-center gap-3"
                                         >
-                                          <div className="w-4 h-4 border-2 border-[#E5E2C8] rounded-full" />
-                                          {opt}
+                                          <span className="flex-none w-6 h-6 rounded-full bg-[#059669] text-white text-xs font-black flex items-center justify-center">
+                                            {String.fromCharCode(65 + oi)}
+                                          </span>
+                                          <span
+                                            contentEditable={true}
+                                            suppressContentEditableWarning={true}
+                                            onMouseDown={(e) => e.stopPropagation()}
+                                            onBlur={(e) =>
+                                              updateWorksheetOption(
+                                                si,
+                                                qi,
+                                                oi,
+                                                e.currentTarget.textContent || "",
+                                              )
+                                            }
+                                            dangerouslySetInnerHTML={{ __html: opt }}
+                                            className="flex-1 outline-none focus:ring-1 focus:ring-[#059669]/30 rounded px-1 cursor-text"
+                                          />
                                         </div>
                                       ))}
                                     </div>
                                   );
                                 }
-                                if (kind === "sort") {
+                                if (kind === "sort" || kind === "cut") {
+                                  // Pull the category names out of the question
+                                  // text ("Sort … into: A and B.") so the boxes
+                                  // are LABELLED and the student knows where to put each item.
+                                  let afterInto =
+                                    (String(q.text || "").match(/into\s*:?\s*([^.?]+)/i) || [])[1] || "";
+                                  afterInto = afterInto.replace(/\([^)]*\)/g, "");
+                                  let cats = afterInto
+                                    .split(/,|\band\b|\bor\b/i)
+                                    .map((s) => s.trim().replace(/[:;,.]+$/, ""))
+                                    .filter((s) => s && s.split(/\s+/).length <= 7);
+                                  if (cats.length < 2) cats = ["Group 1", "Group 2"];
+                                  cats = cats.slice(0, 4);
+                                  const catColors = ["#16a34a", "#dc2626", "#2563eb", "#f97316"];
                                   return (
                                     <div className="space-y-3 mt-2">
-                                      <div className="flex flex-wrap gap-2">
-                                        {(q.options || []).map((o, oi) => (
-                                          <span
-                                            key={oi}
-                                            className="px-3 py-1.5 border-2 border-[#E5E2C8] rounded-full text-sm font-bold"
-                                          >
-                                            {o}
+                                      {/* Sorting shows a Word Bank of the items to
+                                          place into the categories. */}
+                                      {kind === "sort" && (q.options || []).length > 0 && (
+                                        <div className="bg-indigo-50 border border-indigo-200 rounded-2xl px-4 py-3">
+                                          <span className="block text-[11px] font-black uppercase tracking-widest text-indigo-700 mb-2">
+                                            📋 Word Bank
                                           </span>
+                                          <div className="flex flex-wrap items-center gap-y-2">
+                                            {(q.options || []).map((o, oi) => (
+                                              <span
+                                                key={oi}
+                                                contentEditable={true}
+                                                suppressContentEditableWarning={true}
+                                                onMouseDown={(e) => e.stopPropagation()}
+                                                onBlur={(e) =>
+                                                  updateWorksheetOption(
+                                                    si,
+                                                    qi,
+                                                    oi,
+                                                    e.currentTarget.textContent || "",
+                                                  )
+                                                }
+                                                dangerouslySetInnerHTML={{ __html: o }}
+                                                className={cn(
+                                                  "font-bold text-[15px] text-[#1e293b] px-[18px] leading-tight whitespace-nowrap outline-none focus:ring-1 focus:ring-indigo-300 rounded cursor-text",
+                                                  oi === 0 && "pl-0",
+                                                  oi !== (q.options || []).length - 1 &&
+                                                    "border-r-2 border-indigo-200",
+                                                )}
+                                              />
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                      <div
+                                        className="grid gap-3"
+                                        style={{ gridTemplateColumns: `repeat(${cats.length}, minmax(0,1fr))` }}
+                                      >
+                                        {cats.map((c, ci) => (
+                                          <div
+                                            key={ci}
+                                            className="rounded-xl overflow-hidden border-2"
+                                            style={{ borderColor: catColors[ci % 4] }}
+                                          >
+                                            <div
+                                              className="px-3 py-2 text-center text-sm font-black text-white"
+                                              style={{ background: catColors[ci % 4] }}
+                                            >
+                                              {c}
+                                            </div>
+                                            <div className="h-24 bg-white border-t-2 border-dashed border-[#E5E2C8]" />
+                                          </div>
                                         ))}
                                       </div>
-                                      <div className="grid grid-cols-2 gap-3">
-                                        <div className="h-24 border-2 border-dashed border-[#E5E2C8] rounded-xl" />
-                                        <div className="h-24 border-2 border-dashed border-[#E5E2C8] rounded-xl" />
-                                      </div>
-                                    </div>
-                                  );
-                                }
-                                if (kind === "cut") {
-                                  return (
-                                    <div className="space-y-3 mt-2">
-                                      <div className="grid grid-cols-2 gap-3">
-                                        <div className="h-16 border-2 border-dashed border-[#E5E2C8] rounded-xl" />
-                                        <div className="h-16 border-2 border-dashed border-[#E5E2C8] rounded-xl" />
-                                      </div>
-                                      <p className="text-[10px] font-black uppercase tracking-widest text-[#7C7A65]">
-                                        ✂️ Cut these out and paste above
-                                      </p>
-                                      <div className="flex flex-wrap gap-2">
-                                        {(q.options || []).map((o, oi) => (
-                                          <span
-                                            key={oi}
-                                            className="px-3 py-1.5 border-2 border-dashed border-[#E5E2C8] rounded-lg text-sm font-bold"
-                                          >
-                                            {o}
-                                          </span>
-                                        ))}
-                                      </div>
+                                      {/* Cut-and-paste shows the cut-out items to
+                                          paste; plain sorting shows only the
+                                          labelled category boxes (no item list). */}
+                                      {kind === "cut" && (
+                                        <>
+                                          <p className="text-[10px] font-black uppercase tracking-widest text-[#7C7A65]">
+                                            ✂️ Cut these out and paste in the correct box
+                                          </p>
+                                          <div className="flex flex-wrap gap-2">
+                                            {(q.options || []).map((o, oi) => (
+                                              <span
+                                                key={oi}
+                                                contentEditable={true}
+                                                suppressContentEditableWarning={true}
+                                                onMouseDown={(e) => e.stopPropagation()}
+                                                onBlur={(e) =>
+                                                  updateWorksheetOption(
+                                                    si,
+                                                    qi,
+                                                    oi,
+                                                    e.currentTarget.textContent || "",
+                                                  )
+                                                }
+                                                dangerouslySetInnerHTML={{ __html: o }}
+                                                className="px-3 py-1.5 border-2 border-dashed border-[#E5E2C8] rounded-lg text-sm font-bold outline-none focus:ring-1 focus:ring-[#059669]/30 cursor-text"
+                                              />
+                                            ))}
+                                          </div>
+                                        </>
+                                      )}
                                     </div>
                                   );
                                 }
@@ -23311,7 +23703,10 @@ export default function App() {
   };
 
   const generateOnlyReadingPassage = async () => {
-    if (!lessonInput.trim()) return;
+    if (!lessonInput.trim()) {
+      alert("Please enter a topic in the sidebar first, then click Generate Reading Passage.");
+      return;
+    }
 
     // Auto theme selection based on lessonInput content
     const lowerInput = lessonInput.toLowerCase();
@@ -23416,76 +23811,45 @@ export default function App() {
           targetWordCount,
         }
       );
+      // Surface an empty passage instead of silently showing the "no passage"
+      // empty state (which looks like nothing happened).
+      if (result && !result.readingPassage?.trim()) {
+        alert("The reading passage came back empty — please try again.");
+        return;
+      }
       if (result) {
-        const initialLevel = lexileLevel || "400-500";
+        // Always land the new passage on a real Lexile tile so it shows up
+        // selected/highlighted in the grid straight away.
+        const validIds = PASSAGE_LEXILE_LEVELS.map((l) => l.id);
+        const initialLevel = validIds.includes(lexileLevel) ? lexileLevel : "400-500";
         const leveledPassages = {
           [initialLevel]: result.readingPassage || "",
         };
         setSelectedSuiteLevel(initialLevel);
 
-        setGeneratingMessage("Generating 1-Day Strategic Plan for Story...");
-        let planResult = null;
-        try {
-          planResult = await generateReadingProgram(lessonInput, {
-            yearGroup,
-            lexileLevel,
-            subject,
-            numSlides: 0,
-            numQuestions: 0,
-            questionTypes: [],
-            worksheetContext: {
-              title: result.title || "Reading Passage",
-              readingPassage: result.readingPassage || "",
-              sections: [],
-            }
-          });
-        } catch (planErr) {
-          console.error("Error generating strategic plan during passage generation:", planErr);
-        }
-
-        const initialVocabulary = {
-          [initialLevel]: planResult?.oneDayPlan?.vocabulary || []
-        };
-        const initialQuestions = {
-          [initialLevel]: planResult?.oneDayPlan?.questions || []
-        };
-
+        // Generate ONLY the passage here so it appears immediately. The Strategic
+        // Plan and the multi-level "pack" are now separate, explicit actions
+        // (the "Generate Strategic Plan" button and the "Generate Pack" button).
         setContent((prev) => {
-          const currentProgram = prev?.readingProgram || {
-            title: planResult?.title || result.title || "Reading Program Outline",
-            description: planResult?.description || result.description || "Reading program aligned with core objectives.",
-            gradeLevel: yearGroup,
-            focusArea: planResult?.focusArea || "Comprehension & Vocabulary",
-            duration: planResult?.duration || "1 Day",
-            weeklyGoals: planResult?.weeklyGoals || ["Develop contextual vocabulary.", "Identify story theme and elements.", "Synthesize passage conclusions."],
-            recommendedBooks: planResult?.recommendedBooks || [],
-            milestones: planResult?.milestones || [],
-            oneDayPlan: planResult?.oneDayPlan,
-            leveledVocabulary: initialVocabulary,
-            leveledQuestions: initialQuestions,
-          };
-
+          const base = prev?.readingProgram;
           const updatedProgram = {
-            ...currentProgram,
-            title: planResult?.title || currentProgram.title,
-            description: planResult?.description || currentProgram.description,
-            focusArea: planResult?.focusArea || currentProgram.focusArea,
-            duration: planResult?.duration || currentProgram.duration,
-            weeklyGoals: planResult?.weeklyGoals || currentProgram.weeklyGoals,
-            recommendedBooks: planResult?.recommendedBooks || currentProgram.recommendedBooks,
-            milestones: planResult?.milestones || currentProgram.milestones,
-            oneDayPlan: planResult?.oneDayPlan || currentProgram.oneDayPlan,
-            leveledVocabulary: {
-              ...(currentProgram.leveledVocabulary || {}),
-              ...initialVocabulary,
-            },
-            leveledQuestions: {
-              ...(currentProgram.leveledQuestions || {}),
-              ...initialQuestions,
-            },
+            title: base?.title || result.title || "Reading Program Outline",
+            description: base?.description || result.description || "Reading passage aligned with core objectives.",
+            gradeLevel: yearGroup,
+            focusArea: base?.focusArea || "Comprehension & Vocabulary",
+            duration: base?.duration || "1 Day",
+            weeklyGoals: base?.weeklyGoals || ["Develop contextual vocabulary.", "Identify story theme and elements.", "Synthesize passage conclusions."],
+            recommendedBooks: base?.recommendedBooks || [],
+            milestones: base?.milestones || [],
+            oneDayPlan: base?.oneDayPlan,
+            leveledVocabulary: base?.leveledVocabulary || {},
+            leveledQuestions: base?.leveledQuestions || {},
             readingPassage: result.readingPassage,
             passageTitle: result.title || "Adapted Story Title",
-            leveledPassages,
+            leveledPassages: {
+              ...(base?.leveledPassages || {}),
+              ...leveledPassages,
+            },
           };
 
           if (prev) {
@@ -23550,6 +23914,141 @@ export default function App() {
         };
       });
       return result.readingPassage;
+    }
+  };
+
+  // "Generate Pack": create EVERY Lexile level of the current reading passage in
+  // one click (sequentially, to stay within API rate limits). Levels that are
+  // already generated are skipped so re-running only fills the gaps.
+  const handleGeneratePassagePack = async () => {
+    if (!content?.readingProgram?.readingPassage) {
+      alert("Generate a reading passage first, then click Generate Pack to create the levels you picked.");
+      return;
+    }
+    // Keep the canonical order regardless of the order levels were ticked.
+    const chosen = PASSAGE_LEXILE_LEVELS
+      .map((l) => l.id)
+      .filter((id) => packLevels.includes(id));
+    if (chosen.length === 0) {
+      alert("Pick at least one Lexile level to include in the pack.");
+      return;
+    }
+    setIsGeneratingPassagePack(true);
+    try {
+      let done = 0;
+      for (const lvl of chosen) {
+        const existing = content.readingProgram?.leveledPassages?.[lvl];
+        if (existing && existing.trim().length > 0) { done++; continue; }
+        setGeneratingMessage(`Building level pack — ${lvl} (${done + 1}/${chosen.length})…`);
+        setSelectedSuiteLevel(lvl);
+        try {
+          await handleGenerateSuiteLevelForProgram(lvl);
+        } catch (e) {
+          console.error(`Failed to generate level ${lvl}:`, e);
+        }
+        done++;
+      }
+    } finally {
+      setIsGeneratingPassagePack(false);
+      setGeneratingMessage("Generating...");
+    }
+  };
+
+  // Build an interactive HTML version of the current passage: AI hero image +
+  // 4 switchable kid-friendly designs + themed decorations. Shown in the
+  // existing interactive viewer (preview / print / download / new tab).
+  // Build the prompt for the wordless story picture from the current passage.
+  const storyImagePrompt = (title: string) =>
+    `A colourful, friendly, child-appropriate storybook illustration for a primary-school reading passage titled "${title}" about ${lessonInput || title}. Soft warm cartoon style, bright and engaging. Picture and background only — no text, letters, words, captions, titles, or writing of any kind anywhere in the image.`;
+
+  // Save a picture (data URL) onto the reading program so it persists and is
+  // reused by the interactive HTML.
+  const savePassageImage = (url: string) => {
+    setContent((prev) =>
+      prev?.readingProgram
+        ? { ...prev, readingProgram: { ...prev.readingProgram, passageImage: url } }
+        : prev,
+    );
+  };
+
+  const [isRegeneratingPassageImage, setIsRegeneratingPassageImage] = useState(false);
+
+  // Generate a fresh, wordless story picture on demand.
+  const regeneratePassageImage = async () => {
+    const rp = content?.readingProgram;
+    const title = rp?.passageTitle || rp?.title || lessonInput || "Reading Passage";
+    setIsRegeneratingPassageImage(true);
+    try {
+      const img = await generatePosterImage(storyImagePrompt(title), { noText: true });
+      if (img?.image) savePassageImage(img.image);
+      else alert("Could not generate a picture — please try again.");
+    } catch (e) {
+      console.error("Story image regeneration failed:", e);
+      alert("Could not generate a picture — please try again.");
+    } finally {
+      setIsRegeneratingPassageImage(false);
+    }
+  };
+
+  // Replace the picture with the user's own uploaded image file.
+  const uploadPassageImage = (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      alert("Please choose an image file (PNG, JPG, etc.).");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const url = String(e.target?.result || "");
+      if (url) savePassageImage(url);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Open the existing image editor (crop / position) on the current picture.
+  const editPassageImage = () => {
+    const current = content?.readingProgram?.passageImage;
+    if (!current) {
+      alert("There's no picture to edit yet — regenerate or upload one first.");
+      return;
+    }
+    setEditingImageUrl(current);
+    setImageEditorCallback({ cb: (newUrl: string) => savePassageImage(newUrl) });
+  };
+
+  const openInteractivePassage = async () => {
+    const rp = content?.readingProgram;
+    const passage =
+      rp?.leveledPassages?.[selectedSuiteLevel] || rp?.readingPassage || "";
+    if (!passage.trim()) {
+      alert("Generate a reading passage first, then open the interactive HTML.");
+      return;
+    }
+    const title = rp?.passageTitle || rp?.title || lessonInput || "Reading Passage";
+    setIsBuildingInteractivePassage(true);
+    try {
+      // Reuse the saved picture if there is one (so the user's regenerated /
+      // uploaded / cropped choice sticks); otherwise make one now and save it.
+      let heroImage = rp?.passageImage || "";
+      if (!heroImage) {
+        try {
+          const img = await generatePosterImage(storyImagePrompt(title), { noText: true });
+          heroImage = img?.image || "";
+          if (heroImage) savePassageImage(heroImage);
+        } catch (e) {
+          console.error("Hero image generation failed — using a themed banner instead:", e);
+        }
+      }
+      const html = buildInteractivePassageHTML(passage, title, heroImage);
+      setInteractiveDoc({
+        html,
+        title,
+        ws: null,
+        design: "storybook",
+        kind: "passage",
+        subject: content?.subject || subject || "",
+      });
+    } finally {
+      setIsBuildingInteractivePassage(false);
     }
   };
 
@@ -24238,7 +24737,7 @@ export default function App() {
                       <div>
                         <h3 className="font-black text-lg text-[#064E3B]">No Story Passage Generated Yet</h3>
                         <p className="text-xs text-[#064E3B]/60 max-w-md mx-auto mt-1 font-semibold leading-relaxed">
-                          Input your core theme or curriculum topic in the sidebar and click "Generate Reading Passage" to instantiate a story with full 10-level Lexile adaptions.
+                          Input your core theme or curriculum topic in the sidebar and click "Generate Reading Passage" to create the story. Then use "Generate Pack" to produce all 10 Lexile-level adaptations.
                         </p>
                       </div>
                     </div>
@@ -24251,35 +24750,176 @@ export default function App() {
                             Level-Adapted Story Hub (10-Level Lexile Suite)
                           </h2>
                           <p className={cn("text-xs font-semibold mt-1", getThemeStyles(selectedStoryStyle).descText)}>
-                            A complete set of 10 Lexile-adapted versions. Click on any Level to view, edit, or regenerate it.
+                            A complete set of 10 Lexile-adapted versions. Click on any Level to view, edit, or regenerate it — or generate them all at once with Generate Pack.
                           </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                          <button
+                            disabled={isBuildingInteractivePassage}
+                            onClick={openInteractivePassage}
+                            className="flex items-center gap-1.5 bg-[#7c3aed] hover:bg-[#6d28d9] text-white text-[11px] font-black uppercase px-4 py-2.5 rounded-xl transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-sm"
+                            title="Open an interactive HTML version with designs + a picture (preview, print, download)"
+                          >
+                            {isBuildingInteractivePassage ? (
+                              <Loader2 size={13} className="animate-spin" />
+                            ) : (
+                              <Sparkles size={13} />
+                            )}
+                            {isBuildingInteractivePassage ? "Building…" : "Interactive HTML"}
+                          </button>
+
+                          {/* Story picture controls: preview + regenerate / upload / edit */}
+                          {content.readingProgram?.passageImage && (
+                            <img
+                              src={content.readingProgram.passageImage}
+                              alt="Story picture"
+                              className="w-9 h-9 rounded-lg object-cover border border-stone-300 shadow-sm"
+                              title="Current story picture (used in the interactive HTML)"
+                            />
+                          )}
+                          <button
+                            disabled={isRegeneratingPassageImage}
+                            onClick={regeneratePassageImage}
+                            className="flex items-center gap-1.5 bg-white border border-[#0d9488]/40 text-[#0f766e] hover:bg-[#0d9488]/5 text-[11px] font-black uppercase px-3 py-2.5 rounded-xl transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-sm"
+                            title="Generate a fresh story picture with no words"
+                          >
+                            {isRegeneratingPassageImage ? (
+                              <Loader2 size={13} className="animate-spin" />
+                            ) : (
+                              <RefreshCw size={13} />
+                            )}
+                            {isRegeneratingPassageImage ? "Making…" : "Regenerate Picture"}
+                          </button>
+                          <label
+                            className="flex items-center gap-1.5 bg-white border border-[#0d9488]/40 text-[#0f766e] hover:bg-[#0d9488]/5 text-[11px] font-black uppercase px-3 py-2.5 rounded-xl transition-all active:scale-95 cursor-pointer shadow-sm"
+                            title="Use your own picture instead of the AI one"
+                          >
+                            <ImageIcon size={13} /> Upload
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) uploadPassageImage(f);
+                                e.currentTarget.value = "";
+                              }}
+                            />
+                          </label>
+                          {content.readingProgram?.passageImage && (
+                            <button
+                              onClick={editPassageImage}
+                              className="flex items-center gap-1.5 bg-white border border-[#0d9488]/40 text-[#0f766e] hover:bg-[#0d9488]/5 text-[11px] font-black uppercase px-3 py-2.5 rounded-xl transition-all active:scale-95 cursor-pointer shadow-sm"
+                              title="Crop or reposition the picture"
+                            >
+                              <Crop size={13} /> Edit
+                            </button>
+                          )}
+
+                          <button
+                            disabled={isGeneratingPassagePack || isReleveling}
+                            onClick={handleGeneratePassagePack}
+                            className="flex items-center gap-1.5 bg-[#0d9488] hover:bg-[#0f766e] text-white text-[11px] font-black uppercase px-4 py-2.5 rounded-xl transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-sm"
+                            title="Generate every Lexile level of this passage in one go"
+                          >
+                            {isGeneratingPassagePack ? (
+                              <Loader2 size={13} className="animate-spin" />
+                            ) : (
+                              <Layers size={13} />
+                            )}
+                            {isGeneratingPassagePack ? "Building pack…" : "Generate Pack"}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Pack level picker — choose which Lexile levels the
+                          "Generate Pack" button will create. */}
+                      <div className="mb-5 p-3 rounded-2xl border border-stone-200 bg-stone-50/60">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-stone-500">
+                            Levels in pack ({packLevels.length}/{PASSAGE_LEXILE_LEVELS.length})
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setPackLevels(PASSAGE_LEXILE_LEVELS.map((l) => l.id))}
+                              className="text-[10px] font-black uppercase text-[#0d9488] hover:underline cursor-pointer"
+                            >
+                              All
+                            </button>
+                            <span className="text-stone-300">·</span>
+                            <button
+                              type="button"
+                              onClick={() => setPackLevels([])}
+                              className="text-[10px] font-black uppercase text-stone-500 hover:underline cursor-pointer"
+                            >
+                              None
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {PASSAGE_LEXILE_LEVELS.map((lvl) => {
+                            const picked = packLevels.includes(lvl.id);
+                            return (
+                              <button
+                                key={lvl.id}
+                                type="button"
+                                onClick={() =>
+                                  setPackLevels((prev) =>
+                                    prev.includes(lvl.id)
+                                      ? prev.filter((x) => x !== lvl.id)
+                                      : [...prev, lvl.id],
+                                  )
+                                }
+                                className={cn(
+                                  "px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-tight border-2 transition-all active:scale-95 cursor-pointer",
+                                  picked
+                                    ? "bg-[#0d9488] border-[#0d9488] text-white shadow-sm"
+                                    : "bg-white border-stone-200 text-stone-500 hover:border-stone-400",
+                                )}
+                                title={picked ? "In pack — click to remove" : "Click to add to pack"}
+                              >
+                                {lvl.name}
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
 
                       {/* Level grid layout */}
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-6">
-                      {[
-                        { id: "BR99-100", name: "BR99-100L" },
-                        { id: "100-200", name: "100-200L" },
-                        { id: "200-300", name: "200-300L" },
-                        { id: "300-400", name: "300-400L" },
-                        { id: "400-500", name: "400-500L" },
-                        { id: "500-600", name: "500-600L" },
-                        { id: "600-700", name: "600-700L" },
-                        { id: "700-800", name: "700-800L" },
-                        { id: "800-900", name: "800-900L" },
-                        { id: "900-1050", name: "900-1050L" },
-                      ].map((lvl) => {
+                      {PASSAGE_LEXILE_LEVELS.map((lvl) => {
                         const text = content.readingProgram?.leveledPassages?.[lvl.id];
                         const isGenerated = !!text && text.trim().length > 0;
                         const isSelected = selectedSuiteLevel === lvl.id;
 
+                        const isGeneratingThis = isReleveling && isSelected;
+
                         return (
                           <button
                             key={lvl.id}
-                            onClick={() => setSelectedSuiteLevel(lvl.id)}
+                            disabled={isReleveling || isGeneratingPassagePack}
+                            onClick={async () => {
+                              setSelectedSuiteLevel(lvl.id);
+                              // One click = choose AND generate this level. If it
+                              // already exists, just view it; otherwise create it
+                              // on the spot (needs a base passage first).
+                              if (isGenerated) return;
+                              if (!content.readingProgram?.readingPassage) {
+                                alert("Generate the reading passage first, then click a level.");
+                                return;
+                              }
+                              setIsReleveling(true);
+                              try {
+                                await handleGenerateSuiteLevelForProgram(lvl.id);
+                              } catch (e: any) {
+                                alert(`Error generating ${lvl.id} adaptation: ${e.message}`);
+                              } finally {
+                                setIsReleveling(false);
+                              }
+                            }}
                             className={cn(
-                              "p-2.5 rounded-2xl border-2 text-left transition-all relative overflow-hidden flex flex-col justify-between group active:scale-95 cursor-pointer",
+                              "p-2.5 rounded-2xl border-2 text-left transition-all relative overflow-hidden flex flex-col justify-between group active:scale-95 cursor-pointer disabled:cursor-wait",
                               isSelected
                                 ? "ring-2 ring-emerald-500/20 shadow-md bg-[#F0FDF4] border-emerald-600"
                                 : getThemeStyles(selectedStoryStyle).containerBg === "bg-[#FDFBF7]"
@@ -24291,7 +24931,9 @@ export default function App() {
                               <span className="text-[10px] font-black uppercase text-stone-400 tracking-tight">
                                 Lexile
                               </span>
-                              {isGenerated ? (
+                              {isGeneratingThis ? (
+                                <Loader2 size={11} className="animate-spin text-emerald-600" />
+                              ) : isGenerated ? (
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" title="Generated" />
                               ) : (
                                 <span className="w-1.5 h-1.5 rounded-full bg-stone-400" title="Not Generated" />
@@ -24301,9 +24943,11 @@ export default function App() {
                               {lvl.name}
                             </p>
                             <p className="text-[9px] font-semibold text-stone-400 uppercase tracking-tighter mt-0.5 truncate max-w-full font-sans">
-                              {isGenerated
+                              {isGeneratingThis
+                                ? "Generating…"
+                                : isGenerated
                                 ? `${text.split(/\s+/).filter(Boolean).length} words`
-                                : "Empty"}
+                                : "Tap to create"}
                             </p>
                           </button>
                         );

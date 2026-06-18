@@ -25,6 +25,46 @@ async function callAiProxy(type: string, lessonInput: string, options: any) {
   }
 }
 
+// When the chosen subject is Bahasa Melayu, every part of the generated content
+// (questions, options, instructions, passages, titles) must be written in Malay.
+// Returns a directive to append to generation prompts, or "" for other subjects.
+function bahasaMelayuDirective(subject?: string): string {
+  if (!subject || !/bahasa\s*melayu/i.test(subject)) return "";
+  return `\n\nLANGUAGE (MANDATORY): The subject is Bahasa Melayu. Write ALL output entirely in standard Bahasa Melayu (Malay) — every question, all answer options, every instruction/heading, the title, and any reading passage MUST be in Bahasa Melayu. Do NOT use English anywhere (no English words, glosses, or translations in brackets). Use natural, grammatically correct Malay appropriate for the year group.`;
+}
+
+// Structural format guide for a Bahasa Melayu language paper. Unlike the generic
+// worksheet, a BM paper is organised into labelled grammar sections ("Bahagian")
+// using cloze multiple-choice items, plus sentence-building and comprehension
+// passages. Returns "" for non-BM subjects. Inject into worksheet-generation
+// prompts only (not the after-reading "leveled" flow).
+function bahasaMelayuFormatGuide(subject?: string): string {
+  if (!subject || !/bahasa\s*melayu/i.test(subject)) return "";
+  return `\n\nBAHASA MELAYU PAPER FORMAT (follow this structure and style closely):
+- Organise the paper into clearly labelled sections, each a "section.title" like "Bahagian A: Kata Kerja", "Bahagian B: Kata Adjektif", etc. Each section focuses on ONE Malay language skill. Common sections for a primary BM paper: Kata Kerja, Kata Adjektif, Kata Hubung, Penjodoh Bilangan, Kata Sendi Nama, Kata Arah, Membina Ayat, and Pemahaman Petikan. Pick the sections that fit the given topic/description — if the teacher specified ONE skill (e.g. only Kata Kerja), build the paper mainly around that skill.
+- MOST items are CLOZE multiple-choice: a short everyday Malay sentence containing exactly ONE "____" blank, with EXACTLY 4 options (A–D) — never fewer. Exactly ONE option is correct; the other three are plausible but clearly WRONG.
+- WORD-CLASS RULE (critical): every option in a section MUST belong to that section's word class, and ONLY the correct one fits the sentence. Do NOT mix word classes, and do NOT make two options both correct (e.g. avoid both "cantik" and "indah" as choices when either fits). The blank must not already be answered elsewhere in the sentence.
+- WORD BANKS by section (draw all four options for an item from the SAME bank):
+   • Kata Kerja → verbs only: membaca, menulis, memasak, bermain, menyiram, melukis, menyanyi, berlari, menanam, membasuh…
+   • Kata Adjektif → adjectives only: manis, masam, besar, kecil, tinggi, rendah, rajin, malas, cantik, garang, bersih, berat… (NOT intensifiers like sangat/terlalu/cukup, and NOT verbs).
+   • Kata Hubung → conjunctions only: dan, atau, tetapi, kerana, lalu, manakala, supaya, untuk, sambil, kemudian, walaupun. The blank MUST be a conjunction. NEVER use aspect/time markers (telah, sedang, belum, sudah, akan, masih) or any non-conjunction as options here — that is a common mistake and is BANNED.
+   • Penjodoh Bilangan → classifiers only: ekor, batang, biji, buah, helai, keping, orang, kaki, tangkai, ketul…
+   • Kata Sendi Nama → prepositions only: di, ke, dari, kepada, pada, untuk, dengan, daripada…
+   • Kata Arah → direction words only: atas, bawah, dalam, luar, depan, belakang, tepi, sebelah, antara…
+- Examples (style to imitate):
+   • "Aisyah sedang ____ buku cerita di perpustakaan." → ["membaca","tidur","mandi","menyapu"] (Kata Kerja)
+   • "Air sirap itu sangat ____." → ["manis","tinggi","laju","besar"] (Kata Adjektif)
+   • "Saya suka makan epal ____ oren." → ["dan","tetapi","kerana","atau"] (Kata Hubung)
+   • "Hani tidak hadir ke sekolah ____ demam." → ["kerana","dan","atau","lalu"] (Kata Hubung)
+   • "Ibu memasak ____ kakak mengemas meja." → ["manakala","kerana","supaya","lalu"] (Kata Hubung)
+   • "Pak Ali memelihara lima ____ ayam." → ["ekor","batang","helai","buah"] (Penjodoh Bilangan)
+   • "Buku itu terletak ____ atas meja." → ["di","ke","dari","kepada"] (Kata Sendi Nama)
+   • "Kucing itu berada di ____ meja." → ["bawah","atas","depan","belakang"] (Kata Arah)
+- For a "Membina Ayat" section: each item is an open-response (type "open-response", NO options) that gives a short picture description in Malay and asks the pupil to write one complete sentence, e.g. "Gambar seorang murid membaca buku. Bina satu ayat yang lengkap."
+- For a "Pemahaman Petikan" section: write a short Malay passage (3–6 simple sentences about an everyday scene) and put the FULL passage text in that section's "instructions" field (begin it with "Baca petikan di bawah."). Then the section's questions ask about that passage — mix multiple-choice (e.g. "Bilakah …?", "Di manakah …?") and open-response (e.g. "Mengapakah …?", "Nyatakan satu kata kerja dalam petikan."). Do NOT ask comprehension questions without a passage. You may include one or two such passage sections.
+- Use simple, correct, age-appropriate Malay names and contexts (Aisyah, Amir, Faris, ibu, nenek, perpustakaan, padang, dapur…). Keep every sentence short and natural.`;
+}
+
 export interface EduOptions {
   yearGroup: string;
   lexileLevel: string;
@@ -332,15 +372,27 @@ const QTYPE_ORDER = [
   "drawing",
 ];
 const QTYPE_TITLE: Record<string, string> = {
-  "multiple-choice": "Multiple Choice",
+  "multiple-choice": "Multiple Choice Questions",
   "true-false": "True or False",
   "fill-in-the-blanks": "Fill in the Blanks",
-  matching: "Matching",
+  matching: "Matching Questions",
   sorting: "Sorting",
   "cut-and-paste": "Cut and Paste",
   scenario: "Scenario Questions",
-  "short-answer": "Short Answer",
+  "short-answer": "Short Answer Questions",
   drawing: "Drawing",
+};
+// Per-section exam instructions (shown under the "Section X:" heading).
+const QTYPE_INSTRUCTION: Record<string, string> = {
+  "multiple-choice": "Choose the best answer.",
+  "true-false": "Write T for True or F for False.",
+  "fill-in-the-blanks": "Fill in the blanks using the words from the Word Bank above.",
+  matching: "Match each item to the correct answer.",
+  sorting: "Sort each item into the correct group.",
+  "cut-and-paste": "Cut out each item and paste it in the correct place.",
+  scenario: "Read each situation and answer the question.",
+  "short-answer": "Answer each question in the space provided.",
+  drawing: "Draw your answer in the box.",
 };
 function normQType(t: any): string {
   const s = String(t || "short-answer").toLowerCase();
@@ -381,18 +433,121 @@ function salvageQuestions(text: string): any[] {
   return out;
 }
 
+// A "fingerprint" of a question for duplicate detection — lowercased, stripped
+// of punctuation/blanks and common filler words, so near-identical questions
+// ("What is a CPU?" vs "What is the CPU?") collapse to the same key.
+function questionFingerprint(text: string): string {
+  const STOP = new Set([
+    "the", "a", "an", "is", "are", "was", "were", "to", "of", "in", "on", "at",
+    "for", "and", "or", "what", "which", "who", "when", "where", "why", "how",
+    "do", "does", "did", "we", "you", "your", "our", "it", "this", "that",
+    "with", "as", "be", "can", "should", "following", "into",
+  ]);
+  return String(text || "")
+    .toLowerCase()
+    .replace(/_{2,}/g, " ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w && !STOP.has(w))
+    .sort()
+    .join(" ")
+    .trim();
+}
 // Dedupe questions GLOBALLY across all sections (top-ups can repeat a question).
+// Drops both exact repeats and near-identical reworded questions.
 function dedupeSections(sections: any[]): any[] {
   const seen = new Set<string>();
   return (sections || []).map((s: any) => ({
     ...s,
     questions: (s?.questions || []).filter((q: any) => {
-      const k = String(q?.text || "").toLowerCase().replace(/\s+/g, " ").trim();
-      if (!k || seen.has(k)) return false;
-      seen.add(k);
+      const exact = String(q?.text || "").toLowerCase().replace(/\s+/g, " ").trim();
+      const fp = questionFingerprint(q?.text);
+      if (!exact || seen.has(exact) || (fp && seen.has("fp:" + fp))) return false;
+      seen.add(exact);
+      if (fp) seen.add("fp:" + fp);
       return true;
     }),
   }));
+}
+
+// Safety net: a multiple-choice item should never carry True/False-style
+// options (that means the model wrote a true-false item by mistake). Strip those
+// pseudo-options when real answer choices remain.
+function cleanMultipleChoice<T extends { sections?: any[] }>(ws: T): T {
+  if (!ws || !Array.isArray(ws.sections)) return ws;
+  const JUNK = new Set(["true", "false", "maybe", "unknown", "none", "n/a"]);
+  const BLANK = "__________";
+  for (const sec of ws.sections) {
+    for (const q of sec?.questions || []) {
+      if (normQType(q?.type) !== "multiple-choice") continue;
+      if (!Array.isArray(q?.options)) continue;
+      const filtered = q.options.filter(
+        (o: any) => !JUNK.has(String(o || "").trim().toLowerCase()),
+      );
+      if (filtered.length >= 2) q.options = filtered;
+      // Remove duplicate options WITHIN the question (case-insensitive) so the
+      // same choice never appears twice.
+      const seenOpt = new Set<string>();
+      q.options = (q.options || []).filter((o: any) => {
+        const key = String(o || "").trim().toLowerCase();
+        if (!key || seenOpt.has(key)) return false;
+        seenOpt.add(key);
+        return true;
+      });
+
+      // Normalize any existing blank to a consistent line length first.
+      let text = String(q?.text || "").replace(/_{2,}/g, BLANK);
+      // Strip the banned repetitive listing prefix ("A computer has X, Y and Z.")
+      // when a real question/stem follows — leaves genuine scenario context
+      // ("Adam wants to type a story…") untouched (no has/have/contains + list).
+      const listPrefix = text.match(
+        /^[A-Z][^.?!]*\b(?:has|have|contains?|includes?|consists?\s+of)\b[^.?!]*,[^.?!]*\.\s+(\S[\s\S]*)$/i,
+      );
+      if (listPrefix && listPrefix[1] && listPrefix[1].trim().length > 8) {
+        text = listPrefix[1].trim();
+      }
+      // If the question is a "complete the sentence" statement that SHOWS the
+      // answer (an option appears verbatim in the stem), blank it out so the
+      // student must choose the option that completes it. Real questions (no
+      // option in the stem) and items already containing a blank are untouched.
+      if (!text.includes(BLANK)) {
+        const byLen = [...q.options]
+          .map((o: any) => String(o || "").trim())
+          .filter((o: string) => o.length >= 4)
+          .sort((a: string, b: string) => b.length - a.length);
+        for (const o of byLen) {
+          const idx = text.toLowerCase().indexOf(o.toLowerCase());
+          if (idx >= 0) {
+            text =
+              text.slice(0, idx) + BLANK + text.slice(idx + o.length);
+            // tidy spacing/punctuation around the inserted blank
+            text = text
+              .replace(/\s{2,}/g, " ")
+              .replace(/\s+([.?!,;:])/g, "$1")
+              .trim();
+            break;
+          }
+        }
+      }
+      q.text = text;
+    }
+  }
+  return ws;
+}
+
+// Tidy sorting questions: strip a stray "Sorting:" / "Sort:" prefix the model
+// sometimes adds before the real "Sort the following into: …" instruction.
+function normalizeSorting<T extends { sections?: any[] }>(ws: T): T {
+  if (!ws || !Array.isArray(ws.sections)) return ws;
+  for (const sec of ws.sections) {
+    for (const q of sec?.questions || []) {
+      if (normQType(q?.type) !== "sorting") continue;
+      q.text = String(q?.text || "")
+        .replace(/^\s*(sorting|sort)\s*[:\-–]\s*/i, "")
+        .trim();
+    }
+  }
+  return ws;
 }
 
 // Make sure every fill-in-the-blank sentence keeps ONE clean blank to complete.
@@ -439,15 +594,22 @@ function organizeByType<T extends { sections?: any[] }>(ws: T): T {
     const k = normQType(q?.type);
     (groups[k] ||= []).push(q);
   }
-  const sections: any[] = [];
-  for (const k of QTYPE_ORDER) {
-    if (groups[k]?.length)
-      sections.push({ title: QTYPE_TITLE[k], instructions: "", questions: groups[k] });
-  }
-  for (const k of Object.keys(groups)) {
-    if (!QTYPE_ORDER.includes(k))
-      sections.push({ title: QTYPE_TITLE[k] || "Questions", instructions: "", questions: groups[k] });
-  }
+  // Build exam-style sections: "Section A: Multiple Choice Questions (N Marks)"
+  // with a per-section instruction and 1 mark per question.
+  const LETTERS = "ABCDEFGHIJ";
+  const ordered: string[] = [];
+  for (const k of QTYPE_ORDER) if (groups[k]?.length) ordered.push(k);
+  for (const k of Object.keys(groups)) if (!QTYPE_ORDER.includes(k)) ordered.push(k);
+  const sections = ordered.map((k, i) => {
+    const qs = groups[k];
+    const name = QTYPE_TITLE[k] || "Questions";
+    const marks = qs.length;
+    return {
+      title: `Section ${LETTERS[i] || i + 1}: ${name} (${marks} ${marks === 1 ? "Mark" : "Marks"})`,
+      instructions: QTYPE_INSTRUCTION[k] || "",
+      questions: qs,
+    };
+  });
   return { ...ws, sections };
 }
 
@@ -489,6 +651,64 @@ function filterWorksheetTypes<T extends { sections?: any[] }>(ws: T, allowed: Se
   return { ...ws, sections };
 }
 
+function isBahasaMelayu(subject?: string): boolean {
+  return !!subject && /bahasa\s*melayu/i.test(subject);
+}
+
+// Question types are OPTIONAL. When the teacher selects none, the model chooses
+// a suitable mix automatically; otherwise it is restricted to the chosen types.
+function allowedTypesClause(options: EduOptions, lessonInput: string): string {
+  const types = (options.questionTypes || []).filter(Boolean);
+  if (types.length) return `Allowed Types: ${types.join(", ")}.`;
+  return `Question types are AUTOMATIC — the teacher did not choose any specific type. Select a suitable MIX of common question types (e.g. multiple-choice, short-answer, true-false, fill-in-the-blanks, matching) that best fits the topic "${lessonInput}" and ${options.yearGroup}; use sensible variety rather than only one type.`;
+}
+
+// Approximate the numeric Lexile for a band id/label ("BR99-100", "300-400",
+// "740L", "AD580L"). Beginning-Reader (BR) codes sit below 0L. Returns NaN when
+// no level / "None".
+function lexileApprox(levelRaw: string): number {
+  const level = (levelRaw || "").trim();
+  if (!level || level === "None") return NaN;
+  if (/^BR/i.test(level)) return -50; // Beginning Reader, below 0L
+  const range = level.match(/(\d+)\s*[-–]\s*(\d+)/);
+  if (range) return (parseInt(range[1], 10) + parseInt(range[2], 10)) / 2;
+  const num = level.match(/(\d+)/);
+  return num ? parseInt(num[1], 10) : NaN;
+}
+
+// Concrete, prescriptive writing rules that make a passage actually MEASURE at
+// the requested Lexile band — sentence length, structure, and vocabulary. A
+// plain "match this Lexile" instruction is too vague; the model needs hard
+// numbers, especially for low/Beginning-Reader levels.
+function lexilePassageGuidance(levelRaw: string): string {
+  const level = (levelRaw || "").trim();
+  const approx = lexileApprox(level);
+  if (isNaN(approx)) return "";
+  let rules: string;
+  if (approx < 100) {
+    rules = `This is a BEGINNING-READER level. Use EXTREMELY simple text: ONE idea per sentence, 3-6 words per sentence MAXIMUM. Use only the most common, mostly one-syllable words. Present tense. Short, repetitive, predictable sentence patterns. Put EACH short sentence on its OWN line (separate lines, not run together). Example feel: "John has a bag.\\nHe has food.\\nHe walks in the woods.\\nHe sees a tree.\\nJohn is happy."`;
+  } else if (approx < 200) {
+    rules = `Very early reader. 4-7 words per sentence. Only common, familiar one- and two-syllable words. Simple subject-verb-object sentences, ONE idea each. Avoid clauses and conjunctions beyond a rare "and".`;
+  } else if (approx < 300) {
+    rules = `Early reader. 5-8 words per sentence. Mostly common words. Mostly simple sentences with only an occasional "and"/"but". One clear idea per sentence.`;
+  } else if (approx < 400) {
+    rules = `Simple sentences of 6-10 words, with some short compound sentences joined by "and", "but", or "so". Familiar everyday vocabulary; keep ideas concrete.`;
+  } else if (approx < 500) {
+    rules = `A mix of simple and compound sentences, 8-12 words. Some descriptive adjectives. Mostly familiar vocabulary with a few new words shown in context.`;
+  } else if (approx < 600) {
+    rules = `Compound sentences with the occasional complex sentence, 10-14 words. Broader vocabulary including some multi-syllable words.`;
+  } else if (approx < 700) {
+    rules = `Compound-complex sentences with subordinate clauses, 12-16 words. Varied, more precise vocabulary.`;
+  } else if (approx < 800) {
+    rules = `Complex sentences with multiple clauses, 14-18 words. Richer, precise vocabulary and some abstract ideas.`;
+  } else if (approx < 900) {
+    rules = `Sophisticated multi-clause sentences, 16-20 words. Advanced vocabulary and abstract concepts.`;
+  } else {
+    rules = `Sophisticated, varied sentences of 18-24 words with layered clauses. Academic, precise vocabulary and nuanced ideas.`;
+  }
+  return ` LEXILE (MANDATORY) — target ${level}: ${rules} Keep the ENTIRE passage consistently at this level; do NOT drift easier or harder.`;
+}
+
 export async function generateWorksheet(lessonInput: string, options: EduOptions, slideContext?: SlideContent[], onPartial?: (partial: { phase: string; title: string; readingPassage?: string; description?: string; methodology?: string; sections: WorksheetSection[]; done: number; total: number }) => void): Promise<{ title: string; readingPassage?: string; leveledPassages?: Record<string, string>; description?: string; methodology?: string; sections: WorksheetSection[] }> {
   try {
     const contents: any[] = [];
@@ -503,6 +723,73 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
       ? `IMPORTANT: Start by writing a short story or reading passage (around ${requestedWordCount}) about "${lessonInput}" suitable for ${options.yearGroup} students. Include this story in the "readingPassage" field.`
       : "DO NOT include a reading passage. Leave the 'readingPassage' field as an empty string \"\".";
 
+    // READING-PASSAGE-ONLY: a dedicated, focused path. The general worksheet
+    // prompt below is dominated by question-writing instructions, which made the
+    // model emit a section and leave "readingPassage" EMPTY (nothing appeared in
+    // the Reading Program). Here we ask ONLY for the passage and state the exact
+    // JSON shape (Groq ignores responseSchema, so the field must be explicit).
+    if (options.readingPassageOnly) {
+      const lexileDirective = lexilePassageGuidance(options.lexileLevel);
+      // Low/Beginning-Reader levels must stay SHORT — a long passage of choppy
+      // 4-word sentences both reads badly and drifts the level upward. Cap the
+      // length for low Lexiles unless the user set an explicit small target.
+      const approxLx = lexileApprox(options.lexileLevel);
+      let passageWordCount = requestedWorksheetPassageWordCount;
+      if (!isNaN(approxLx) && approxLx < 500) {
+        if (approxLx < 100) passageWordCount = "40-80 words";
+        else if (approxLx < 200) passageWordCount = "60-110 words";
+        else if (approxLx < 300) passageWordCount = "90-160 words";
+        else passageWordCount = "150-300 words";
+      }
+      const passagePrompt = `As an expert Cambridge Educator and reading-level specialist, write ONE engaging, age-appropriate reading passage (around ${passageWordCount}) about "${lessonInput}" for ${options.yearGroup} students. Subject: ${options.subject}.${lexileDirective}
+
+STORY ONLY: output the passage prose and NOTHING else. Do NOT include, anywhere in the output, any of the following: a vocabulary list, glossary, word bank, word definitions or meanings, comprehension or discussion questions, an answer key, quizzes, exercises, activities, headings, section titles, labels, bullet points, or lines such as "Vocabulary:", "Questions:", "Answers:", or "Key words:". Just the story/informational text in plain paragraphs.${bahasaMelayuDirective(options.subject)}
+
+Return ONLY a JSON object in exactly this shape: {"title": "<a short, fitting passage title>", "readingPassage": "<the FULL passage text as a single string, paragraphs separated by \\n\\n>"}. The "readingPassage" value MUST contain ONLY the story prose — no vocabulary, no questions, no answers, no headings.`;
+      const resp = await generateContentWithRetry({
+        contents: {
+          parts: [
+            ...(options.fileContext ? [{ inlineData: options.fileContext }] : []),
+            { text: passagePrompt },
+          ],
+        },
+        config: {
+          thinkingConfig: { thinkingBudget: 0 },
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              readingPassage: { type: Type.STRING },
+            },
+            required: ["readingPassage"],
+          },
+        },
+      });
+      let passage = "";
+      let title = lessonInput;
+      try {
+        const p = JSON.parse(resp.text || "{}");
+        passage = String(p.readingPassage || "").trim();
+        title = String(p.title || lessonInput).trim() || lessonInput;
+      } catch {
+        // Not valid JSON — salvage the raw text as the passage rather than fail.
+        passage = String(resp.text || "")
+          .replace(/^[^{]*\{/, "")
+          .replace(/"?readingPassage"?\s*:\s*"?/i, "")
+          .trim();
+        if (!passage) passage = String(resp.text || "").trim();
+      }
+      if (!passage) throw new Error("Empty reading passage");
+      return {
+        title,
+        readingPassage: passage,
+        description: "",
+        methodology: "",
+        sections: [{ title: "Reading Passage", instructions: "", questions: [] }],
+      };
+    }
+
     // Per-type breakdown (e.g. "5 Multiple Choice, 3 Short Answer") when the
     // user chose counts per type; otherwise a plain total.
     const typeBreakdown = options.typeCounts
@@ -513,7 +800,7 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
       : "";
     const countSpec = typeBreakdown
       ? `Produce EXACTLY this breakdown of question types: ${typeBreakdown} (${options.numQuestions} questions in total). Use ONLY these question types in these amounts — keep writing until every count is met.`
-      : `You MUST produce a FULL set of ${options.numQuestions} questions IN TOTAL across all sections — keep writing questions until you reach ${options.numQuestions}; do not stop early. (A few extra is acceptable; we keep the first ${options.numQuestions}.) Allowed Types: ${options.questionTypes.join(", ")}.`;
+      : `You MUST produce a FULL set of ${options.numQuestions} questions IN TOTAL across all sections — keep writing questions until you reach ${options.numQuestions}; do not stop early. (A few extra is acceptable; we keep the first ${options.numQuestions}.) ${allowedTypesClause(options, lessonInput)}`;
 
     if (slideContext) {
       contents.push(`CONTEXT FROM SLIDES: ${JSON.stringify(slideContext.map(s => ({ title: s.title, content: s.content })))}`);
@@ -532,8 +819,10 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
     - Produce the FULL requested number of questions — do NOT stop early. ${countSpec}
     - EVERY question MUST be directly about the topic "${lessonInput}" — do not drift to a loosely related subject.
     - Every question must be FACTUALLY CORRECT, logically sound, unambiguous, and exam-style (like Cambridge textbooks/past papers).
-    - For "multiple-choice", EXACTLY ONE option may be correct — the other options must be clearly WRONG, never also-true or partially-correct (e.g. do NOT ask "What is a robot used for in the home?" with both "clean the house" and "cook meals" as options). Make the question specific enough that only ONE option is right. For "true-false", the statement must be verifiably true or false.
-    - Do NOT repeat questions; keep them distinct.`;
+    - For "multiple-choice", write the text either as a question ending in "?" or as a "complete the sentence" statement with a "____" blank where the answer goes; EXACTLY ONE option is correct, the others clearly WRONG (e.g. do NOT ask "What is a robot used for in the home?" with both "clean the house" and "cook meals" as options). The text must NEVER contain or reveal the correct answer (if it is a completing sentence, put "____" in place of the answer). Vary the wording; never give True/False options for multiple-choice.
+    - For "true-false", write each item as a declarative STATEMENT that is verifiably true or false (e.g. "The Sun is a star."), NOT as an "Is it true that…?" question.
+    - Every question MUST be TOTALLY DIFFERENT from the others — different fact/idea/sub-topic of "${lessonInput}", AND a different sentence structure. Do NOT reuse the same template or opening for multiple questions (e.g. not "A computer has …. What is the purpose of …?" repeated). Do not ask the same thing twice with different wording. Cover a wide range of sub-topics.
+    - ANSWERS must not be repetitive: the choices within a question must all differ, and do NOT reuse the same correct answer or the same set of options across questions. Each question should have fresh, distinct answer choices.`;
 
     if (options.metadataHints?.description) {
       mainPrompt += `\nIntegration Goal: ${options.metadataHints.description}`;
@@ -541,15 +830,26 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
     if (options.metadataHints?.methodology) {
       mainPrompt += `\nPedagogical Focus: ${options.metadataHints.methodology}`;
     }
+    mainPrompt += bahasaMelayuDirective(options.subject);
+    mainPrompt += bahasaMelayuFormatGuide(options.subject);
 
     const encodingRules = `QUESTION "type" FIELD — set it to one of these exact lowercase values based on the question, and follow the encoding rules for each:
-- "multiple-choice": put 3-4 answer choices in "options". EXACTLY ONE option may be correct — the other options must be clearly WRONG, never also-true or partially-correct. Do not write options where more than one could be a valid answer; the student must be able to pick a single, unambiguous answer. Place the correct option in a VARYING position (not always first).
-- "true-false": put exactly ["True","False"] in "options".
-- "fill-in-the-blanks": a short, concise exam-style sentence (8-14 words) with exactly one "____" blank and a normal space around it. The FIRST option is the correct answer (ONE or TWO words; use DIGITS for numbers); add 1-2 short distractors. Each fill-in must have a different answer.
+- "multiple-choice": "options" are 3-4 short answer choices (exactly one correct, the rest clearly wrong, correct one in a varying position). The options within a question must ALL be different from each other (no repeated choices), and across questions DO NOT keep reusing the same answer choices — vary them. NEVER use "True"/"False"/"Maybe" as options here. The "text" must be written in ONE of these two forms, and MUST NEVER contain or reveal the correct answer:
+   (1) a QUESTION ending in "?" — e.g. {"text":"Which planet is closest to the Sun?","options":["Mercury","Venus","Earth","Mars"]};
+   (2) a "complete the sentence" statement with a "____" blank EXACTLY where the answer goes — e.g. {"text":"We should hold our device ____ to avoid eye strain.","options":["Very close to our face","Far away from our face","At a comfortable distance"]}. The student picks the option that fills the blank.
+  NEVER write the correct answer inside the sentence. CRITICAL — EACH QUESTION MUST BE STRUCTURED DIFFERENTLY. NEVER reuse the same sentence template. In particular, do NOT begin questions with a list of parts like "A computer has X, Y and Z. What is the purpose of …?" — this is BANNED and must not appear even once. Instead vary like these good examples (notice each is different — a different scenario, person, or phrasing):
+   {"text":"Adam wants to type a story on the computer. Which device helps him enter words?","options":["Monitor","Keyboard","Speaker","Printer"]}
+   {"text":"Sarah moves a small device on the table to control the pointer on screen. What is she using?","options":["Mouse","Scanner","Speaker","Webcam"]}
+   {"text":"The brain of the computer that processes information is the ____.","options":["CPU","Monitor","Mouse","Speaker"]}
+   {"text":"Which part of the computer displays pictures and text?","options":["Monitor","Keyboard","Hard drive","Microphone"]}
+   {"text":"Why do we save our work before closing a program?","options":["To keep our changes","To delete the file","To turn off the screen","To print it"]}
+  Mix short real-life scenarios (with different names/situations), direct "What/Which/Why/Where/How" questions, and blank-completion stems — but never twice the same shape.
+- "true-false": write a clear declarative STATEMENT (NOT a question) that is plainly true or false — e.g. "A search engine is used to find information on the internet." Do NOT phrase it as "Is it true that…?" and do NOT put "True or False" inside the text. Put exactly ["True","False"] in "options".
+- "fill-in-the-blanks": a short, concise exam-style sentence (8-14 words) with exactly one "____" blank and a normal space around it. The FIRST option is the correct answer and MUST be a SINGLE WORD (at most two words; use DIGITS for numbers) — NEVER a phrase, clause, or full sentence, because it is displayed in a Word Bank. Add 1-2 short single-word distractors. Each fill-in must have a different answer.
 - "short-answer" / "scenario": an open written response; leave "options" empty.
 - "matching": a left-to-right matching task; leave "options" empty.
 - "drawing": a creative DRAWING task — the student draws their answer in an empty box. Write a clear drawing instruction in "text" and DO NOT provide "options".
-- "sorting": a sorting task. Name the 2-4 categories inside "text" (e.g. "Sort these into Mammals and Birds"), and put the individual items to be sorted in "options".
+- "sorting": a sorting task. The "text" MUST be EXACTLY "Sort the following into: <Category 1> and <Category 2>." (name 2-4 categories; do NOT prefix it with "Sorting:" or anything else). "options" MUST be a list of 6-8 specific ITEMS to sort into those categories — the items are the words the student places into the groups, and they must NOT be the category names. Example: {"text":"Sort the following into: Input Devices and Output Devices.","type":"sorting","options":["Keyboard","Mouse","Monitor","Printer","Microphone","Speaker"]}. NEVER produce a sorting task with an empty "options" list.
 - "cut-and-paste": a cut-and-paste task. Describe the target slots/categories inside "text", and put the individual items the student cuts out and pastes in "options".
 Only use the types that appear in the "Allowed Types" list above.`;
     contents.push(mainPrompt);
@@ -637,6 +937,9 @@ Only use the types that appear in the "Allowed Types" list above.`;
         };
       }
       let ws: any = filterWorksheetTypes(parsed, allowedTypes);
+      // Remove duplicate questions from the very first response too (the top-up
+      // loop dedupes as it adds, but the initial batch was not deduped before).
+      ws = { ...ws, sections: dedupeSections(ws.sections || []) };
       const want = options.numQuestions || 0;
 
       // Desired count per CANONICAL type (when the user chose per-type counts).
@@ -718,7 +1021,7 @@ Only use the types that appear in the "Allowed Types" list above.`;
             contents: {
               parts: [
                 {
-                  text: `As an expert Cambridge Educator, write EXACTLY these ADDITIONAL distinct, exam-style assessment questions STRICTLY about the topic "${lessonInput}" (Subject: ${options.subject}, Year Group: ${options.yearGroup}): ${breakdownLine}. EVERY question must be directly about "${lessonInput}" — do not drift off-topic. Use ONLY these exact lowercase "type" values. Every question must be factually accurate, logically sound, and aligned with Cambridge textbooks/past papers, with a clearly correct answer. For multiple-choice, EXACTLY ONE option may be correct — the other options must be clearly WRONG (never also-true or partially-correct) so the student can pick a single unambiguous answer. Fill-in-the-blank answers must be SHORT (one or two words). They MUST be different from these existing questions: ${JSON.stringify(existing)}.\n${encodingRules}\nReturn ONLY JSON: {"questions": [{"text","type","options"}]}`,
+                  text: `As an expert Cambridge Educator, write EXACTLY these ADDITIONAL distinct, exam-style assessment questions STRICTLY about the topic "${lessonInput}" (Subject: ${options.subject}, Year Group: ${options.yearGroup}): ${breakdownLine}. EVERY question must be directly about "${lessonInput}" — do not drift off-topic. Use ONLY these exact lowercase "type" values. Every question must be factually accurate, logically sound, and aligned with Cambridge textbooks/past papers, with a clearly correct answer. For multiple-choice, EXACTLY ONE option may be correct — the other options must be clearly WRONG (never also-true or partially-correct) so the student can pick a single unambiguous answer; vary the wording (not all "What/Which/When"). For true-false, write a declarative STATEMENT (not an "Is it true…?" question). They MUST be COMPLETELY different from each other and from these existing questions — different sub-topic, different sentence structure, and different answer choices; do NOT reuse the same template/opening: ${JSON.stringify(existing)}.\n${encodingRules}${bahasaMelayuDirective(options.subject)}${bahasaMelayuFormatGuide(options.subject)}\nReturn ONLY JSON: {"questions": [{"text","type","options"}]}`,
                 },
               ],
             },
@@ -760,7 +1063,14 @@ Only use the types that appear in the "Allowed Types" list above.`;
         ];
         ws = { ...ws, sections: dedupeSections(secs) };
       }
-      return normalizeFillBlanks(organizeByType(capByTypeCounts(ws, options.typeCounts, want)));
+      // Bahasa Melayu papers keep the model's own "Bahagian" sections (grammar
+      // topic / comprehension), so DON'T regroup by question type (which would
+      // overwrite them with English type-named sections). Other subjects get the
+      // standard exam-style "Section A: Multiple Choice…" grouping.
+      const capped = isBahasaMelayu(options.subject)
+        ? capWorksheetQuestions(ws, want)
+        : organizeByType(capByTypeCounts(ws, options.typeCounts, want));
+      return normalizeSorting(cleanMultipleChoice(normalizeFillBlanks(capped)));
     }
 
     // SPEED: generate the questions in CONCURRENT batches (each call produces
@@ -782,7 +1092,7 @@ Only use the types that appear in the "Allowed Types" list above.`;
     // the parallel question batches so each batch sends far fewer input tokens
     // and returns faster — the batches just need the topic/subject/year.
     const sharedCtx = `As an expert Cambridge Educator preparing a worksheet on "${lessonInput}". Subject: ${options.subject}, Year Group: ${options.yearGroup}${lex}.
-Use the subject "${options.subject}" exactly. Keep all content neutral and brand-free, and keep every question concise and direct.`;
+Use the subject "${options.subject}" exactly. Keep all content neutral and brand-free, and keep every question concise and direct.${bahasaMelayuDirective(options.subject)}${bahasaMelayuFormatGuide(options.subject)}`;
     const curriculumNote = `\nCURRICULUM ALIGNMENT: Align with the Cambridge International Framework and Scheme of Work; where natural reference one official LO code (Stage+Strand+Number, e.g. 3TC.01) using: ${CAMBRIDGE_CURRICULUM_INFO}`;
 
     // Header: title + (optional) passage + short description/methodology.
@@ -825,7 +1135,7 @@ Return ONLY: "title" (a concise worksheet title), "readingPassage" (as above), "
           parts: [
             {
               text: `${sharedCtx}
-Generate EXACTLY ${rg.count} questions as ONE worksheet section (give the section a fitting title and a brief instruction line). This is part ${rg.idx + 1} of ${chunkCount} of a ${total}-question worksheet — cover a DISTINCT sub-area and do NOT duplicate the other parts. Allowed Types: ${options.questionTypes.join(", ")}.${passage ? `\nBase the questions on this reading passage:\n"""${passage}"""` : ""}
+Generate EXACTLY ${rg.count} questions as ONE worksheet section (give the section a fitting title and a brief instruction line). This is part ${rg.idx + 1} of ${chunkCount} of a ${total}-question worksheet — cover a DISTINCT sub-area and do NOT duplicate the other parts. ${allowedTypesClause(options, lessonInput)}${passage ? `\nBase the questions on this reading passage:\n"""${passage}"""` : ""}
 ${encodingRules}
 Return ONLY a "sections" array containing exactly ONE section with exactly ${rg.count} questions.`,
             },
@@ -1578,49 +1888,39 @@ export async function relevelReadingPassage(
     6. HTML formatting can be used for paragraphs if the source passage had HTML structure, but standard text or HTML formatting is expected.
     `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+    mainPrompt += `
+
+    OUTPUT FORMAT — return ONLY a single valid JSON object in EXACTLY this shape (no markdown, no commentary):
+    {"readingPassage":"<the full rewritten passage as one string>","vocabulary":[{"word":"","definition":"","contextSentence":""}],"questions":[{"question":"","answer":""}]}
+    Put the ENTIRE rewritten passage in "readingPassage". Include 3-5 vocabulary items and 3-5 questions.`;
+
+    // Use the resilient shared path (retry + model fallback) instead of a single
+    // direct gemini-3.5-flash call, which had NO fallback and failed whenever
+    // that model was overloaded (503) — breaking every level adaptation.
+    const response = await generateContentWithRetry({
       contents: { parts: [{ text: mainPrompt }] },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            readingPassage: { type: Type.STRING, description: "The complete rewritten reading passage text matching the target Lexile complexity." },
-            vocabulary: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  word: { type: Type.STRING },
-                  definition: { type: Type.STRING },
-                  contextSentence: { type: Type.STRING }
-                },
-                required: ["word", "definition", "contextSentence"]
-              },
-              description: "An array of 3-5 key vocabulary words from the rewritten text adapted to the target level."
-            },
-            questions: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  question: { type: Type.STRING },
-                  answer: { type: Type.STRING }
-                },
-                required: ["question", "answer"]
-              },
-              description: "An array of 3-5 key comprehension questions and answers for this target level adaptation."
-            }
-          },
-          required: ["readingPassage", "vocabulary", "questions"]
-        }
-      }
+      config: { responseMimeType: "application/json" },
     });
 
     const text = response.text;
     if (!text) throw new Error("Empty response");
-    return JSON.parse(text);
+    let parsed: any;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // Salvage the passage if the model wrapped or slightly malformed the JSON.
+      const m = text.match(/"readingPassage"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+      parsed = m
+        ? { readingPassage: m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"') }
+        : { readingPassage: text };
+    }
+    const out = {
+      readingPassage: String(parsed.readingPassage || "").trim(),
+      vocabulary: Array.isArray(parsed.vocabulary) ? parsed.vocabulary : [],
+      questions: Array.isArray(parsed.questions) ? parsed.questions : [],
+    };
+    if (!out.readingPassage) throw new Error("Empty reading passage");
+    return out;
   } catch (err: any) {
     if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
       return callAiProxy('relevelPassage', passage, { targetLexile, subject, yearGroup });
@@ -1642,6 +1942,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // proxy which holds the key.
 const GROQ_API_KEY = (process.env.GROQ_API_KEY as string) || "";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+// Max time to wait for a single Groq call before aborting it as a timeout.
+// Groq is fast (a full worksheet batch returns in a few seconds); anything past
+// this is a stalled connection, so abort and let the retry logic take over.
+const GROQ_CALL_TIMEOUT_MS = 60000;
 
 async function groqGenerate(
   request: { contents: any; config?: any },
@@ -1671,14 +1975,31 @@ async function groqGenerate(
   const maxTokens = /8b|instant/i.test(model) ? 2600 : 7000;
   const body: any = { model, messages, temperature: 0.7, max_tokens: maxTokens };
   if (wantsJson) body.response_format = { type: "json_object" };
-  const res = await fetch(GROQ_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${GROQ_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+  // Hard per-call timeout: without it a stalled connection hangs the whole
+  // generation forever (the user sees "still generating" indefinitely). On
+  // abort we throw a "timeout" error so generateContentWithRetry treats it as
+  // transient and retries / falls back instead of waiting endlessly.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GROQ_CALL_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(GROQ_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${GROQ_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (err: any) {
+    if (err?.name === "AbortError" || controller.signal.aborted) {
+      throw new Error(`Groq request timeout after ${GROQ_CALL_TIMEOUT_MS}ms (model ${model})`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) {
     const errBody = await res.text().catch(() => "");
     throw new Error(`Groq ${res.status}: ${errBody.slice(0, 300)}`);
@@ -1804,7 +2125,7 @@ Write exactly ${options.numQuestions} after-reading questions with EXACTLY this 
 - 1 DRAWING question (type "drawing"): the student draws a scene, character or idea from the book. No options, no pairs — just a clear drawing instruction.
 - 1 MATCHING question (type "matching"): 3-5 left/right pairs to connect with a line (e.g. character ↔ trait, cause ↔ effect, word ↔ meaning). Put the pairs in the "pairs" field with the CORRECT pairing.
 - The remaining questions split roughly half multiple-choice (type "multiple-choice", 3-4 options) and half open-response (type "open-response").
-Label each with its comprehension skill (Recall, Inference, Sequencing, Vocabulary, Opinion & Evidence, Visualising...). If the book is well known, reference its actual content; otherwise write strong generic book-response questions (characters, setting, problem/solution, prediction, opinion with evidence). Keep questions concise.`;
+Label each with its comprehension skill (Recall, Inference, Sequencing, Vocabulary, Opinion & Evidence, Visualising...). If the book is well known, reference its actual content; otherwise write strong generic book-response questions (characters, setting, problem/solution, prediction, opinion with evidence). Keep questions concise.${bahasaMelayuDirective(options.subject)}`;
     const baseRes = await generateContentWithRetry({
       contents: { parts: [{ text: basePrompt }] },
       config: {
@@ -1866,7 +2187,7 @@ Label each with its comprehension skill (Recall, Inference, Sequencing, Vocabula
         const rewordPrompt = `You are an expert in differentiated literacy instruction. Below is a fixed set of after-reading questions about "${bookTitle}".
 For EACH of these Lexile bands — ${chunk.join(", ")} — produce one complete reworded copy of the ENTIRE question set, so the LANGUAGE matches that band. Lower bands: short sentences, high-frequency words, direct phrasing. Higher bands: richer vocabulary, more complex syntax.
 STRICT RULES (apply to every band's copy): keep the same order, the same number of questions, the same "type", the same skill, the same intent and the SAME correct answer for each; multiple-choice questions keep the same number of options in the same order; open-response questions stay open-response (no options); drawing questions stay drawing instructions; matching questions keep the SAME number of pairs in the SAME order with the SAME correct pairing — reword both sides of each pair.
-Return exactly ${chunk.length} sets, one per band, with the "lexile" field exactly as given.
+Return exactly ${chunk.length} sets, one per band, with the "lexile" field exactly as given.${bahasaMelayuDirective(options.subject)}
 
 QUESTIONS (JSON):
 ${baseJson}`;
@@ -2161,16 +2482,26 @@ export async function askAI(question: string, history: ChatTurn[] = []): Promise
 }
 
 // Generate a poster / picture image from a text prompt. Returns a data URL.
-export async function generatePosterImage(prompt: string): Promise<{ image: string; text: string }> {
+// Pass { noText: true } for illustrations that must contain NO writing at all
+// (e.g. reading-passage hero art) — otherwise text is allowed and, when present,
+// is steered toward correct English spelling.
+export async function generatePosterImage(
+  prompt: string,
+  opts?: { noText?: boolean },
+): Promise<{ image: string; text: string }> {
+  const directive = opts?.noText
+    ? `Create a high-quality, detailed, visually appealing image exactly as described above. CRITICAL: produce a picture and background ONLY — absolutely NO text, letters, words, numbers, captions, titles, labels, signs, speech bubbles, watermarks, or writing of any kind anywhere in the image.`
+    : `Create a high-quality, detailed, visually appealing image exactly as described above. If the image includes any text, write it in ENGLISH using the Latin (A–Z) alphabet only, spelled exactly and clearly — no gibberish, no other languages or scripts.`;
   const fullPrompt = `${prompt}
 
-Create a high-quality, detailed, visually appealing image exactly as described above. If the image includes any text, write it in ENGLISH using the Latin (A–Z) alphabet only, spelled exactly and clearly — no gibberish, no other languages or scripts.`;
+${directive}`;
 
   // In the browser, route image generation through the server proxy. The
   // provider credentials and API calls live server-side, and these APIs block
-  // direct browser (CORS) calls anyway.
+  // direct browser (CORS) calls anyway. Send the augmented prompt so the
+  // text/no-text directive actually reaches the image model.
   if (typeof window !== "undefined") {
-    return callAiProxy("image", prompt, {});
+    return callAiProxy("image", fullPrompt, {});
   }
 
   // Server-side, prefer OpenAI gpt-image-1 (best at rendering text), then fall
@@ -2205,33 +2536,40 @@ Create a high-quality, detailed, visually appealing image exactly as described a
     }
   }
 
-  // Cloudflare Workers AI (Flux).
+  // Cloudflare Workers AI (Flux). On ANY failure (bad token, model error, no
+  // image) fall through to Gemini instead of throwing — otherwise a misconfigured
+  // Cloudflare token (401) blocks the whole chain and image generation never
+  // reaches the Gemini fallback.
   const cfAccount = (process.env.CLOUDFLARE_ACCOUNT_ID as string) || "";
   const cfToken = (process.env.CLOUDFLARE_API_TOKEN as string) || "";
   if (cfAccount && cfToken) {
-    const res = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${cfAccount}/ai/run/@cf/black-forest-labs/flux-1-schnell`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${cfToken}`,
-          "Content-Type": "application/json",
+    try {
+      const res = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${cfAccount}/ai/run/@cf/black-forest-labs/flux-1-schnell`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${cfToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ prompt: fullPrompt }),
         },
-        body: JSON.stringify({ prompt: fullPrompt }),
-      },
-    );
-    if (!res.ok) {
-      const t = await res.text().catch(() => "");
-      throw new Error(`Cloudflare image ${res.status}: ${t.slice(0, 220)}`);
+      );
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        throw new Error(`Cloudflare image ${res.status}: ${t.slice(0, 220)}`);
+      }
+      const data = await res.json();
+      // flux-1-schnell returns { result: { image: "<base64 jpeg>" } }
+      const b64 = data?.result?.image;
+      if (b64) return { image: `data:image/jpeg;base64,${b64}`, text: "" };
+      throw new Error("Cloudflare did not return an image.");
+    } catch (e: any) {
+      console.error("Cloudflare image failed, falling back to Gemini:", e?.message || e);
     }
-    const data = await res.json();
-    // flux-1-schnell returns { result: { image: "<base64 jpeg>" } }
-    const b64 = data?.result?.image;
-    if (b64) return { image: `data:image/jpeg;base64,${b64}`, text: "" };
-    throw new Error("Cloudflare did not return an image. Please try again.");
   }
 
-  // Fallback: Gemini image models if Cloudflare isn't configured.
+  // Fallback: Gemini image models (always tried if the above providers failed).
   const models = ["gemini-2.5-flash-image", "gemini-3-pro-image-preview"];
   let lastErr: any;
   for (const model of models) {

@@ -117,6 +117,9 @@ export interface ReadingProgram {
   }[];
   readingPassage?: string;
   passageTitle?: string;
+  /** The story picture (data URL) used in the interactive HTML — AI-generated,
+   *  uploaded, or cropped/edited by the user. */
+  passageImage?: string;
   leveledPassages?: Record<string, string>;
   leveledVocabulary?: Record<string, OneDayVocab[]>;
   leveledQuestions?: Record<string, { question: string; answer?: string }[]>;
