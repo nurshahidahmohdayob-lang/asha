@@ -52,7 +52,15 @@ async function startServer() {
     }
 
     try {
-      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateEduContent, suggestWeeklyInput, generateEduNotes, relevelReadingPassage, generateInteractiveSortingGame, askAI, generatePosterImage, generateLeveledQuestions, relevelWorksheet } = await import("./src/services/geminiService.ts");
+      // In dev, bust Node's ESM module cache so the API always runs the LATEST
+      // geminiService from disk. Without this, the server keeps serving the
+      // version imported on its first request, so edits don't take effect until
+      // the whole process is restarted (which is easy to forget and looks like
+      // "the fix didn't work"). Production keeps the cached import.
+      const gsPath = "./src/services/geminiService.ts";
+      const gsSpecifier =
+        process.env.NODE_ENV === "production" ? gsPath : `${gsPath}?t=${Date.now()}`;
+      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateEduContent, suggestWeeklyInput, generateEduNotes, relevelReadingPassage, generateInteractiveSortingGame, askAI, generatePosterImage, generateLeveledQuestions, relevelWorksheet } = await import(gsSpecifier);
       
       let result;
       switch (type) {
