@@ -4709,7 +4709,6 @@ export default function App() {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
-  const [chatImageMode, setChatImageMode] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   // WYSIWYG editing of an assistant-generated document/HTML artifact.
@@ -4757,11 +4756,6 @@ export default function App() {
     }
   };
 
-  // Heuristic: does this message ask for a picture/poster?
-  const looksLikeImageRequest = (q: string) =>
-    /\b(poster|picture|image|photo|illustration|infographic|flyer|banner|drawing|draw me|diagram in picture|picture format)\b/i.test(
-      q,
-    );
   // Does this message ask for a downloadable interactive HTML page?
   const looksLikeHtmlRequest = (q: string) =>
     /\b(interactive html|html page|html document|html file|web ?page|landing page|as html|in html|html version)\b/i.test(
@@ -4843,7 +4837,6 @@ export default function App() {
     if (e) e.preventDefault();
     const q = chatInput.trim();
     if (!q || chatLoading) return;
-    const wantsImage = chatImageMode || looksLikeImageRequest(q);
     const history: ChatTurn[] = chatMessages.map((m) => ({
       role: m.role,
       text: m.text,
@@ -4852,17 +4845,7 @@ export default function App() {
     setChatInput("");
     setChatLoading(true);
     try {
-      if (wantsImage) {
-        const res = await generatePosterImage(q);
-        setChatMessages((prev) => [
-          ...prev,
-          {
-            role: "model",
-            text: res.text || "Here's your poster — tap to download.",
-            image: res.image,
-          },
-        ]);
-      } else if (looksLikeHtmlRequest(q)) {
+      if (looksLikeHtmlRequest(q)) {
         const raw = await askAI(
           `You are an expert web designer. Build a COMPLETE, self-contained, standalone HTML5 document (inline <style>, only small inline <script> if needed, NO external files or CDNs) that fulfils this request: "${q}". Make it attractive, colourful and well-structured. Use a proper descriptive title for the topic — do NOT use the request sentence as the title, and do NOT restate, quote, echo or display the request/instruction text anywhere in the page. Produce only the finished worksheet content itself. Any boxes where a student types/writes an answer MUST be COMPLETELY EMPTY — no text inside them at all: no "[ Click & type here ]", no "type here", no "write your answer", no brackets, no hint of any kind. Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no explanation.`,
           history,
@@ -4907,12 +4890,11 @@ export default function App() {
         ...prev,
         {
           role: "model",
-          text: wantsImage
-            ? quota
-              ? "⚠️ Image generation hit the Gemini free-tier quota. Please wait a bit and try again, or upgrade the API plan for higher image limits."
-              : "⚠️ Sorry, I couldn't generate that image. " + raw
-            : "⚠️ Sorry, I couldn't get an answer. " +
-              (raw || "Please check the AI key configuration and try again."),
+          text:
+            "⚠️ Sorry, I couldn't get an answer. " +
+            (quota
+              ? "The AI is busy right now — please wait a moment and try again."
+              : raw || "Please check the AI key configuration and try again."),
         },
       ]);
     } finally {
@@ -29866,22 +29848,6 @@ export default function App() {
                     m.text
                   ) : (
                     <>
-                      {m.image && (
-                        <div className="mb-2">
-                          <img
-                            src={m.image}
-                            alt="Generated poster"
-                            className="w-full rounded-xl border-2 border-[#D1FAE5]"
-                          />
-                          <a
-                            href={m.image}
-                            download="zera-poster.png"
-                            className="mt-2 inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-[#059669] hover:underline"
-                          >
-                            <Download size={13} /> Download poster
-                          </a>
-                        </div>
-                      )}
                       {m.text && <ReactMarkdown>{m.text}</ReactMarkdown>}
                       {m.artifact && (
                         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -29952,12 +29918,7 @@ export default function App() {
                 <div className="bg-white border-2 border-[#D1FAE5] rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-2">
                   <Loader2 size={16} className="animate-spin text-[#059669]" />
                   <span className="text-xs font-bold text-[#064E3B]/60">
-                    {chatImageMode ||
-                    looksLikeImageRequest(
-                      chatMessages[chatMessages.length - 1]?.text || "",
-                    )
-                      ? "Creating your poster…"
-                      : "Thinking…"}
+                    Thinking…
                   </span>
                 </div>
               </div>
@@ -29968,26 +29929,6 @@ export default function App() {
             onSubmit={sendChat}
             className="p-3 border-t-2 border-[#D1FAE5] bg-white"
           >
-            <div className="flex items-center justify-between mb-2">
-              <button
-                type="button"
-                onClick={() => setChatImageMode((v) => !v)}
-                title="Toggle poster/image generation"
-                className={
-                  chatImageMode
-                    ? "flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded-lg bg-[#059669] text-white transition-all"
-                    : "flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded-lg bg-[#F0FDF4] text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] transition-all"
-                }
-              >
-                <Wand2 size={13} />{" "}
-                {chatImageMode ? "Image Mode: ON" : "Image / Poster"}
-              </button>
-              {chatImageMode && (
-                <span className="text-[9px] font-bold text-[#064E3B]/50">
-                  Describe the poster to create
-                </span>
-              )}
-            </div>
             <div className="flex items-end gap-2">
               <textarea
                 value={chatInput}
@@ -29999,11 +29940,7 @@ export default function App() {
                   }
                 }}
                 rows={1}
-                placeholder={
-                  chatImageMode
-                    ? "Describe a poster to generate…"
-                    : "Ask a question, or describe a poster…"
-                }
+                placeholder="Ask a question, or create a worksheet / document…"
                 className="flex-1 resize-none max-h-28 p-2.5 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-medium outline-none focus:border-[#059669]"
               />
               <button
