@@ -2539,9 +2539,28 @@ ${directive}`;
     return callAiProxy("image", fullPrompt, {});
   }
 
-  // Server-side, prefer OpenAI gpt-image-1 (best at rendering text), then fall
-  // back to Cloudflare Flux, then Gemini. Any OpenAI failure (e.g. a billing
-  // limit) silently falls through so image generation still works.
+  // Most reliable path: our Cloudflare Worker generates the image via its AI
+  // binding (no API token needed, so it can't break when tokens are rolled).
+  const WORKER_IMAGE_URL =
+    (process.env.WORKER_IMAGE_URL as string) ||
+    "https://zworksheets.nurshahidahmohdayob.workers.dev/image";
+  try {
+    const r = await fetch(WORKER_IMAGE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: fullPrompt }),
+    });
+    if (r.ok) {
+      const d = await r.json();
+      if (d?.image) return { image: d.image, text: "" };
+    } else {
+      console.error("Worker image failed, falling back:", r.status);
+    }
+  } catch (e: any) {
+    console.error("Worker image error, falling back:", e?.message || e);
+  }
+
+  // Fallbacks: OpenAI gpt-image-1, then Cloudflare Flux (token), then Gemini.
   const openaiKey = (process.env.OPENAI_API_KEY as string) || "";
   if (openaiKey) {
     try {

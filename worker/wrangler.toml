@@ -7,3 +7,7 @@ compatibility_date = "2024-09-01"
 [[kv_namespaces]]
 binding = "WORKSHEETS"
 id = "44e8431297864a79968701085d82415e"
+
+# Workers AI binding — lets the worker generate images (Flux) without any token.
+[ai]
+binding = "AI"

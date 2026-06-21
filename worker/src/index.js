@@ -27,6 +27,27 @@ export default {
       return new Response(null, { headers: CORS });
     }
 
+    // Generate an image with Workers AI (Flux) — no token needed, the AI
+    // binding handles auth. Returns { image: "data:image/jpeg;base64,..." }.
+    if (request.method === "POST" && url.pathname === "/image") {
+      let body;
+      try {
+        body = await request.json();
+      } catch {
+        return json({ error: "Invalid JSON body." }, 400);
+      }
+      const prompt = String(body?.prompt || "").slice(0, 2000);
+      if (!prompt) return json({ error: "No prompt." }, 400);
+      try {
+        const out = await env.AI.run("@cf/black-forest-labs/flux-1-schnell", { prompt });
+        const b64 = out?.image;
+        if (!b64) return json({ error: "No image returned." }, 502);
+        return json({ image: `data:image/jpeg;base64,${b64}` });
+      } catch (e) {
+        return json({ error: `AI error: ${String(e?.message || e).slice(0, 160)}` }, 502);
+      }
+    }
+
     // Publish a worksheet.
     if (request.method === "POST" && url.pathname === "/upload") {
       let body;
