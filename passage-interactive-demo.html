@@ -1,0 +1,75 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>The Curious Little Cloud — DEMO</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Comic+Neue:wght@400;700&display=swap');
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;min-height:100%}
+  body{font-family:'Comic Neue','Segoe UI',system-ui,sans-serif;color:var(--ink);position:relative;overflow-x:hidden}
+  .bg{position:fixed;inset:-12px;z-index:-2;background-size:cover;background-position:center}
+  .bg--themed{background:var(--bgGrad)}
+  .scrim{position:fixed;inset:0;z-index:-1;background:var(--scrim)}
+  .topbar{position:sticky;top:0;z-index:10;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;padding:12px;background:rgba(15,18,30,.42);backdrop-filter:blur(8px)}
+  .topbar .lbl{font-family:'Baloo 2',sans-serif;font-weight:800;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#fff;opacity:.85;margin-right:4px}
+  .tbtn{cursor:pointer;border:3px solid rgba(255,255,255,.5);background:rgba(255,255,255,.9);color:#222;font-family:'Baloo 2',sans-serif;font-weight:700;font-size:12px;padding:7px 14px;border-radius:999px;transition:transform .18s ease,background .18s,box-shadow .18s;box-shadow:0 3px 0 rgba(0,0,0,.18)}
+  .tbtn:hover{transform:translateY(-2px)}
+  .tbtn:focus-visible{outline:3px solid #fff;outline-offset:2px}
+  .tbtn.active{background:var(--accent);border-color:#fff;color:#fff}
+  .wrap{max-width:820px;margin:28px auto 70px;padding:0 18px}
+  .card{position:relative;background:var(--card);backdrop-filter:blur(14px) saturate(1.25);-webkit-backdrop-filter:blur(14px) saturate(1.25);border:5px solid var(--cardEdge);border-radius:34px;padding:36px 36px 42px;box-shadow:0 26px 70px rgba(0,0,0,.40),inset 0 3px 0 rgba(255,255,255,.45);overflow:hidden}
+  .deco{position:absolute;font-size:34px;opacity:.55;pointer-events:none;user-select:none}
+  .deco.d1{top:16px;right:22px}.deco.d2{bottom:18px;left:20px}.deco.d3{top:42%;right:-4px;font-size:26px}.deco.d4{bottom:42%;left:-4px;font-size:26px}
+  .title{font-family:'Baloo 2',sans-serif;font-size:34px;font-weight:800;line-height:1.1;margin:0 0 6px;color:var(--accent);text-align:center;text-shadow:0 1px 0 rgba(255,255,255,.4)}
+  .titleRule{height:6px;width:96px;margin:10px auto 24px;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+  .hero--emoji{display:flex;align-items:center;justify-content:center;height:170px;background:linear-gradient(135deg,var(--accent2),var(--accent));border-radius:24px;border:6px solid #fff;box-shadow:0 12px 34px rgba(0,0,0,.30);margin:0 auto 26px;max-width:480px}
+  .heroEmoji{font-size:80px;filter:drop-shadow(0 3px 4px rgba(0,0,0,.25))}
+  .passage{font-size:18.5px;line-height:1.9}
+  .passage p{margin:0 0 17px;text-indent:20px}
+  .passage p:first-of-type::first-letter{font-family:'Baloo 2',sans-serif;font-size:2.7em;font-weight:800;color:var(--accent);float:left;line-height:.8;margin:8px 9px 0 0}
+  .footer{margin-top:28px;text-align:center;font-family:'Baloo 2',sans-serif;font-weight:700;font-size:12px;opacity:.5;letter-spacing:.06em;text-transform:uppercase}
+  body.theme-storybook{--ink:#3a2c22;--accent:#c2710c;--accent2:#e9a23b;--card:rgba(255,252,245,.95);--cardEdge:#f0dcc0;--bgGrad:linear-gradient(135deg,#ffe9c7,#f6c98a);--scrim:linear-gradient(160deg,rgba(120,60,0,.20),rgba(0,0,0,.30))}
+  body.theme-space{--ink:#eaeeff;--accent:#a78bfa;--accent2:#39d0ff;--card:rgba(22,28,56,.82);--cardEdge:#3a4690;--bgGrad:radial-gradient(120% 90% at 50% 0%,#1b2356,#0a0e22);--scrim:linear-gradient(160deg,rgba(20,10,60,.35),rgba(0,0,0,.45))}
+  body.theme-jungle{--ink:#173d14;--accent:#1f8a1f;--accent2:#8bd14f;--card:rgba(247,255,244,.95);--cardEdge:#bfe6bd;--bgGrad:linear-gradient(135deg,#bde6a6,#5fb35a);--scrim:linear-gradient(160deg,rgba(10,60,10,.22),rgba(0,0,0,.30))}
+  body.theme-ocean{--ink:#0c3a4d;--accent:#0d8bbd;--accent2:#46d3e0;--card:rgba(245,253,255,.95);--cardEdge:#bce6f2;--bgGrad:linear-gradient(135deg,#aee6f5,#3fb6d6);--scrim:linear-gradient(160deg,rgba(0,50,70,.22),rgba(0,0,0,.30))}
+  @media (prefers-reduced-motion:reduce){.tbtn{transition:none}.tbtn:hover{transform:none}}
+</style></head>
+<body class="theme-storybook">
+  <div class="bg bg--themed"></div><div class="scrim"></div>
+  <div class="topbar">
+    <span class="lbl">Design</span>
+    <button class="tbtn active" data-t="storybook" onclick="setTheme('storybook',this)">📖 Storybook</button>
+    <button class="tbtn" data-t="space" onclick="setTheme('space',this)">🚀 Space</button>
+    <button class="tbtn" data-t="jungle" onclick="setTheme('jungle',this)">🌿 Jungle</button>
+    <button class="tbtn" data-t="ocean" onclick="setTheme('ocean',this)">🌊 Ocean</button>
+    <button class="tbtn" onclick="window.print()">🖨️ Print</button>
+  </div>
+  <div class="wrap">
+    <div class="card">
+      <span class="deco d1">✨</span><span class="deco d2">✨</span><span class="deco d3">⭐</span><span class="deco d4">⭐</span>
+      <h1 class="title">The Curious Little Cloud</h1>
+      <div class="titleRule"></div>
+      <div class="hero--emoji"><span class="heroEmoji" role="img" aria-label="story">📖</span></div>
+      <div class="passage">
+        <p>High up in the bright blue sky lived a little cloud named Nimbo. Every morning, Nimbo floated above the green hills and watched the world wake up. He loved to change his shape — sometimes a fluffy sheep, sometimes a flying dragon.</p>
+        <p>One sunny day, Nimbo noticed that the flowers below looked thirsty. Their petals drooped, and the grass had turned a dusty brown. "I can help!" said Nimbo, and he puffed himself up as big as he could.</p>
+        <p>Soon Nimbo turned grey and heavy with rain. With a happy rumble, he let the cool drops fall. The flowers lifted their heads, the grass turned green again, and a bright rainbow stretched across the sky. Nimbo smiled — being a little cloud was a very important job.</p>
+      </div>
+      <div class="footer">Reading Passage · Demo · switch designs above ↑</div>
+    </div>
+  </div>
+  <script>
+    var HAS_IMG=false;
+    var DECOS={storybook:['📖','✨','🖋️','🌟'],space:['🚀','🪐','⭐','🌙'],jungle:['🌿','🐯','🦜','🍃'],ocean:['🌊','🐠','🐚','🫧']};
+    var HERO={storybook:'📚',space:'🪐',jungle:'🐯',ocean:'🐠'};
+    function setTheme(t,btn){
+      document.body.className='theme-'+t;
+      var ds=document.querySelectorAll('.deco');
+      for(var i=0;i<ds.length;i++){ds[i].textContent=DECOS[t][i%4];}
+      if(!HAS_IMG){var he=document.querySelector('.heroEmoji');if(he)he.textContent=HERO[t];}
+      var bs=document.querySelectorAll('.topbar .tbtn[data-t]');
+      for(var j=0;j<bs.length;j++){bs[j].classList.remove('active');}
+      if(btn)btn.classList.add('active');
+    }
+    setTheme('storybook',document.querySelector('.tbtn[data-t="storybook"]'));
+  </script>
+</body></html>

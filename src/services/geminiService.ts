@@ -877,7 +877,7 @@ Return ONLY a JSON object in exactly this shape: {"title": "<a short, fitting pa
 - "short-answer" / "scenario": an open written response; leave "options" empty.
 - "matching": a left-to-right matching task; leave "options" empty.
 - "drawing": a creative DRAWING task — the student draws their answer in an empty box. Write a clear drawing instruction in "text" and DO NOT provide "options".
-- "sorting": a sorting task. The "text" MUST be EXACTLY "Sort the following into: <Category 1> and <Category 2>." (name 2-4 categories; do NOT prefix it with "Sorting:" or anything else). "options" MUST be a list of 6-8 specific ITEMS to sort into those categories — the items are the words the student places into the groups, and they must NOT be the category names. Example: {"text":"Sort the following into: Input Devices and Output Devices.","type":"sorting","options":["Keyboard","Mouse","Monitor","Printer","Microphone","Speaker"]}. NEVER produce a sorting task with an empty "options" list.
+- "sorting": a sorting task. The "text" MUST be EXACTLY "Sort the following into: <Category 1> and <Category 2>." (name 2-4 categories; do NOT prefix it with "Sorting:" or anything else). ALSO set "categories" to the exact list of those category names (the column headers), e.g. ["Input Devices","Output Devices"] — these are shown as the column titles, so they must be real, descriptive names, never "Group 1"/"Group 2". "options" MUST be a list of 6-8 specific ITEMS to sort into those categories — the items are the words the student places into the groups, and they must NOT be the category names. Example: {"text":"Sort the following into: Input Devices and Output Devices.","type":"sorting","categories":["Input Devices","Output Devices"],"options":["Keyboard","Mouse","Monitor","Printer","Microphone","Speaker"]}. NEVER produce a sorting task with an empty "options" list.
 - "cut-and-paste": a cut-and-paste task. Describe the target slots/categories inside "text", and put the individual items the student cuts out and pastes in "options".
 Only use the types that appear in the "Allowed Types" list above.`;
     contents.push(mainPrompt);
@@ -890,6 +890,12 @@ Only use the types that appear in the "Allowed Types" list above.`;
         text: { type: Type.STRING },
         type: { type: Type.STRING },
         options: { type: Type.ARRAY, items: { type: Type.STRING } },
+        categories: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING },
+          description:
+            "Sorting questions ONLY: the 2-4 category/column names items are sorted into (e.g. [\"Input Devices\",\"Output Devices\"]). Leave empty for other question types.",
+        },
       },
       required: ["text", "type"],
     };
@@ -2343,6 +2349,7 @@ ${JSON.stringify(worksheet)}`;
                   text: { type: Type.STRING },
                   type: { type: Type.STRING },
                   options: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  categories: { type: Type.ARRAY, items: { type: Type.STRING } },
                 },
                 required: ["text", "type"],
               },

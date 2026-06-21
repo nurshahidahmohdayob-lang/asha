@@ -43,6 +43,8 @@ export interface WorksheetSection {
       | 'cut-and-paste'
       | 'scenario';
     options?: string[];
+    // Sorting questions: the category/column names items are sorted into.
+    categories?: string[];
   }[];
 }
 

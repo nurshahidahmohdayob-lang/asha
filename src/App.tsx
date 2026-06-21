@@ -18,6 +18,7 @@ import {
   ChevronDown,
   Sparkles,
   Printer,
+  Pencil,
   Wand2,
   Loader2,
   X,
@@ -612,6 +613,9 @@ function qKind(q){
 /* Pull the sort/cut category names out of the question text (the AI is told to
    name them, e.g. "Sort these into Mammals and Birds"). Falls back to two. */
 function qCats(q){
+  if(q.categories&&q.categories.length>=2){
+    return q.categories.map(function(s){return String(s).trim();}).filter(Boolean).slice(0,4);
+  }
   var t=(q.text||"");
   var m=t.match(/\b(?:into|between|as)\b[:\s]+([^.?!]+)/i);
   if(m){
@@ -1144,11 +1148,6 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
   const desc = "";
   const passage = String(ws?.readingPassage || "").trim();
   const sections: any[] = (ws?.sections || []).map((s: any) => ({ ...s }));
-  // Total marks = 1 per question across all sections (shown in the header).
-  const totalMarks = sections.reduce(
-    (n: number, s: any) => n + (s?.questions?.length || 0),
-    0,
-  );
   const words = String(title || "Worksheet").split(/\s+/);
   const mid = Math.ceil(words.length / 2);
   const tA = words.slice(0, mid).join(" ");
@@ -1169,12 +1168,19 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       // answer hints, and drop long fragments (those are items, not labels).
       // This stops the columns from leaking the answers; the items stay in the
       // cut-out pool for students to sort and write in themselves.
-      let afterInto = (String(q?.text || "").match(/into\s*:?\s*([^.?]+)/i) || [])[1] || "";
-      afterInto = afterInto.replace(/\([^)]*\)/g, "");
-      let cats: string[] = afterInto
-        .split(/,|\band\b|\bor\b/i)
-        .map((s) => s.trim().replace(/[:;,.]+$/, ""))
-        .filter((s) => s && s.split(/\s+/).length <= 7);
+      // Prefer the explicit category names from generation; fall back to parsing
+      // them out of the question text only if they weren't provided.
+      let cats: string[] = Array.isArray(q?.categories)
+        ? q.categories.map((c: string) => String(c).trim()).filter(Boolean)
+        : [];
+      if (cats.length < 2) {
+        let afterInto = (String(q?.text || "").match(/into\s*:?\s*([^.?]+)/i) || [])[1] || "";
+        afterInto = afterInto.replace(/\([^)]*\)/g, "");
+        cats = afterInto
+          .split(/,|\band\b|\bor\b/i)
+          .map((s) => s.trim().replace(/[:;,.]+$/, ""))
+          .filter((s) => s && s.split(/\s+/).length <= 7);
+      }
       if (cats.length < 2) cats = ["Group 1", "Group 2"];
       cats = cats.slice(0, 4);
       const colC = ["#16a34a", "#dc2626", "#2563eb", "#f97316"];
@@ -1309,7 +1315,7 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
     const tf = all.filter(isTFq);
     const fill = all.filter(isFill);
     const rest = all.filter((q) => !isMCQ(q) && !isTFq(q) && !isFill(q));
-    rows += `<div class="marksbadge"><span>Total Marks</span><b>${all.length}</b></div>`;
+    rows += `<div class="marksbadge"><span>Total Marks</span><b></b></div>`;
     let n = 0;
     if (mcq.length) {
       rows += `<div class="part" style="--pc:#2563eb">PART A: MULTIPLE CHOICE (${mcq.length} marks) — Circle the correct answer.</div><div class="examgrid">`;
@@ -1627,10 +1633,10 @@ ${T.extraCss || ""}
     </div>
   </div>
   <div class="meta">
-    <label>🧑‍🎓 Name <input placeholder="Your name"/></label>
-    <label>🏫 Class <input placeholder="Your class"/></label>
-    <label>📅 Date <input placeholder="Today"/></label>
-    ${kind === "assessment" ? `<label class="marks">🏆 Total Marks <input value="${totalMarks}"/></label>` : ""}
+    <label>🧑‍🎓 Name <input/></label>
+    <label>🏫 Class <input/></label>
+    <label>📅 Date <input/></label>
+    ${kind === "assessment" ? `<label class="marks">🏆 Total Marks <input/></label>` : ""}
   </div>
   ${passageHtml}
   ${rows}
@@ -1638,7 +1644,7 @@ ${T.extraCss || ""}
     <h3>💭 REFLECTION</h3>
     <div class="rb">
       <p>⭐ What is the most important thing you learned today?</p>
-      <textarea placeholder="Write your answer like a real scholar..."></textarea>
+      <textarea></textarea>
     </div>
   </div>`}
   <div class="foot">⭐ Remember: take your time, think carefully, and do your best! ⭐</div>
@@ -4692,19 +4698,105 @@ export default function App() {
   // Optional extra instructions for generation, separate from the topic.
   const [lessonInstructions, setLessonInstructions] = useState("");
   // --- Zera Assistant chat (ChatGPT-style Q&A + poster/image generation) ---
-  type ChatMessage = { role: "user" | "model"; text: string; image?: string };
+  // An "artifact" is a downloadable doc / interactive HTML the assistant builds.
+  type ChatArtifact = { type: "html" | "doc"; html: string; title: string };
+  type ChatMessage = {
+    role: "user" | "model";
+    text: string;
+    image?: string;
+    artifact?: ChatArtifact;
+  };
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [chatImageMode, setChatImageMode] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  // WYSIWYG editing of an assistant-generated document/HTML artifact.
+  const [editArtifact, setEditArtifact] = useState<{ index: number; title: string } | null>(null);
+  const editFrameRef = useRef<HTMLIFrameElement>(null);
 
   // Heuristic: does this message ask for a picture/poster?
   const looksLikeImageRequest = (q: string) =>
     /\b(poster|picture|image|photo|illustration|infographic|flyer|banner|drawing|draw me|diagram in picture|picture format)\b/i.test(
       q,
     );
+  // Does this message ask for a downloadable interactive HTML page?
+  const looksLikeHtmlRequest = (q: string) =>
+    /\b(interactive html|html page|html document|html file|web ?page|landing page|as html|in html|html version)\b/i.test(
+      q,
+    );
+  // Does this message ask the assistant to create a document/worksheet/etc.?
+  const looksLikeDocRequest = (q: string) =>
+    /\b(document|\bdoc\b|word doc|\.docx?|worksheet|lesson plan|letter|report|essay|memo|notes|handout|article|story|printable|certificate|create a|make a|write a|generate a|draft a)\b/i.test(
+      q,
+    );
+  // Strip ```html ... ``` / ``` fences and leading commentary the model may add.
+  const stripCodeFences = (s: string) =>
+    String(s || "")
+      .replace(/^[\s\S]*?```(?:html|HTML)?\s*\n?/, (m) => (m.includes("```") ? "" : m))
+      .replace(/```[\s\S]*$/, "")
+      .trim() || String(s || "").trim();
+  // Wrap plain document body HTML in a clean, printable A4 page.
+  const wrapDocHtml = (title: string, bodyHtml: string) =>
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"/>` +
+    `<meta name="viewport" content="width=device-width, initial-scale=1"/>` +
+    `<title>${zEsc(title)}</title><style>` +
+    `@import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&family=Comic+Neue:wght@400;700&display=swap');` +
+    `*{box-sizing:border-box}body{font-family:'Comic Neue','Segoe UI',system-ui,sans-serif;color:#1e293b;background:#f1f5f9;margin:0;padding:24px;line-height:1.7}` +
+    `.sheet{max-width:820px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:48px 56px;box-shadow:0 14px 40px rgba(0,0,0,.08)}` +
+    `h1,h2,h3{font-family:'Baloo 2',sans-serif;color:#0d9488;line-height:1.2}h1{font-size:30px;margin:0 0 6px}h2{font-size:21px;margin:26px 0 8px}h3{font-size:17px}` +
+    `p{margin:0 0 12px}ul,ol{margin:0 0 14px 22px}li{margin:4px 0}table{border-collapse:collapse;width:100%;margin:12px 0}th,td{border:1px solid #cbd5e1;padding:8px 10px;text-align:left}th{background:#f0fdfa}` +
+    `.bar{max-width:820px;margin:0 auto 16px;text-align:center}.bar button{font-family:inherit;font-weight:800;border:0;background:#0d9488;color:#fff;padding:10px 22px;border-radius:999px;cursor:pointer}` +
+    `@media print{body{background:#fff;padding:0}.sheet{box-shadow:none;border:0}.bar{display:none}}` +
+    `</style></head><body><div class="bar"><button onclick="window.print()">🖨️ Print / Save as PDF</button></div>` +
+    `<div class="sheet">${bodyHtml}</div></body></html>`;
+  // Trigger a browser download of a text/HTML artifact.
+  const downloadTextFile = (filename: string, mime: string, content: string) => {
+    const blob = new Blob([content], { type: `${mime};charset=utf-8` });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
+  const safeFileName = (s: string) =>
+    (s || "zera-document").replace(/[\\/:*?"<>|]+/g, "").replace(/\s+/g, "_").slice(0, 60);
+  // Empty the hint text inside answer/typing boxes so students see blank fields.
+  // Removes placeholder attributes, hint `value=` attributes, bracketed hints
+  // like "[ Click & type here ]", and standalone "type here"/"write your answer"
+  // phrases that the AI sometimes drops as visible text inside the boxes.
+  const clearInputPlaceholders = (html: string) => {
+    // Broad set — safe to remove inside attributes and [ ... ] hint brackets.
+    const HINT =
+      "(?:click\\s*&?\\s*type|type\\s*(?:your\\s*answer\\s*)?here|write\\s*(?:your\\s*)?answer|your\\s*answer\\s*here|enter\\s*(?:your\\s*)?(?:answer|text))";
+    // Narrow set — only these are removed from free text, so legitimate
+    // instructions like "Write your answer below" are NOT touched.
+    const BARE = "(?:click\\s*&?\\s*type\\s*here|click\\s*to\\s*type|type\\s*here|type\\s*your\\s*answer\\s*here)";
+    return String(html || "")
+      // placeholder="..." / placeholder='...'
+      .replace(/\s+placeholder\s*=\s*("[^"]*"|'[^']*')/gi, "")
+      // value="...type here..." (pre-filled hint values)
+      .replace(new RegExp(`\\s+value\\s*=\\s*("[^"]*?${HINT}[^"]*"|'[^']*?${HINT}[^']*')`, "gi"), "")
+      // bracketed hints as text content: "[ Click & type here ]"
+      .replace(new RegExp(`\\[\\s*[^\\]\\n]{0,40}?${HINT}[^\\]\\n]{0,20}?\\s*\\]`, "gi"), "")
+      // bare hint phrases as text content (narrow, instruction-safe)
+      .replace(new RegExp(`\\b${BARE}\\b`, "gi"), "");
+  };
+  // Use the AI's own title/heading for the artifact (NOT the user's instruction,
+  // which otherwise leaks into the viewer header and the file name).
+  const extractArtifactTitle = (html: string, fallback: string) => {
+    const s = String(html || "");
+    const m =
+      s.match(/<title[^>]*>([\s\S]*?)<\/title>/i) ||
+      s.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i) ||
+      s.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i);
+    const t = m ? m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() : "";
+    return (t || fallback).slice(0, 60);
+  };
 
   const sendChat = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -4727,6 +4819,40 @@ export default function App() {
             role: "model",
             text: res.text || "Here's your poster — tap to download.",
             image: res.image,
+          },
+        ]);
+      } else if (looksLikeHtmlRequest(q)) {
+        const raw = await askAI(
+          `You are an expert web designer. Build a COMPLETE, self-contained, standalone HTML5 document (inline <style>, only small inline <script> if needed, NO external files or CDNs) that fulfils this request: "${q}". Make it attractive, colourful and well-structured. Use a proper descriptive title for the topic — do NOT use the request sentence as the title, and do NOT restate, quote, echo or display the request/instruction text anywhere in the page. Produce only the finished worksheet content itself. Any boxes where a student types/writes an answer MUST be COMPLETELY EMPTY — no text inside them at all: no "[ Click & type here ]", no "type here", no "write your answer", no brackets, no hint of any kind. Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no explanation.`,
+          history,
+        );
+        const html = clearInputPlaceholders(stripCodeFences(raw));
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            role: "model",
+            text: "Here's your interactive HTML — open it or download it below. ✨",
+            artifact: {
+              type: "html",
+              html,
+              title: extractArtifactTitle(html, "Interactive Worksheet"),
+            },
+          },
+        ]);
+      } else if (looksLikeDocRequest(q)) {
+        const raw = await askAI(
+          `Create the content for a document that fulfils this request: "${q}". Use a proper descriptive heading for the topic — do NOT use the request sentence as the heading, and do NOT restate, quote, echo or display the request/instruction text anywhere in the document. Produce only the finished document content. Return clean semantic HTML body content ONLY (use <h1>, <h2>, <p>, <ul>/<li>, <table> where helpful). Do NOT include <html>, <head> or <body> tags, no markdown code fences, no commentary.`,
+          history,
+        );
+        const body = stripCodeFences(raw);
+        const docTitle = extractArtifactTitle(body, "Document");
+        const html = clearInputPlaceholders(wrapDocHtml(docTitle, body));
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            role: "model",
+            text: "Here's your document — download it as Word or HTML, or open it below. 📄",
+            artifact: { type: "doc", html, title: docTitle },
           },
         ]);
       } else {
@@ -22686,7 +22812,8 @@ export default function App() {
                       onClick={() => openAssessmentHTML()}
                       className="w-full py-3 bg-gradient-to-r from-[#2563eb] to-[#7c3aed] text-white rounded-xl text-xs font-black uppercase tracking-widest hover:opacity-90 transition-all shadow-md flex items-center justify-center gap-2"
                     >
-                      <Sparkles size={16} /> Open Interactive Worksheet
+                      <Sparkles size={16} /> Open Interactive{" "}
+                      {docKind === "assessment" ? "Assessment" : "Worksheet"}
                     </button>
                     <button
                       onClick={() => generateOnlySlides(true)}
@@ -23328,13 +23455,22 @@ export default function App() {
                                   // Pull the category names out of the question
                                   // text ("Sort … into: A and B.") so the boxes
                                   // are LABELLED and the student knows where to put each item.
-                                  let afterInto =
-                                    (String(q.text || "").match(/into\s*:?\s*([^.?]+)/i) || [])[1] || "";
-                                  afterInto = afterInto.replace(/\([^)]*\)/g, "");
-                                  let cats = afterInto
-                                    .split(/,|\band\b|\bor\b/i)
-                                    .map((s) => s.trim().replace(/[:;,.]+$/, ""))
-                                    .filter((s) => s && s.split(/\s+/).length <= 7);
+                                  let cats: string[] = Array.isArray(
+                                    (q as any).categories,
+                                  )
+                                    ? (q as any).categories
+                                        .map((c: string) => String(c).trim())
+                                        .filter(Boolean)
+                                    : [];
+                                  if (cats.length < 2) {
+                                    let afterInto =
+                                      (String(q.text || "").match(/into\s*:?\s*([^.?]+)/i) || [])[1] || "";
+                                    afterInto = afterInto.replace(/\([^)]*\)/g, "");
+                                    cats = afterInto
+                                      .split(/,|\band\b|\bor\b/i)
+                                      .map((s) => s.trim().replace(/[:;,.]+$/, ""))
+                                      .filter((s) => s && s.split(/\s+/).length <= 7);
+                                  }
                                   if (cats.length < 2) cats = ["Group 1", "Group 2"];
                                   cats = cats.slice(0, 4);
                                   const catColors = ["#16a34a", "#dc2626", "#2563eb", "#f97316"];
@@ -24176,9 +24312,14 @@ export default function App() {
   // Interactive Template printables): one sheet per Lexile level, identical
   // questions, tappable options, print-ready.
   const printDifferentiatedWorksheets = () => {
+   try {
     const pack = content?.readingProgram?.differentiatedQuestionSets;
     if (!pack || !pack.questions || pack.questions.length === 0) {
       alert('Generate the pack first with "Generate Pack".');
+      return;
+    }
+    if (!pack.levels || pack.levels.length === 0) {
+      alert("This pack has no Lexile levels — regenerate it with at least one level selected.");
       return;
     }
     const esc = (s: string) =>
@@ -24215,8 +24356,9 @@ export default function App() {
         };
         pack.questions
           .forEach((q, qi) => {
+            const versions = q.versions || [];
             const v =
-              q.versions.find((ver) => ver.lexile === lvl) || q.versions[0];
+              versions.find((ver) => ver.lexile === lvl) || versions[0];
             if (!v) return;
             const isMatching = !!(v.pairs && v.pairs.length);
             const isDrawing =
@@ -24261,7 +24403,7 @@ export default function App() {
               flushColumns();
               segments.push(boxHtml);
             } else {
-              const textRows = Math.ceil(v.text.length / 36);
+              const textRows = Math.ceil(String(v.text || "").length / 36);
               const est =
                 52 +
                 textRows * 22 +
@@ -24358,13 +24500,18 @@ export default function App() {
       `<div class="pframe"></div>` +
       sheets +
       `</body></html>`;
-    const w = window.open("", "_blank");
-    if (!w) {
-      alert("Pop-up blocked — please allow pop-ups to open the worksheets.");
-      return;
-    }
-    w.document.write(html);
-    w.document.close();
+    // Show in the in-app viewer (iframe modal with Print / Download / New Tab)
+    // instead of window.open + document.write, which browsers silently block.
+    setInteractiveDoc({
+      html,
+      title: `Differentiated Worksheets — ${pack.book || "Pack"}`,
+      ws: null,
+      kind: "diff-pack",
+    });
+   } catch (e: any) {
+     console.error("Open Worksheets failed:", e);
+     alert(`Could not open the worksheets: ${e?.message || e}`);
+   }
   };
 
   const renderReadingProgramView = () => {
@@ -28626,6 +28773,43 @@ export default function App() {
               heading: HeadingLevel.HEADING_1,
               alignment: AlignmentType.CENTER,
             }),
+            // Document type label (Worksheet / Assessment) so the paper clearly
+            // states which it is.
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              spacing: { after: 200 },
+              children: [
+                new TextRun({
+                  text: docKind === "assessment" ? "ASSESSMENT" : "WORKSHEET",
+                  bold: true,
+                  size: 26,
+                  color: "059669",
+                }),
+              ],
+            }),
+            // Student details — somewhere to write Name, Class and Date.
+            new Paragraph({
+              spacing: { after: 120 },
+              children: [
+                new TextRun({ text: "Name: ", bold: true }),
+                new TextRun({ text: "______________________________     " }),
+                new TextRun({ text: "Class: ", bold: true }),
+                new TextRun({ text: "____________________" }),
+              ],
+            }),
+            new Paragraph({
+              spacing: { after: 300 },
+              children: [
+                new TextRun({ text: "Date: ", bold: true }),
+                new TextRun({ text: "____________________     " }),
+                ...(docKind === "assessment"
+                  ? [
+                      new TextRun({ text: "Marks: ", bold: true }),
+                      new TextRun({ text: "________ / ________" }),
+                    ]
+                  : []),
+              ],
+            }),
             ...(levelLabel
               ? [
                   new Paragraph({
@@ -29336,6 +29520,69 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* ===== WYSIWYG editor for an assistant-generated artifact ===== */}
+      {editArtifact && chatMessages[editArtifact.index]?.artifact && (
+        <div className="fixed inset-0 z-[9999] bg-black/70 flex flex-col">
+          <div className="bg-[#7c3aed] text-white px-5 py-3 flex items-center justify-between gap-3 shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <Pencil size={18} className="shrink-0" />
+              <span className="font-black uppercase tracking-wide text-sm truncate">
+                Editing: {editArtifact.title}
+              </span>
+              <span className="hidden sm:inline text-[11px] font-bold opacity-80">
+                — click any text to edit it
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => {
+                  try {
+                    const doc = editFrameRef.current?.contentDocument;
+                    const edited = doc?.documentElement?.outerHTML;
+                    if (edited) {
+                      const idx = editArtifact.index;
+                      setChatMessages((prev) =>
+                        prev.map((mm, j) =>
+                          j === idx && mm.artifact
+                            ? { ...mm, artifact: { ...mm.artifact, html: edited } }
+                            : mm,
+                        ),
+                      );
+                    }
+                  } catch {
+                    /* ignore */
+                  }
+                  setEditArtifact(null);
+                }}
+                className="px-3 py-1.5 bg-white text-[#7c3aed] rounded-lg text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5"
+              >
+                <Check size={14} /> Save
+              </button>
+              <button
+                onClick={() => setEditArtifact(null)}
+                className="px-3 py-1.5 bg-white/15 hover:bg-white/25 rounded-lg text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5"
+              >
+                <X size={14} /> Cancel
+              </button>
+            </div>
+          </div>
+          <iframe
+            ref={editFrameRef}
+            title="Edit artifact"
+            srcDoc={chatMessages[editArtifact.index]!.artifact!.html}
+            onLoad={(e) => {
+              try {
+                const d = (e.target as HTMLIFrameElement).contentDocument;
+                if (d) d.designMode = "on";
+              } catch {
+                /* ignore */
+              }
+            }}
+            className="flex-1 w-full bg-white"
+          />
+        </div>
+      )}
+
       {/* ===== Interactive Assessment viewer (in-app, no pop-up needed) ===== */}
       {interactiveDoc && currentView !== "worksheet" && (
         <div className="fixed inset-0 z-[9998] bg-black/60 flex flex-col">
@@ -29532,6 +29779,57 @@ export default function App() {
                         </div>
                       )}
                       {m.text && <ReactMarkdown>{m.text}</ReactMarkdown>}
+                      {m.artifact && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          <button
+                            onClick={() =>
+                              setInteractiveDoc({
+                                html: m.artifact!.html,
+                                title: m.artifact!.title,
+                                ws: null,
+                                kind: "assistant",
+                              })
+                            }
+                            className="inline-flex items-center gap-1 bg-[#7c3aed] hover:bg-[#6d28d9] text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg cursor-pointer"
+                          >
+                            <Sparkles size={12} /> Open
+                          </button>
+                          <button
+                            onClick={() =>
+                              setEditArtifact({ index: i, title: m.artifact!.title })
+                            }
+                            className="inline-flex items-center gap-1 bg-[#f59e0b] hover:bg-[#d97706] text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg cursor-pointer"
+                          >
+                            <Pencil size={12} /> Edit
+                          </button>
+                          {m.artifact.type === "doc" && (
+                            <button
+                              onClick={() =>
+                                downloadTextFile(
+                                  safeFileName(m.artifact!.title) + ".doc",
+                                  "application/msword",
+                                  m.artifact!.html,
+                                )
+                              }
+                              className="inline-flex items-center gap-1 bg-[#2563eb] hover:bg-[#1d4ed8] text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg cursor-pointer"
+                            >
+                              <Download size={12} /> Word
+                            </button>
+                          )}
+                          <button
+                            onClick={() =>
+                              downloadTextFile(
+                                safeFileName(m.artifact!.title) + ".html",
+                                "text/html",
+                                m.artifact!.html,
+                              )
+                            }
+                            className="inline-flex items-center gap-1 bg-[#059669] hover:bg-[#047857] text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg cursor-pointer"
+                          >
+                            <Download size={12} /> HTML
+                          </button>
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
