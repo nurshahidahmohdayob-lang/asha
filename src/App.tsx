@@ -4715,6 +4715,47 @@ export default function App() {
   // WYSIWYG editing of an assistant-generated document/HTML artifact.
   const [editArtifact, setEditArtifact] = useState<{ index: number; title: string } | null>(null);
   const editFrameRef = useRef<HTMLIFrameElement>(null);
+  // Publishing a worksheet to the Cloudflare worker → short public student link.
+  const [publishing, setPublishing] = useState(false);
+  const [publishResult, setPublishResult] = useState<{ url: string } | null>(null);
+  // Upload HTML to the worker and show the short shareable link (+ QR).
+  // The deployed Cloudflare worker that hosts published worksheets. Can be
+  // overridden via localStorage (e.g. once a custom domain is set up).
+  const WORKSHEET_HOST_DEFAULT = "https://zworksheets.nurshahidahmohdayob.workers.dev";
+  const publishHtml = async (html: string) => {
+    const host = (localStorage.getItem("zera_worksheet_host") || WORKSHEET_HOST_DEFAULT)
+      .trim()
+      .replace(/\/+$/, "");
+    const code = (
+      window.prompt(
+        "Optional: a short memorable code for the link (e.g. cat → /s/cat). Leave blank for a random one.",
+        "",
+      ) || ""
+    ).trim();
+    setPublishing(true);
+    try {
+      const res = await fetch(`${host}/upload`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ html, code }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.url)
+        throw new Error(data?.error || `Publish failed (HTTP ${res.status})`);
+      setPublishResult({ url: data.url });
+      try {
+        await navigator.clipboard.writeText(data.url);
+      } catch {
+        /* ignore */
+      }
+    } catch (e: any) {
+      alert(
+        `Couldn't publish: ${e?.message || e}\n\nMake sure the worker URL is correct and deployed. To reset it, clear the site data.`,
+      );
+    } finally {
+      setPublishing(false);
+    }
+  };
 
   // Heuristic: does this message ask for a picture/poster?
   const looksLikeImageRequest = (q: string) =>
@@ -29520,6 +29561,61 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* ===== Published-worksheet short link + QR ===== */}
+      {publishResult && (
+        <div className="fixed inset-0 z-[10000] bg-black/70 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 text-center space-y-4 shadow-2xl">
+            <LinkIcon className="mx-auto text-[#0ea5e9]" size={28} />
+            <h3 className="font-black text-lg text-[#064E3B]">Worksheet published! 🎉</h3>
+            <p className="text-xs text-stone-500 leading-relaxed">
+              Students can open this on any device. The link is already copied to your clipboard.
+            </p>
+            <div className="flex items-center gap-2 bg-stone-100 rounded-xl p-1.5">
+              <input
+                readOnly
+                value={publishResult.url}
+                onFocus={(e) => e.currentTarget.select()}
+                className="flex-1 bg-transparent text-sm font-bold text-[#064E3B] outline-none px-2 min-w-0"
+              />
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(publishResult.url).catch(() => {});
+                }}
+                className="shrink-0 bg-[#0ea5e9] hover:bg-[#0284c7] text-white text-[11px] font-black uppercase px-3 py-1.5 rounded-lg cursor-pointer"
+              >
+                Copy
+              </button>
+            </div>
+            <img
+              alt="QR code for the worksheet link"
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&margin=8&data=${encodeURIComponent(publishResult.url)}`}
+              width={170}
+              height={170}
+              className="mx-auto rounded-xl border-2 border-stone-200"
+            />
+            <p className="text-[10px] font-semibold text-stone-400">
+              Students can scan this QR code instead of typing the link.
+            </p>
+            <div className="flex gap-2 justify-center">
+              <a
+                href={publishResult.url}
+                target="_blank"
+                rel="noreferrer"
+                className="bg-[#059669] hover:bg-[#047857] text-white text-[11px] font-black uppercase px-4 py-2 rounded-xl cursor-pointer"
+              >
+                Open
+              </a>
+              <button
+                onClick={() => setPublishResult(null)}
+                className="bg-stone-200 hover:bg-stone-300 text-stone-700 text-[11px] font-black uppercase px-4 py-2 rounded-xl cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ===== WYSIWYG editor for an assistant-generated artifact ===== */}
       {editArtifact && chatMessages[editArtifact.index]?.artifact && (
         <div className="fixed inset-0 z-[9999] bg-black/70 flex flex-col">
@@ -29610,6 +29706,14 @@ export default function App() {
                 title="Print"
               >
                 <Printer size={14} /> Print
+              </button>
+              <button
+                disabled={publishing}
+                onClick={() => publishHtml(interactiveDoc.html)}
+                className="px-3 py-1.5 bg-[#0ea5e9] hover:bg-[#0284c7] disabled:opacity-50 rounded-lg text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-colors"
+                title="Publish online and get a short link students can open on any device"
+              >
+                {publishing ? <Loader2 size={14} className="animate-spin" /> : <LinkIcon size={14} />} Get Link
               </button>
               <button
                 onClick={() => {
@@ -29827,6 +29931,14 @@ export default function App() {
                             className="inline-flex items-center gap-1 bg-[#059669] hover:bg-[#047857] text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg cursor-pointer"
                           >
                             <Download size={12} /> HTML
+                          </button>
+                          <button
+                            disabled={publishing}
+                            onClick={() => publishHtml(m.artifact!.html)}
+                            className="inline-flex items-center gap-1 bg-[#0ea5e9] hover:bg-[#0284c7] disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg cursor-pointer"
+                            title="Publish online and get a short link students can open on any device"
+                          >
+                            {publishing ? <Loader2 size={12} className="animate-spin" /> : <LinkIcon size={12} />} Get Link
                           </button>
                         </div>
                       )}

@@ -1,0 +1,9 @@
+name = "zworksheets"
+main = "src/index.js"
+compatibility_date = "2024-09-01"
+
+# KV store that holds the published worksheets.
+# Run `npx wrangler kv namespace create WORKSHEETS` and paste the printed id below.
+[[kv_namespaces]]
+binding = "WORKSHEETS"
+id = "44e8431297864a79968701085d82415e"
