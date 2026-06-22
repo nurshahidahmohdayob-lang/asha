@@ -19882,9 +19882,9 @@ export default function App() {
   );
 
   const renderEducatorSuite = () => (
-    <div className="flex-1 overflow-y-auto p-12 bg-[#FDFBF7] custom-scrollbar">
-      <div className="max-w-7xl mx-auto space-y-12">
-        <header className="flex justify-between items-center bg-[#064E3B] p-8 rounded-[2.5rem] shadow-2xl">
+    <div className="flex-1 overflow-y-auto p-6 bg-[#FDFBF7] custom-scrollbar">
+      <div className="max-w-7xl mx-auto space-y-6">
+        <header className="flex justify-between items-center bg-[#064E3B] p-6 rounded-3xl shadow-2xl">
           <div className="flex items-center gap-6">
             <button
               onClick={() => {
@@ -19980,16 +19980,16 @@ export default function App() {
           </div>
         </header>
 
-        <div className="space-y-16 animate-in fade-in slide-in-from-bottom-5 duration-700">
+        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-5 duration-700">
           <div>
-            <div className="flex items-center gap-4 mb-8">
+            <div className="flex items-center gap-4 mb-4">
               <h3 className="text-lg font-black uppercase tracking-[0.4em] text-[#064E3B]">
                 Resource Toolkit
               </h3>
               <div className="h-px flex-1 bg-gradient-to-r from-[#064E3B]/20 to-transparent" />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
               {[
                 {
                   id: "lesson-plan",
@@ -20065,23 +20065,23 @@ export default function App() {
                     } else if (tool.id === "lesson-plan") resetLessonPlan();
                     else setCurrentView(tool.id as any);
                   }}
-                  className="group p-8 bg-white rounded-[2.5rem] border-2 border-transparent hover:border-[#FACC15] hover:shadow-2xl transition-all text-left space-y-6 relative overflow-hidden"
+                  className="group p-4 bg-white rounded-2xl border-2 border-transparent hover:border-[#FACC15] hover:shadow-xl transition-all text-left space-y-2.5 relative overflow-hidden"
                 >
-                  <div className="w-16 h-16 rounded-2xl bg-[#F0FDF4] group-hover:bg-[#FACC15] flex items-center justify-center text-[#064E3B] text-2xl shadow-sm transition-all duration-500">
-                    <tool.icon size={28} />
+                  <div className="w-11 h-11 rounded-xl bg-[#F0FDF4] group-hover:bg-[#FACC15] flex items-center justify-center text-[#064E3B] shadow-sm transition-all duration-500">
+                    <tool.icon size={22} />
                   </div>
                   <div>
-                    <h3 className="text-2xl font-black text-[#064E3B]">
+                    <h3 className="text-base font-black text-[#064E3B] leading-tight">
                       {tool.name}
                     </h3>
-                    <p className="text-sm font-medium text-[#064E3B]/60">
+                    <p className="text-[11px] font-medium text-[#064E3B]/60 leading-snug mt-0.5">
                       {tool.desc}
                     </p>
                   </div>
-                  <div className="pt-4 flex items-center text-[10px] font-black uppercase tracking-widest text-[#064E3B]/40 group-hover:text-[#064E3B] transition-colors">
-                    Launch Tool{" "}
+                  <div className="flex items-center text-[9px] font-black uppercase tracking-widest text-[#064E3B]/40 group-hover:text-[#064E3B] transition-colors">
+                    Launch{" "}
                     <ChevronRight
-                      size={14}
+                      size={12}
                       className="ml-1 group-hover:translate-x-1 transition-transform"
                     />
                   </div>
