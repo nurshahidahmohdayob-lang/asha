@@ -2101,7 +2101,7 @@ async function generateContentWithRetry(
 export async function generateLeveledQuestions(
   bookTitle: string,
   levels: string[],
-  options: { yearGroup: string; subject: string; numQuestions: number },
+  options: { yearGroup: string; subject: string; numQuestions: number; sourceContent?: string },
   onProgress?: (message: string) => void,
 ): Promise<{
   questions: {
@@ -2153,8 +2153,25 @@ export async function generateLeveledQuestions(
 
   try {
     // 1. Base question set (concise, fast)
-    onProgress?.(`Writing ${options.numQuestions} shared questions…`);
-    const basePrompt = `You are an expert Cambridge literacy educator. A ${options.yearGroup} class (${options.subject}) is reading: "${bookTitle}".
+    onProgress?.(
+      (options.sourceContent || "").trim()
+        ? `Reading the worksheet's questions…`
+        : `Writing ${options.numQuestions} shared questions…`,
+    );
+    const src = (options.sourceContent || "").trim();
+    const basePrompt = src
+      ? // Re-level an EXISTING worksheet supplied from a URL: extract its
+        // questions and normalise them into the base set (reworded per level later).
+        `You are an expert Cambridge literacy educator. Below is an existing worksheet for a ${options.yearGroup} class (${options.subject}). Recreate ALL of its questions — ONE entry per question in the worksheet, in the same order, keeping each question's meaning and correct answer. Do not invent extra questions and do not drop any.
+For each question provide: "skill" (Recall, Inference, Sequencing, Vocabulary, Opinion & Evidence, or Visualising), "type" (one of "multiple-choice", "true-false", "open-response", "matching", "drawing"), "text", plus "options" (for multiple-choice) or "pairs" (for matching) where relevant.
+
+EXISTING WORKSHEET:
+"""
+${src.slice(0, 8000)}
+"""
+
+Return ONLY a JSON object: {"questions":[{"skill":"...","type":"...","text":"...","options":["..."],"pairs":[{"left":"...","right":"..."}]}, ...]} with one array entry per question in the worksheet above.${bahasaMelayuDirective(options.subject)}`
+      : `You are an expert Cambridge literacy educator. A ${options.yearGroup} class (${options.subject}) is reading: "${bookTitle}".
 Write exactly ${options.numQuestions} after-reading questions with EXACTLY this mix:
 - 1 DRAWING question (type "drawing"): the student draws a scene, character or idea from the book. No options, no pairs — just a clear drawing instruction.
 - 1 MATCHING question (type "matching"): 3-5 left/right pairs to connect with a line (e.g. character ↔ trait, cause ↔ effect, word ↔ meaning). Put the pairs in the "pairs" field with the CORRECT pairing.
