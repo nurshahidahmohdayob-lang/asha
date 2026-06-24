@@ -13,24 +13,21 @@ export default async function handler(req: any, res: any) {
 
   const { type, lessonInput, options } = req.body || {};
 
-  const keyNames = [
-    "GROQ_API_KEY",
-    "GEMINI_API_KEY",
-    "GOOGLE_API_KEY",
-    "VITE_GEMINI_API_KEY",
-    "API_KEY",
-  ];
-  const key = keyNames
-    .map((n) => process.env[n])
-    .find((v) => v && v !== "MY_GEMINI_API_KEY" && v !== "undefined");
+  // Text generation runs on Groq → GROQ_API_KEY must be set in this deployment.
+  const hasGroq =
+    !!process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== "undefined";
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
   const send = (obj: any) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
 
-  if (!key) {
-    send({ event: "error", error: "AI key is not configured." });
+  if (!hasGroq && type !== "image") {
+    send({
+      event: "error",
+      error:
+        "GROQ_API_KEY is not set in this deployment. Add it in Vercel → Settings → Environment Variables, then redeploy.",
+    });
     res.end();
     return;
   }
