@@ -7,3 +7,6 @@ coverage/
 .env*
 !.env.example
 .vercel
+
+# Generated: esbuild bundle of geminiService for Vercel functions
+api/_lib/
