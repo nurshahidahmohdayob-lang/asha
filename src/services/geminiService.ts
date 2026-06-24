@@ -195,12 +195,12 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
     "methodology": ONE to TWO sentences (MAX 45 words) on the pedagogical approach, mentioning the Cambridge subject code. Be concise — do NOT write a paragraph.
     "description": ONE sentence (MAX 25 words) high-level overview.
     "type" for slides: one of title, content, activity, quiz.
-    "content": 3-4 SHORT bullet points, each a concise phrase (MAX 14 words). Do NOT write long sentences or paragraphs.
+    "content": 3-4 bullet points. EACH bullet must state a KEY POINT and then EXPLAIN it, written as "Key point: explanation." — a short key phrase, an em dash or colon, then ONE clear sentence (about 12-25 words) that explains or gives an example so students understand it. Do NOT give bare labels with no explanation, and do NOT use HTML or markdown tags (plain text only).
     "illustrationPrompt": 3-5 search keywords only.
     "layoutType": (OPTIONAL) suggest one of 'infographic-cards', 'infographic-flow', 'infographic-grid', 'infographic-bubbles' if the content suits a non-list layout, otherwise 'standard'.
     IMPORTANT:
     1. Do NOT repeat the slide "title" as any item in the "content" array.
-    2. Each content point is unique, informative, distinct from the title, and brief.
+    2. Each content point is unique, informative, distinct from the title, and includes its own explanation.
     3. Reference the Cambridge Subject Code (from the provided list) in the methodology.`);
 
     const slideItemSchema = {
@@ -323,7 +323,7 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
             parts: [
               ...baseParts,
               {
-                text: `${planNote}\n\nGenerate EXACTLY ${rg.count} slides — these are slides ${rg.start} to ${rg.start + rg.count - 1} of ${total} (part ${rg.idx + 1} of ${chunkCount}). Return ONLY a "slides" array (no metadata). Keep each slide concise.`,
+                text: `${planNote}\n\nGenerate EXACTLY ${rg.count} slides — these are slides ${rg.start} to ${rg.start + rg.count - 1} of ${total} (part ${rg.idx + 1} of ${chunkCount}). Return ONLY a "slides" array (no metadata). Every bullet in "content" must still state a key point AND a one-sentence explanation, as described above.`,
               },
             ],
           },
