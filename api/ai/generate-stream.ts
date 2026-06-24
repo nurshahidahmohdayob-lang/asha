@@ -3,6 +3,10 @@
 // instead of a silent spinner. Other types emit a single final result.
 // Requires GROQ_API_KEY in the Vercel project's env vars (see api/ai/generate.ts).
 
+// Static import so Vercel bundles geminiService (a dynamic import fails at
+// runtime with "Cannot find module" — see api/ai/generate.ts).
+import * as geminiService from "../../src/services/geminiService";
+
 export const config = { maxDuration: 60 };
 
 export default async function handler(req: any, res: any) {
@@ -33,7 +37,7 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const gs: any = await import("../../src/services/geminiService");
+    const gs: any = geminiService;
 
     let result;
     if (type === "worksheet") {
