@@ -1327,8 +1327,7 @@ export async function generateReadingProgram(lessonInput: string, options: EduOp
 
       Format: JSON object matching the defined schema.`);
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+    const response = await generateContentWithRetry({
       contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
       config: {
         responseMimeType: "application/json",
@@ -1474,8 +1473,7 @@ export async function generateSessionPlan(topic: string, subtopics: string, week
     `;
     contents.push(mainPrompt);
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+    const response = await generateContentWithRetry({
       contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
       config: {
         responseMimeType: "application/json",
@@ -1585,8 +1583,7 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
     `;
     contents.push(mainPrompt);
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+    const response = await generateContentWithRetry({
       contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
       config: {
         responseMimeType: "application/json",
@@ -1656,9 +1653,8 @@ export async function suggestWeeklyInput(type: 'unit' | 'topic' | 'activity', op
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: [{ parts: [{ text: prompt }] }]
+    const response = await generateContentWithRetry({
+      contents: { parts: [{ text: prompt }] },
     });
 
     return response.text?.trim() || "";
@@ -1704,8 +1700,7 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
     `;
     contents.push(mainPrompt);
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+    const response = await generateContentWithRetry({
       contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
       config: {
         responseMimeType: "application/json",
@@ -1807,8 +1802,7 @@ export async function generateEduNotes(lessonInput: string, options: EduOptions)
     contents.push(mainPrompt);
     contents.push(`Format: JSON object with "notes" (a long string containing the markdown formatted notes).`);
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
+    const response = await generateContentWithRetry({
       contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
       config: {
         responseMimeType: "application/json",
@@ -1875,19 +1869,14 @@ export async function generateEduNotesStream(
   parts.push({ text: mainPrompt });
 
   try {
-    const stream = await ai.models.generateContentStream({
-      model: "gemini-3.5-flash",
-      contents: { parts },
-    });
-    let full = "";
-    for await (const chunk of stream) {
-      const t = chunk.text;
-      if (t) {
-        full += t;
-        onChunk(full);
-      }
-    }
+    // Run on Groq (fast) instead of client-side Gemini streaming. We lose the
+    // token-by-token reveal but gain speed; in the browser there's no Groq key
+    // so this throws "not configured" and the catch routes to the /notes proxy
+    // (server-side Groq) — fast on Vercel too.
+    const response = await generateContentWithRetry({ contents: { parts } });
+    const full = response.text || "";
     if (!full) throw new Error("Empty response");
+    onChunk(full);
     return { notes: full };
   } catch (err: any) {
     // No client key / streaming unavailable → fall back to the non-streaming proxy.
@@ -2026,17 +2015,52 @@ const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 // this is a stalled connection, so abort and let the retry logic take over.
 const GROQ_CALL_TIMEOUT_MS = 60000;
 
+// Groq ignores Gemini's responseSchema, so we derive a compact JSON skeleton
+// from it and put that in the prompt — this keeps the output shape correct for
+// callers that were written against a Gemini responseSchema (reading programs,
+// lesson/session/weekly plans, sorting games, notes…). Returns an example
+// value mirroring the schema's structure.
+function schemaToHint(schema: any): any {
+  if (!schema || typeof schema !== "object") return "string";
+  const t = String(schema.type || "").toUpperCase();
+  if (t === "OBJECT") {
+    const o: any = {};
+    const props = schema.properties || {};
+    for (const k of Object.keys(props)) o[k] = schemaToHint(props[k]);
+    return o;
+  }
+  if (t === "ARRAY") return [schemaToHint(schema.items)];
+  if (t === "NUMBER" || t === "INTEGER") return 0;
+  if (t === "BOOLEAN") return false;
+  // STRING / unknown — surface the description so the model knows what to write.
+  return schema.description ? `string — ${schema.description}` : "string";
+}
+
 async function groqGenerate(
   request: { contents: any; config?: any },
   model: string,
 ): Promise<{ text: string }> {
   const rawParts = request?.contents?.parts;
   const parts = Array.isArray(rawParts) ? rawParts : rawParts ? [rawParts] : [];
-  const promptText = parts
+  let promptText = parts
     .map((p: any) => (typeof p === "string" ? p : p?.text || ""))
     .filter(Boolean)
     .join("\n\n");
   const wantsJson = request?.config?.responseMimeType === "application/json";
+  // If the caller supplied a responseSchema (for Gemini), describe the required
+  // JSON shape in the prompt since Groq can't read the schema directly.
+  const schema = request?.config?.responseSchema;
+  if (wantsJson && schema) {
+    try {
+      promptText += `\n\nReturn ONLY a single JSON object with EXACTLY this structure (same keys and nesting; replace the placeholder values with real content, keep arrays as arrays):\n${JSON.stringify(
+        schemaToHint(schema),
+        null,
+        2,
+      )}`;
+    } catch {
+      /* schema too exotic to serialise — json_object mode still applies */
+    }
+  }
   const messages: any[] = [];
   if (wantsJson) {
     messages.push({
@@ -2566,9 +2590,8 @@ export async function generateInteractiveSortingGame(
     8. Add a playful summary footnote at the bottom (e.g., "Remember: Files are saved on computer drives. Other devices help us query and command them!").
     `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: mainPrompt,
+    const response = await generateContentWithRetry({
+      contents: { parts: [{ text: mainPrompt }] },
       config: {
         responseMimeType: "application/json",
         responseSchema: {
