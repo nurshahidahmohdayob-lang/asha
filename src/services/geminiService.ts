@@ -1402,8 +1402,12 @@ Return ONLY a "sections" array containing exactly ONE section with exactly ${rg.
         if (viaProxy && (viaProxy as any).sections && (viaProxy as any).sections.length > 0) {
           return viaProxy;
         }
-      } catch (proxyErr) {
+      } catch (proxyErr: any) {
         console.error('Worksheet proxy fallback failed:', proxyErr);
+        // The proxy's message (e.g. "GROQ_API_KEY is not set in this
+        // deployment — add it in Vercel…") is far more accurate than the
+        // browser's generic "not configured", so surface it instead.
+        if (proxyErr?.message) throw proxyErr;
       }
     }
     throw err;

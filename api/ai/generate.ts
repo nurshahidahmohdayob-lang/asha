@@ -10,6 +10,12 @@
 //   GEMINI_API_KEY — optional, used only by legacy/image paths
 //   CLOUDFLARE_*   — optional, image generation worker
 
+// Static import (NOT a runtime dynamic import): Vercel's bundler only traces
+// statically-imported modules, so this is what guarantees geminiService and its
+// deps are included in the function bundle. A dynamic import("../../src/…")
+// builds fine but fails at runtime with "Cannot find module".
+import * as geminiService from "../../src/services/geminiService";
+
 // Allow up to 60s (Groq is fast, but large chunked decks / worksheets can run
 // longer than the 10s default).
 export const config = { maxDuration: 60 };
@@ -38,7 +44,7 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const gs = await import("../../src/services/geminiService");
+    const gs: any = geminiService;
     const {
       generateSlides,
       generateWorksheet,
