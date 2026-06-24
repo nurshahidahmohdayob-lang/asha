@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "PORT=3004 tsx watch server.ts",
-    "build": "vite build",
+    "build:api": "node scripts/build-api.mjs",
+    "build": "npm run build:api && vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
@@ -43,6 +44,7 @@
     "@types/node": "^22.14.0",
     "@types/nodemailer": "^8.0.0",
     "autoprefixer": "^10.4.21",
+    "esbuild": "^0.27.7",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",

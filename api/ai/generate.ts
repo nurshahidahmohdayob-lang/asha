@@ -10,11 +10,14 @@
 //   GEMINI_API_KEY — optional, used only by legacy/image paths
 //   CLOUDFLARE_*   — optional, image generation worker
 
-// Static import (NOT a runtime dynamic import): Vercel's bundler only traces
-// statically-imported modules, so this is what guarantees geminiService and its
-// deps are included in the function bundle. A dynamic import("../../src/…")
-// builds fine but fails at runtime with "Cannot find module".
-import * as geminiService from "../../src/services/geminiService";
+// geminiService is pre-bundled (esbuild) into api/_lib/geminiService.js by the
+// build step. We import THAT self-contained file rather than the TS source in
+// src/, because Vercel only transpiles api functions (it doesn't bundle the
+// cross-directory src import), which left a bare ESM import that failed at
+// runtime with "Cannot find module". The _lib/ prefix keeps Vercel from
+// treating the file as an endpoint. (Generated at build → ts-ignored here.)
+// @ts-ignore
+import * as geminiService from "../_lib/geminiService.js";
 
 // Allow up to 60s (Groq is fast, but large chunked decks / worksheets can run
 // longer than the 10s default).

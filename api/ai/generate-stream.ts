@@ -3,9 +3,11 @@
 // instead of a silent spinner. Other types emit a single final result.
 // Requires GROQ_API_KEY in the Vercel project's env vars (see api/ai/generate.ts).
 
-// Static import so Vercel bundles geminiService (a dynamic import fails at
-// runtime with "Cannot find module" — see api/ai/generate.ts).
-import * as geminiService from "../../src/services/geminiService";
+// Pre-bundled geminiService (see api/ai/generate.ts for why). Generated at
+// build into api/_lib/geminiService.js; ts-ignored because it's not on disk
+// during type-check.
+// @ts-ignore
+import * as geminiService from "../_lib/geminiService.js";
 
 export const config = { maxDuration: 60 };
 
