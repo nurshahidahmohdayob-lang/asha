@@ -22,24 +22,17 @@ export default async function handler(req: any, res: any) {
 
   const { type, lessonInput, options } = req.body || {};
 
-  // Same key resolution as the Express server: Groq first, then Gemini-style
-  // names. The presence of ANY usable key is required.
-  const keyNames = [
-    "GROQ_API_KEY",
-    "GEMINI_API_KEY",
-    "GOOGLE_API_KEY",
-    "VITE_GEMINI_API_KEY",
-    "API_KEY",
-  ];
-  const key = keyNames
-    .map((n) => process.env[n])
-    .find((v) => v && v !== "MY_GEMINI_API_KEY" && v !== "undefined");
-
-  if (!key) {
+  // Text generation runs on Groq, so GROQ_API_KEY must be set in THIS
+  // deployment's env (images can use Gemini/Cloudflare). Checking it
+  // specifically avoids a misleading "add it to .env" error when only a Gemini
+  // key happens to be present.
+  const hasGroq =
+    !!process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== "undefined";
+  if (!hasGroq && type !== "image") {
     res.status(500).json({
-      error: "AI key is not configured.",
+      error: "GROQ_API_KEY is not set in this deployment.",
       details:
-        "Set GROQ_API_KEY (and optionally GEMINI_API_KEY) in the Vercel project's Environment Variables, then redeploy.",
+        "Add GROQ_API_KEY in Vercel → Settings → Environment Variables (Production + Preview), then redeploy.",
     });
     return;
   }
