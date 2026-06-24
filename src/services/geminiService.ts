@@ -25,6 +25,63 @@ async function callAiProxy(type: string, lessonInput: string, options: any) {
   }
 }
 
+// Streaming variant of the proxy: POSTs to the SSE endpoint and invokes
+// onPartial for each progress event, resolving with the final result. Used for
+// worksheets so the browser shows "questions 8/20…" even though generation runs
+// server-side. Falls back to the plain proxy if streaming isn't available.
+async function callAiProxyStream(
+  type: string,
+  lessonInput: string,
+  options: any,
+  onPartial?: (partial: any) => void,
+): Promise<any> {
+  let response: Response;
+  try {
+    response = await fetch("/api/ai/generate-stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, lessonInput, options }),
+    });
+  } catch {
+    return callAiProxy(type, lessonInput, options);
+  }
+  // No stream support (older deploy, buffering proxy) → use the normal endpoint.
+  if (!response.ok || !response.body) {
+    return callAiProxy(type, lessonInput, options);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let final: any;
+  let sawError = "";
+  // Parse "data: {...}\n\n" SSE frames as they arrive.
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let sep: number;
+    while ((sep = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, sep);
+      buf = buf.slice(sep + 2);
+      const line = frame.replace(/^data:\s?/, "").trim();
+      if (!line) continue;
+      let obj: any;
+      try {
+        obj = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (obj.event === "partial" && onPartial) onPartial(obj.partial);
+      else if (obj.event === "result") final = obj.result;
+      else if (obj.event === "error") sawError = obj.error || "stream error";
+    }
+  }
+  if (final !== undefined) return final;
+  // Stream ended without a result — fall back so the user still gets output.
+  if (sawError) throw new Error(sawError);
+  return callAiProxy(type, lessonInput, options);
+}
+
 // When the chosen subject is Bahasa Melayu, every part of the generated content
 // (questions, options, instructions, passages, titles) must be written in Malay.
 // Returns a directive to append to generation prompts, or "" for other subjects.
@@ -998,6 +1055,27 @@ Only use the types that appear in the "Allowed Types" list above.`;
       ws = { ...ws, sections: dedupeSections(ws.sections || []) };
       const want = options.numQuestions || 0;
 
+      // Progress for the UI: the title/passage + first batch land immediately,
+      // then each top-up round reports how many questions are ready so far.
+      const emitPartial = (phase: string, w: any) => {
+        if (!onPartial) return;
+        const cnt = (w?.sections || []).reduce(
+          (n: number, s: any) => n + (s?.questions?.length || 0),
+          0,
+        );
+        onPartial({
+          phase,
+          title: w?.title || lessonInput,
+          readingPassage: w?.readingPassage || "",
+          description: w?.description || "",
+          methodology: w?.methodology || "",
+          sections: w?.sections || [],
+          done: cnt,
+          total: want || cnt,
+        });
+      };
+      emitPartial("header", ws);
+
       // Desired count per CANONICAL type (when the user chose per-type counts).
       const desiredByType: Record<string, number> = {};
       if (options.typeCounts)
@@ -1045,33 +1123,15 @@ Only use the types that appear in the "Allowed Types" list above.`;
       const maxTopups = want > 0 ? Math.ceil(want / BATCH) + 6 : 0;
       let topups = 0;
       let dry = 0;
-      while (want > 0 && topups < maxTopups && dry < 3) {
-        const deficit = computeDeficit();
-        if (deficit.total <= 0) break;
-        topups++;
 
-        // Build the batch request — fill the shortest types first, up to BATCH.
-        let need = Math.min(deficit.total, BATCH);
-        let breakdownLine = `${need} questions`;
-        if (hasTypeCounts) {
-          const parts: string[] = [];
-          let budget = BATCH;
-          for (const [t, miss] of Object.entries(deficit.byType)) {
-            if (budget <= 0) break;
-            const take = Math.min(miss, budget);
-            parts.push(`${take} "${t}"`);
-            budget -= take;
-          }
-          need = BATCH - budget;
-          breakdownLine = parts.join(", ");
-        }
-
-        const existing = (ws?.sections || [])
-          .flatMap((s: any) => s?.questions || [])
-          .map((q: any) => q?.text)
-          .filter(Boolean)
-          .slice(-25);
-        let extra: any[] = [];
+      // One top-up batch: ask for `breakdownLine` more questions, avoiding the
+      // `existing` texts. Returns the accepted (allowed-type, still-needed)
+      // questions, or [] on failure so a round can keep its other batches.
+      const runTopupBatch = async (
+        breakdownLine: string,
+        existing: string[],
+        deficitByType: Record<string, number>,
+      ): Promise<any[]> => {
         try {
           const more = await generateContentWithRetry({
             contents: {
@@ -1084,6 +1144,9 @@ Only use the types that appear in the "Allowed Types" list above.`;
             config: {
               thinkingConfig: { thinkingBudget: 0 },
               responseMimeType: "application/json",
+              // A 12-question batch fits comfortably; a tight cap keeps these
+              // snappy so parallel batches don't trip rate limits.
+              maxOutputTokens: 2400,
               responseSchema: {
                 type: Type.OBJECT,
                 properties: {
@@ -1095,15 +1158,52 @@ Only use the types that appear in the "Allowed Types" list above.`;
           });
           // Salvage handles truncated top-up responses too. When per-type counts
           // are set, only accept types we still need (so we converge).
-          extra = salvageQuestions(more.text || "").filter((q: any) => {
+          return salvageQuestions(more.text || "").filter((q: any) => {
             const t = normQType(q?.type);
             if (!allowedTypes.has(t)) return false;
-            return hasTypeCounts ? (deficit.byType[t] || 0) > 0 : true;
+            return hasTypeCounts ? (deficitByType[t] || 0) > 0 : true;
           });
         } catch {
-          extra = []; // network/parse failure — try another batch rather than give up
+          return []; // network/parse failure — try another batch rather than give up
         }
-        void need;
+      };
+
+      while (want > 0 && topups < maxTopups && dry < 3) {
+        const deficit = computeDeficit();
+        if (deficit.total <= 0) break;
+
+        // Build the batch request — fill the shortest types first, up to BATCH.
+        let breakdownLine = `${Math.min(deficit.total, BATCH)} questions`;
+        if (hasTypeCounts) {
+          const parts: string[] = [];
+          let budget = BATCH;
+          for (const [t, miss] of Object.entries(deficit.byType)) {
+            if (budget <= 0) break;
+            const take = Math.min(miss, budget);
+            parts.push(`${take} "${t}"`);
+            budget -= take;
+          }
+          breakdownLine = parts.join(", ") || breakdownLine;
+        }
+
+        const existing = (ws?.sections || [])
+          .flatMap((s: any) => s?.questions || [])
+          .map((q: any) => q?.text)
+          .filter(Boolean)
+          .slice(-25);
+
+        // Fire several batches CONCURRENTLY this round (cap 3): a large shortfall
+        // fills in roughly the time of ONE batch instead of N sequential
+        // round-trips — the main cause of "worksheet takes so long". Overlap
+        // across batches is removed by dedupeSections.
+        const roundBatches = Math.max(1, Math.min(3, Math.ceil(deficit.total / BATCH)));
+        topups += roundBatches;
+        const batched = await mapLimit(
+          Array.from({ length: roundBatches }, (_, i) => i),
+          3,
+          () => runTopupBatch(breakdownLine, existing, deficit.byType),
+        );
+        const extra = batched.flat();
         if (!extra.length) {
           dry++;
           continue;
@@ -1118,6 +1218,7 @@ Only use the types that appear in the "Allowed Types" list above.`;
           ...extra,
         ];
         ws = { ...ws, sections: dedupeSections(secs) };
+        emitPartial("questions", ws);
       }
       // Bahasa Melayu papers keep the model's own "Bahagian" sections (grammar
       // topic / comprehension), so DON'T regroup by question type (which would
@@ -1286,7 +1387,11 @@ Return ONLY a "sections" array containing exactly ONE section with exactly ${rg.
     // populated worksheet — this prevents a silent empty generation.
     if (typeof window !== 'undefined') {
       try {
-        const viaProxy = await callAiProxy('worksheet', lessonInput, { ...options, slideContext });
+        // Stream when the caller wants progress (so the UI can show questions
+        // landing batch by batch); otherwise use the plain proxy.
+        const viaProxy = onPartial
+          ? await callAiProxyStream('worksheet', lessonInput, { ...options, slideContext }, onPartial)
+          : await callAiProxy('worksheet', lessonInput, { ...options, slideContext });
         if (viaProxy && (viaProxy as any).sections && (viaProxy as any).sections.length > 0) {
           return viaProxy;
         }

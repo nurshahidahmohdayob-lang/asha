@@ -91,6 +91,75 @@ async function startServer() {
     }
   });
 
+  // Streaming (SSE) generation — same backend as /api/ai/generate, but emits
+  // progress events as they happen. Worksheets report each batch landing; other
+  // types just emit a single final result. The browser reads these so the UI
+  // can show "questions 8/20…" while generation runs server-side.
+  app.post("/api/ai/generate-stream", async (req, res) => {
+    const { type, lessonInput, options } = req.body || {};
+
+    const keyNames = ['GROQ_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'VITE_GEMINI_API_KEY', 'API_KEY'];
+    const key = keyNames
+      .map((n) => process.env[n])
+      .find((v) => v && v !== "MY_GEMINI_API_KEY" && v !== "undefined");
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    (res as any).flushHeaders?.();
+    const send = (obj: any) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+
+    if (!key) {
+      send({ event: "error", error: "AI key is not configured." });
+      res.end();
+      return;
+    }
+
+    try {
+      const gsPath = "./src/services/geminiService.ts";
+      const gsSpecifier =
+        process.env.NODE_ENV === "production" ? gsPath : `${gsPath}?t=${Date.now()}`;
+      const gs = await import(gsSpecifier);
+
+      let result;
+      if (type === "worksheet") {
+        result = await gs.generateWorksheet(
+          lessonInput,
+          options,
+          undefined,
+          (partial: any) => send({ event: "partial", partial }),
+        );
+      } else {
+        // Non-streaming types: reuse the same dispatch as /api/ai/generate.
+        const dispatch: Record<string, () => Promise<any>> = {
+          slides: () => gs.generateSlides(lessonInput, options),
+          interactiveSorting: () => gs.generateInteractiveSortingGame(lessonInput, options.subject, options.yearGroup),
+          readingProgram: () => gs.generateReadingProgram(lessonInput, options),
+          sessionPlan: () => gs.generateSessionPlan(lessonInput, options.subtopics, options.weeks, options),
+          lessonPlan: () => gs.generateLessonPlan(lessonInput, options),
+          weeklyPlan: () => gs.generateWeeklyPlan(lessonInput, options.weekNum, options, options.unit, options.topic),
+          notes: () => gs.generateEduNotes(lessonInput, options),
+          suggest: () => gs.suggestWeeklyInput(lessonInput, options, options.weekNum),
+          all: () => gs.generateEduContent(lessonInput, options),
+          relevelPassage: () => gs.relevelReadingPassage(lessonInput, options.targetLexile, options.subject, options.yearGroup),
+          leveledQuestions: () => gs.generateLeveledQuestions(lessonInput, options.levels, { yearGroup: options.yearGroup, subject: options.subject, numQuestions: options.numQuestions, sourceContent: options.sourceContent }),
+          relevelWorksheet: () => gs.relevelWorksheet(JSON.parse(lessonInput), options.targetLexile, options.subject, options.yearGroup),
+          chat: () => gs.askAI(lessonInput, options.history || []),
+          image: () => gs.generatePosterImage(lessonInput),
+        };
+        const fn = dispatch[type];
+        if (!fn) throw new Error(`Unknown generation type: ${type}`);
+        result = await fn();
+      }
+      send({ event: "result", result });
+    } catch (error: any) {
+      console.error("Streaming generation error:", error);
+      send({ event: "error", error: error?.message || "Internal server error during AI generation" });
+    } finally {
+      res.end();
+    }
+  });
+
   // Image Proxy to solve CORS issues
   app.get("/api/proxy", async (req, res) => {
     const { url } = req.query;
