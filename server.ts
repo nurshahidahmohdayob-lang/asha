@@ -3,6 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import { readFileSync } from "fs";
+import http from "http";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
@@ -16,7 +17,7 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3004;
 
   // Force browsers to NEVER cache app code in dev — guarantees the latest
   // bundle loads on every refresh (no more stale-cache "my fix isn't showing").
@@ -1110,10 +1111,19 @@ async function startServer() {
     res.json({ success: true, active: user.active });
   });
 
+  // Explicit HTTP server so Vite's HMR websocket can attach to it (shared
+  // server). The app is fronted by Caddy at https://suite.test → :3004; sharing
+  // the server lets the HMR upgrade ride that same HTTPS proxy on 443.
+  const server = http.createServer(app);
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    const hmrDisabled = process.env.DISABLE_HMR === "true";
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        ...(hmrDisabled ? {} : { hmr: { server } }),
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -1125,8 +1135,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}  •  https://suite.test (via Caddy)`);
   });
 }
 

@@ -1333,12 +1333,23 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       const t = String(q?.type || "").toLowerCase();
       return t.includes("fill") || t.includes("blank");
     });
-    if (!fills.length) return "";
+    // An explicit word bank (words shown inside boxes on the source worksheet)
+    // is rendered faithfully even when the section has no fill-in questions —
+    // single words / short terms only.
+    const explicit: string[] = Array.isArray(sec?.wordBank)
+      ? sec.wordBank
+          .map((w: any) => String(w).trim())
+          .filter((w: string) => w && w.split(/\s+/).length <= 4)
+      : [];
+    if (!fills.length && !explicit.length) return "";
     // One word per fill-in question so the bank ALWAYS tallies with the number
     // of questions. (Distinctness is enforced at generation by the prompt.)
-    const words = fills
-      .map((q: any) => String((q?.options && q.options[0]) || "").trim())
-      .filter(Boolean);
+    // Prefer the explicit word-bank from the source when present.
+    const words = explicit.length
+      ? explicit
+      : fills
+          .map((q: any) => String((q?.options && q.options[0]) || "").trim())
+          .filter(Boolean);
     if (!words.length) return "";
     // shuffle so the bank order doesn't match the question order
     const shuffled = words.slice();
@@ -1349,7 +1360,10 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
     const cells = shuffled
       .map((w: string) => `<span class="wbword">${zEsc(bankWord(w))}</span>`)
       .join("");
-    return `<div class="wbbank"><span class="wblabel">📋 Word Bank</span><span class="wbwords">${cells}</span></div><div class="wbinstr">✏️ Fill in the blanks using the words from the word bank.</div>`;
+    const instr = fills.length
+      ? `<div class="wbinstr">✏️ Fill in the blanks using the words from the word bank.</div>`
+      : "";
+    return `<div class="wbbank"><span class="wblabel">📋 Word Bank</span><span class="wbwords">${cells}</span></div>${instr}`;
   };
 
   const layout: string = T.layout || "stack";
@@ -1549,10 +1563,16 @@ body{font-family:'Baloo 2','Segoe UI',system-ui,sans-serif;background:${T.bg};co
 .lines .ln{display:block;border-bottom:2.5px dotted #94a3b8;height:4px}
 .wbbank{background:#eef2ff;border:1.5px solid #c7d2fe;border-radius:16px;padding:13px 18px 14px;margin:4px 0 10px}
 .wbbank .wblabel{display:block;font-weight:900;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#4338ca;margin-bottom:9px}
-.wbbank .wbwords{display:flex;flex-wrap:wrap;align-items:center;row-gap:8px}
-.wbword{font-weight:800;font-size:15px;color:#1e293b;padding:2px 18px;line-height:1.2;white-space:nowrap}
-.wbword:not(:last-child){border-right:2px solid #c7d2fe}
-.wbword:first-child{padding-left:0}
+.wbbank .wbwords{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+/* Each word sits in its OWN colourful box (matching the source worksheet's
+   boxed words), cycling through a friendly palette so the bank looks lively. */
+.wbword{font-weight:800;font-size:15px;line-height:1.2;white-space:nowrap;padding:7px 16px;border:2px solid #c7d2fe;border-radius:12px;background:#fff;color:#1e293b}
+.wbword:nth-child(6n+1){background:#fef3c7;border-color:#fbbf24;color:#92400e}
+.wbword:nth-child(6n+2){background:#dbeafe;border-color:#60a5fa;color:#1e40af}
+.wbword:nth-child(6n+3){background:#dcfce7;border-color:#4ade80;color:#166534}
+.wbword:nth-child(6n+4){background:#fce7f3;border-color:#f472b6;color:#9d174d}
+.wbword:nth-child(6n+5){background:#ede9fe;border-color:#a78bfa;color:#5b21b6}
+.wbword:nth-child(6n+6){background:#ccfbf1;border-color:#2dd4bf;color:#115e59}
 .wbinstr{font-weight:800;font-size:14px;color:#1e293b;margin:0 0 12px}
 .zblank{display:inline-block;min-width:96px;border-bottom:2px solid #1e293b;margin:0 5px;vertical-align:baseline}
 .sortins{font-size:13px;font-weight:700;color:#334155;margin-bottom:10px}
@@ -4819,7 +4839,7 @@ export default function App() {
     setIsBuildingWs(true);
     try {
       const raw = await askAI(
-        `Convert the worksheet below into JSON ONLY (no markdown fences, no commentary). Shape: {"title":"...","sections":[{"title":"...","instructions":"...","questions":[{"text":"...","type":"...","options":["..."]}]}]}. "type" is one of "multiple-choice","true-false","short-answer","fill-in-the-blanks". Include "options" ONLY for multiple-choice (3-4) and true-false (["True","False"]). Use the worksheet's ACTUAL questions and keep them all.\n\nWORKSHEET:\n"""${bodyText.slice(0, 6000)}"""`,
+        `Convert the worksheet below into JSON ONLY (no markdown fences, no commentary). Shape: {"title":"...","sections":[{"title":"...","instructions":"...","wordBank":["..."],"questions":[{"text":"...","type":"...","options":["..."]}]}]}. "type" is one of "multiple-choice","true-false","short-answer","fill-in-the-blanks". Include "options" ONLY for multiple-choice (3-4) and true-false (["True","False"]).\n\nRULES — be FAITHFUL to the source:\n- Keep EVERY question. Use the worksheet's EXACT wording. Do NOT invent, drop, summarise, rephrase, reorder, or change any question, option, instruction, or section title.\n- If the worksheet shows words inside a box or "word bank" (single words/short terms students choose from), put those words in that section's "wordBank" array, keeping the same words and spelling. Only single words or short terms — never full sentences. Omit "wordBank" if the section has none.\n\nWORKSHEET:\n"""${bodyText.slice(0, 6000)}"""`,
         [],
       );
       let ws: any;
@@ -4830,8 +4850,11 @@ export default function App() {
       }
       if (!ws?.sections?.length) throw new Error("No questions found to build a worksheet.");
       const title = artifact.title || ws.title || "Worksheet";
-      const html = buildInteractiveHTML(ws, title, interactiveDesign, "worksheet", subject || "");
-      setInteractiveDoc({ html, title, ws, design: interactiveDesign, kind: "worksheet", subject: subject || "" });
+      // Don't inject the app's global subject (e.g. "Science") into the heading —
+      // an assistant worksheet has no chosen subject, so the plain "Open" view
+      // never shows it. Keep them consistent by leaving the subject blank.
+      const html = buildInteractiveHTML(ws, title, interactiveDesign, "worksheet", "");
+      setInteractiveDoc({ html, title, ws, design: interactiveDesign, kind: "worksheet", subject: "" });
     } catch (e: any) {
       alert(e?.message || "Couldn't build the interactive worksheet.");
     } finally {
@@ -7651,6 +7674,7 @@ export default function App() {
       };
     }
 
+    try {
     const result = await generateSlides(
       topic || content?.worksheet?.title || "Assessment-based Lesson",
       options,
@@ -7713,7 +7737,16 @@ export default function App() {
       setSidebarTab("slides");
       setCurrentView("slides");
     }
-    setIsGenerating(false);
+    } catch (err: any) {
+      // Without this, a failed generation (timeout, rate limit, 503…) would
+      // leave the UI stuck on "Generating Slides…" forever.
+      console.error("Slide generation failed:", err);
+      alert(
+        `Couldn't generate the slides — ${err?.message || "the AI service is busy"}. Please try again.`,
+      );
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const generateOnlyWorksheet = async (basedOnSlides: boolean = false) => {
