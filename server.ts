@@ -2,6 +2,8 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
+import { readFileSync } from "fs";
+import http from "http";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
@@ -15,7 +17,7 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3004;
 
   // Force browsers to NEVER cache app code in dev — guarantees the latest
   // bundle loads on every refresh (no more stale-cache "my fix isn't showing").
@@ -75,7 +77,7 @@ async function startServer() {
         case 'suggest': result = await suggestWeeklyInput(lessonInput as any, options, options.weekNum); break;
         case 'all': result = await generateEduContent(lessonInput, options); break;
         case 'relevelPassage': result = await relevelReadingPassage(lessonInput, options.targetLexile, options.subject, options.yearGroup); break;
-        case 'leveledQuestions': result = await generateLeveledQuestions(lessonInput, options.levels, { yearGroup: options.yearGroup, subject: options.subject, numQuestions: options.numQuestions }); break;
+        case 'leveledQuestions': result = await generateLeveledQuestions(lessonInput, options.levels, { yearGroup: options.yearGroup, subject: options.subject, numQuestions: options.numQuestions, sourceContent: options.sourceContent }); break;
         case 'relevelWorksheet': result = await relevelWorksheet(JSON.parse(lessonInput), options.targetLexile, options.subject, options.yearGroup); break;
         case 'chat': result = await askAI(lessonInput, options.history || []); break;
         case 'image': result = await generatePosterImage(lessonInput); break;
@@ -114,6 +116,92 @@ async function startServer() {
     } catch (error) {
       console.error("Proxy error:", error);
       res.status(500).send("Error fetching image");
+    }
+  });
+
+  // Decode HTML entities, including double-encoded ones (&amp;amp; -> &), so
+  // worksheet text/titles never show leftover "amp", "lt", etc.
+  const decodeEntities = (s: string) => {
+    let t = String(s || "");
+    let prev = "";
+    do {
+      prev = t;
+      t = t.replace(/&amp;/gi, "&");
+    } while (t !== prev);
+    return t
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&quot;/gi, '"')
+      .replace(/&#0?39;|&apos;/gi, "'");
+  };
+
+  // Pull a clean title from a worksheet's HTML (<title>, then <h1>/<h2>).
+  const htmlTitle = (html: string) => {
+    const m =
+      html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) ||
+      html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i) ||
+      html.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i);
+    return m
+      ? decodeEntities(m[1].replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim().slice(0, 80)
+      : "";
+  };
+
+  // Turn worksheet HTML into readable plain text.
+  const htmlToText = (html: string) =>
+    decodeEntities(
+      html
+        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<\/(p|div|li|h[1-6]|br|tr|section)>/gi, "\n")
+        .replace(/<[^>]+>/g, " "),
+    )
+      .replace(/[ \t]+/g, " ")
+      .replace(/\n\s*\n\s*\n+/g, "\n\n")
+      .trim()
+      .slice(0, 12000);
+
+  // Read a worksheet from a URL (http/https) OR a local file:// path (the
+  // server runs on the teacher's machine, so it can read downloaded files) and
+  // return its plain-text content, so it can be re-leveled into a pack.
+  app.post("/api/fetch-url", async (req, res) => {
+    const { url } = req.body || {};
+    if (!url || typeof url !== "string") {
+      return res.status(400).json({ error: "A worksheet URL or file path is required." });
+    }
+    try {
+      // Local downloaded file.
+      if (/^file:\/\//i.test(url)) {
+        let filePath: string;
+        try {
+          filePath = fileURLToPath(url);
+        } catch {
+          return res.status(400).json({ error: "That file path looks invalid." });
+        }
+        if (!/\.(html?|txt)$/i.test(filePath)) {
+          return res.status(400).json({ error: "Only .html or .txt worksheet files can be read." });
+        }
+        let html: string;
+        try {
+          html = readFileSync(filePath, "utf8");
+        } catch {
+          return res.status(404).json({ error: "Could not open that file. Check the path is correct." });
+        }
+        return res.json({ text: htmlToText(html), title: htmlTitle(html) });
+      }
+      // Remote URL.
+      if (!/^https?:\/\//i.test(url)) {
+        return res.status(400).json({ error: "Use an http(s) link or a file:// path." });
+      }
+      const response = await fetch(url, { redirect: "follow" });
+      if (!response.ok) {
+        return res.status(response.status).json({ error: `Could not fetch the URL (HTTP ${response.status}).` });
+      }
+      const html = await response.text();
+      res.json({ text: htmlToText(html), title: htmlTitle(html) });
+    } catch (error: any) {
+      console.error("fetch-url error:", error);
+      res.status(500).json({ error: "Could not read that worksheet. Check the link/path is correct." });
     }
   });
 
@@ -1023,10 +1111,19 @@ async function startServer() {
     res.json({ success: true, active: user.active });
   });
 
+  // Explicit HTTP server so Vite's HMR websocket can attach to it (shared
+  // server). The app is fronted by Caddy at https://suite.test → :3004; sharing
+  // the server lets the HMR upgrade ride that same HTTPS proxy on 443.
+  const server = http.createServer(app);
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    const hmrDisabled = process.env.DISABLE_HMR === "true";
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        ...(hmrDisabled ? {} : { hmr: { server } }),
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -1038,8 +1135,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}  •  https://suite.test (via Caddy)`);
   });
 }
 

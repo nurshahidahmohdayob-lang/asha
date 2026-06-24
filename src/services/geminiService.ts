@@ -195,12 +195,12 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
     "methodology": ONE to TWO sentences (MAX 45 words) on the pedagogical approach, mentioning the Cambridge subject code. Be concise — do NOT write a paragraph.
     "description": ONE sentence (MAX 25 words) high-level overview.
     "type" for slides: one of title, content, activity, quiz.
-    "content": 3-4 SHORT bullet points, each a concise phrase (MAX 14 words). Do NOT write long sentences or paragraphs.
+    "content": 3-4 bullet points. EACH bullet must state a KEY POINT and then EXPLAIN it, written as "Key point: explanation." — a short key phrase, an em dash or colon, then ONE clear sentence (about 12-25 words) that explains or gives an example so students understand it. Do NOT give bare labels with no explanation, and do NOT use HTML or markdown tags (plain text only).
     "illustrationPrompt": 3-5 search keywords only.
     "layoutType": (OPTIONAL) suggest one of 'infographic-cards', 'infographic-flow', 'infographic-grid', 'infographic-bubbles' if the content suits a non-list layout, otherwise 'standard'.
     IMPORTANT:
     1. Do NOT repeat the slide "title" as any item in the "content" array.
-    2. Each content point is unique, informative, distinct from the title, and brief.
+    2. Each content point is unique, informative, distinct from the title, and includes its own explanation.
     3. Reference the Cambridge Subject Code (from the provided list) in the methodology.`);
 
     const slideItemSchema = {
@@ -238,13 +238,26 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
     // CONCURRENTLY (each call produces far less, and they overlap), then merge —
     // roughly the wall-time of one chunk instead of the whole deck.
     const total = options.numSlides || 0;
-    const CHUNK = 5;
-    if (options.templateMode === "strict" || total <= CHUNK + 1 || total === 0) {
+    const CHUNK = 6;
+    // On Groq a single request is FAST (high tokens/sec) and — crucially — sends
+    // the large prompt (curriculum info, worksheet/file context) only ONCE.
+    // Chunking re-sends that prompt per chunk, which on rate-limited tiers trips
+    // 429s whose backoff dominates wall-time (the "still generating forever"
+    // symptom). So only split genuinely large decks; everything else is one call.
+    const SINGLE_CALL_MAX = 16;
+    if (
+      options.templateMode === "strict" ||
+      total === 0 ||
+      total <= SINGLE_CALL_MAX
+    ) {
       const response = await generateContentWithRetry({
         contents: { parts: baseParts },
         config: {
           thinkingConfig: { thinkingBudget: 128 },
           responseMimeType: "application/json",
+          // Size the budget to the deck so we don't reserve (and meter) more
+          // tokens than needed; leave it open when the count is unknown.
+          maxOutputTokens: total > 0 ? Math.min(7000, total * 300 + 900) : undefined,
           responseSchema: fullSchema,
         },
       });
@@ -264,7 +277,7 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
     }
     const planNote = `This is ONE coherent ${total}-slide lesson split into ${chunkCount} parts for assembly. Part 1 opens with the title and foundational ideas; middle parts develop the core content with increasing depth; the final part covers application, an activity, and a summary/quiz. Produce slides that fit this overall flow and do NOT duplicate the other parts.`;
 
-    // Metadata + every chunk run concurrently (concurrency-capped via retry helper).
+    // The metadata call is small and runs alongside the chunks.
     const metaPromise = generateContentWithRetry({
       contents: {
         parts: [
@@ -277,6 +290,7 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
       config: {
         thinkingConfig: { thinkingBudget: 64 },
         responseMimeType: "application/json",
+        maxOutputTokens: 400,
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -286,47 +300,55 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
           required: ["description", "methodology"],
         },
       },
-    }).then((r) => {
+    })
+      .then((r) => {
+        try {
+          return JSON.parse(r.text || "{}");
+        } catch {
+          return { description: "", methodology: "" };
+        }
+      })
+      .catch(() => ({ description: "", methodology: "" }));
+
+    // Chunks run with a CONCURRENCY CAP (not all at once): firing every chunk
+    // simultaneously makes Groq rate-limit (429), and the backoff that follows is
+    // what made decks feel like they "hang". A small cap + a tight per-chunk
+    // token budget keeps total throughput high. Each chunk soft-fails to an empty
+    // array so one bad chunk never sinks the whole deck.
+    const SLIDE_CHUNK_CONCURRENCY = 3;
+    const chunks = await mapLimit(ranges, SLIDE_CHUNK_CONCURRENCY, async (rg) => {
       try {
-        return JSON.parse(r.text || "{}");
+        const r = await generateContentWithRetry({
+          contents: {
+            parts: [
+              ...baseParts,
+              {
+                text: `${planNote}\n\nGenerate EXACTLY ${rg.count} slides — these are slides ${rg.start} to ${rg.start + rg.count - 1} of ${total} (part ${rg.idx + 1} of ${chunkCount}). Return ONLY a "slides" array (no metadata). Every bullet in "content" must still state a key point AND a one-sentence explanation, as described above.`,
+              },
+            ],
+          },
+          config: {
+            thinkingConfig: { thinkingBudget: 128 },
+            responseMimeType: "application/json",
+            // ~5 short slides of JSON fit comfortably here; a tight cap keeps
+            // per-minute token use low so chunks don't trip rate limits.
+            maxOutputTokens: Math.min(3200, rg.count * 520 + 400),
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: { slides: { type: Type.ARRAY, items: slideItemSchema } },
+              required: ["slides"],
+            },
+          },
+        });
+        return { idx: rg.idx, slides: JSON.parse(r.text || "{}").slides || [] };
       } catch {
-        return { description: "", methodology: "" };
+        return { idx: rg.idx, slides: [] };
       }
     });
 
-    const chunkPromises = ranges.map((rg) =>
-      generateContentWithRetry({
-        contents: {
-          parts: [
-            ...baseParts,
-            {
-              text: `${planNote}\n\nGenerate EXACTLY ${rg.count} slides — these are slides ${rg.start} to ${rg.start + rg.count - 1} of ${total} (part ${rg.idx + 1} of ${chunkCount}). Return ONLY a "slides" array (no metadata). Keep each slide concise.`,
-            },
-          ],
-        },
-        config: {
-          thinkingConfig: { thinkingBudget: 128 },
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: { slides: { type: Type.ARRAY, items: slideItemSchema } },
-            required: ["slides"],
-          },
-        },
-      }).then((r) => {
-        try {
-          return { idx: rg.idx, slides: JSON.parse(r.text || "{}").slides || [] };
-        } catch {
-          return { idx: rg.idx, slides: [] };
-        }
-      }),
-    );
-
-    const [metadata, ...chunks] = await Promise.all([
-      metaPromise,
-      ...chunkPromises,
-    ]);
+    const metadata = await metaPromise;
     const slides = chunks
+      .slice()
       .sort((a, b) => a.idx - b.idx)
       .flatMap((c) => c.slides);
     if (slides.length === 0) throw new Error("Empty response");
@@ -1967,6 +1989,29 @@ export async function relevelReadingPassage(
 // 429 rate limit) with backoff, then falls back to the next model in the list.
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Run async tasks with a concurrency cap. Firing every chunk at once makes Groq
+// rate-limit (429) and then we burn time on backoff — capping parallelism keeps
+// throughput high and wall-time low. Results preserve input order.
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const runners = Array.from(
+    { length: Math.max(1, Math.min(limit, items.length)) },
+    async () => {
+      while (next < items.length) {
+        const i = next++;
+        results[i] = await fn(items[i], i);
+      }
+    },
+  );
+  await Promise.all(runners);
+  return results;
+}
+
 // ===== Groq (OpenAI-compatible) text generation =====
 // The app's text generation now runs on Groq instead of Google Gemini.
 // We translate the existing Gemini-style request ({contents:{parts}, config})
@@ -2006,7 +2051,13 @@ async function groqGenerate(
   // one, so we use a smaller cap only for that model (see model loop).
   // The 8B fallback has a tight 6000 TPM budget; keep input+output under it so
   // it can actually serve as a fallback (a larger cap returns 413 every time).
-  const maxTokens = /8b|instant/i.test(model) ? 2600 : 7000;
+  // Callers can cap output tokens per request (config.maxOutputTokens). Smaller
+  // caps reduce per-minute token pressure, so more calls run in parallel before
+  // Groq rate-limits (429) — important for chunked work like slide decks. We
+  // still clamp to each model's safe ceiling.
+  const ceiling = /8b|instant/i.test(model) ? 2600 : 7000;
+  const requested = Number(request?.config?.maxOutputTokens) || 0;
+  const maxTokens = requested > 0 ? Math.min(requested, ceiling) : ceiling;
   const body: any = { model, messages, temperature: 0.7, max_tokens: maxTokens };
   if (wantsJson) body.response_format = { type: "json_object" };
   // Hard per-call timeout: without it a stalled connection hangs the whole
@@ -2090,6 +2141,85 @@ async function generateContentWithRetry(
   throw lastErr;
 }
 
+// Resilient multi-turn chat on Groq. Unlike groqGenerate (which flattens a
+// single prompt), this preserves the system instruction AND the full
+// conversation history as proper chat messages, then retries on transient
+// errors (503/429/500/502/timeout) and falls back to the smaller model — so a
+// busy/overloaded provider never throws a raw error at the user.
+async function groqChat(
+  systemInstruction: string,
+  turns: { role: "user" | "model"; text: string }[],
+  models: string[] = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+  attemptsPerModel = 2,
+): Promise<string> {
+  if (!GROQ_API_KEY) {
+    throw new Error(
+      "GROQ_API_KEY is not configured. Add it to .env and restart the server.",
+    );
+  }
+  const messages: any[] = [];
+  if (systemInstruction) messages.push({ role: "system", content: systemInstruction });
+  for (const t of turns) {
+    if (!t || !t.text) continue;
+    messages.push({ role: t.role === "model" ? "assistant" : "user", content: t.text });
+  }
+  let lastErr: any;
+  for (const model of models) {
+    const maxTokens = /8b|instant/i.test(model) ? 2600 : 7000;
+    for (let attempt = 0; attempt < attemptsPerModel; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), GROQ_CALL_TIMEOUT_MS);
+      try {
+        const res = await fetch(GROQ_URL, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${GROQ_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ model, messages, temperature: 0.7, max_tokens: maxTokens }),
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          const errBody = await res.text().catch(() => "");
+          throw new Error(`Groq ${res.status}: ${errBody.slice(0, 300)}`);
+        }
+        const data = await res.json();
+        const text = data?.choices?.[0]?.message?.content || "";
+        if (!text) throw new Error("Empty response");
+        return text;
+      } catch (err: any) {
+        lastErr = err;
+        if (err?.name === "AbortError" || controller.signal.aborted) {
+          lastErr = new Error(`Groq request timeout after ${GROQ_CALL_TIMEOUT_MS}ms (model ${model})`);
+        }
+        const msg = String(lastErr?.message || lastErr);
+        const lower = msg.toLowerCase();
+        if (
+          msg.includes("404") ||
+          lower.includes("not found") ||
+          lower.includes("decommission") ||
+          lower.includes("does not exist")
+        )
+          break; // bad model → try next model
+        const isRateLimit = msg.includes("429") || lower.includes("rate limit");
+        const transient =
+          isRateLimit ||
+          msg.includes("500") ||
+          msg.includes("502") ||
+          msg.includes("503") ||
+          lower.includes("timeout") ||
+          lower.includes("fetch failed") ||
+          lower.includes("econnreset");
+        if (!transient) throw lastErr;
+        await sleep(Math.min((isRateLimit ? 4000 : 800) * (attempt + 1), 8000));
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+  }
+  throw lastErr;
+}
+
 // Differentiated after-reading questions: the SAME question (same skill, same
 // intent, same expected answer) written once per requested Lexile level, with
 // only the language complexity adapted. No passage — students read their own
@@ -2101,7 +2231,7 @@ async function generateContentWithRetry(
 export async function generateLeveledQuestions(
   bookTitle: string,
   levels: string[],
-  options: { yearGroup: string; subject: string; numQuestions: number },
+  options: { yearGroup: string; subject: string; numQuestions: number; sourceContent?: string },
   onProgress?: (message: string) => void,
 ): Promise<{
   questions: {
@@ -2153,8 +2283,25 @@ export async function generateLeveledQuestions(
 
   try {
     // 1. Base question set (concise, fast)
-    onProgress?.(`Writing ${options.numQuestions} shared questions…`);
-    const basePrompt = `You are an expert Cambridge literacy educator. A ${options.yearGroup} class (${options.subject}) is reading: "${bookTitle}".
+    onProgress?.(
+      (options.sourceContent || "").trim()
+        ? `Reading the worksheet's questions…`
+        : `Writing ${options.numQuestions} shared questions…`,
+    );
+    const src = (options.sourceContent || "").trim();
+    const basePrompt = src
+      ? // Re-level an EXISTING worksheet supplied from a URL: extract its
+        // questions and normalise them into the base set (reworded per level later).
+        `You are an expert Cambridge literacy educator. Below is an existing worksheet for a ${options.yearGroup} class (${options.subject}). Recreate ALL of its questions — ONE entry per question in the worksheet, in the same order, keeping each question's meaning and correct answer. Do not invent extra questions and do not drop any.
+For each question provide: "skill" (Recall, Inference, Sequencing, Vocabulary, Opinion & Evidence, or Visualising), "type" (one of "multiple-choice", "true-false", "open-response", "matching", "drawing"), "text", plus "options" (for multiple-choice) or "pairs" (for matching) where relevant.
+
+EXISTING WORKSHEET:
+"""
+${src.slice(0, 8000)}
+"""
+
+Return ONLY a JSON object: {"questions":[{"skill":"...","type":"...","text":"...","options":["..."],"pairs":[{"left":"...","right":"..."}]}, ...]} with one array entry per question in the worksheet above.${bahasaMelayuDirective(options.subject)}`
+      : `You are an expert Cambridge literacy educator. A ${options.yearGroup} class (${options.subject}) is reading: "${bookTitle}".
 Write exactly ${options.numQuestions} after-reading questions with EXACTLY this mix:
 - 1 DRAWING question (type "drawing"): the student draws a scene, character or idea from the book. No options, no pairs — just a clear drawing instruction.
 - 1 MATCHING question (type "matching"): 3-5 left/right pairs to connect with a line (e.g. character ↔ trait, cause ↔ effect, word ↔ meaning). Put the pairs in the "pairs" field with the CORRECT pairing.
@@ -2489,28 +2636,28 @@ export async function askAI(question: string, history: ChatTurn[] = []): Promise
 - For teaching, lesson, assessment, or curriculum questions, give practical, classroom-ready guidance and align with Cambridge International standards where relevant.
 - If you are unsure or a request is outside your knowledge, say so honestly.`;
 
-    const contents = [
+    const turns: { role: "user" | "model"; text: string }[] = [
       ...history
         .filter((h) => h && h.text)
         .map((h) => ({
-          role: h.role === 'model' ? 'model' : 'user',
-          parts: [{ text: h.text }],
+          role: (h.role === "model" ? "model" : "user") as "user" | "model",
+          text: h.text,
         })),
-      { role: 'user', parts: [{ text: question }] },
+      { role: "user" as const, text: question },
     ];
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents,
-      config: { systemInstruction },
-    });
-
-    const text = response.text;
+    // Resilient Groq chat (retry + model fallback). This replaces the previous
+    // direct gemini-3.5-flash call, which had NO fallback and surfaced raw 503
+    // "high demand" errors to the user whenever the model was overloaded.
+    const text = await groqChat(systemInstruction, turns);
     if (!text) throw new Error("Empty response");
     return text;
   } catch (err: any) {
-    if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
-      return callAiProxy('chat', question, { history });
+    // In the browser the key isn't available (and the key-less / overloaded
+    // cases both benefit from the server proxy, which holds the key and runs
+    // the same resilient path). Fall back to it rather than throwing.
+    if (typeof window !== "undefined") {
+      return callAiProxy("chat", question, { history });
     }
     throw err;
   }

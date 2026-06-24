@@ -1136,6 +1136,92 @@ function buildInteractivePassageHTML(
 </body></html>`;
 }
 
+// Wrap arbitrary document/worksheet body HTML in an interactive page with a
+// design-template switcher (5 distinct looks). Used by the assistant's
+// "Designs" button so a generated worksheet can be re-styled and printed.
+function buildTemplatedDocHTML(bodyRaw: string, title: string): string {
+  const body = String(bodyRaw || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<div class="bar"[\s\S]*?<\/div>/gi, "")
+    .replace(/\sstyle="[^"]*"/gi, "");
+  const safeTitle = zEsc(title || "Worksheet");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>${safeTitle}</title><style>
+@import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&family=Comic+Neue:wght@400;700&display=swap');
+*{box-sizing:border-box}
+body{margin:0;padding:24px;font-family:'Baloo 2','Segoe UI',system-ui,sans-serif;background:#eef2f7;color:#1e293b}
+.bar{position:sticky;top:0;z-index:9;display:flex;flex-wrap:wrap;gap:7px;justify-content:center;padding:10px;margin:-24px -24px 18px;background:rgba(15,18,30,.05);backdrop-filter:blur(6px)}
+.bar button{border:2px solid #334155;background:#fff;color:#222;font-weight:800;font-size:12px;padding:8px 15px;border-radius:999px;cursor:pointer;font-family:inherit}
+.bar button.active{background:#334155;color:#fff}.bar button.prt{background:#0d9488;color:#fff;border-color:#0d9488}
+/* shared sheet — decorative shapes sit behind, content stays on top */
+.sheet{position:relative;max-width:820px;margin:0 auto;background:#fff;border-radius:22px;padding:46px 52px;box-shadow:0 18px 50px rgba(0,0,0,.10);overflow:hidden}
+.sheet>*{position:relative;z-index:1}
+.sheet:before,.sheet:after{z-index:0}
+.doctitle{margin:0;font-size:32px;line-height:1.12;font-weight:800}
+.titlebar{height:7px;width:96px;border-radius:999px;margin:10px 0 24px;background:#0d9488}
+.docbody{line-height:1.75;font-family:'Comic Neue','Segoe UI',sans-serif;font-size:16px}
+.docbody h1,.docbody h2,.docbody h3{font-family:'Baloo 2',sans-serif;line-height:1.2}
+.docbody h2{display:inline-block;margin:24px 0 10px;padding:6px 18px;border-radius:999px;background:#0d9488;color:#fff;font-size:18px}
+.docbody h3{margin:18px 0 6px;color:#0d9488;font-size:16px}
+.docbody p{margin:0 0 12px}
+.docbody ul{list-style:none;padding-left:4px;margin:0 0 14px}
+.docbody ul li{position:relative;padding-left:24px;margin:7px 0}
+.docbody ul li:before{content:"";position:absolute;left:0;top:8px;width:11px;height:11px;border-radius:50%;background:#0d9488}
+.docbody ol{margin:0 0 14px 22px}.docbody ol li{margin:7px 0}
+.docbody table{border-collapse:separate;border-spacing:0;width:100%;margin:14px 0;border-radius:12px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06)}
+.docbody th,.docbody td{border:1px solid #e2e8f0;padding:9px 12px;text-align:left}.docbody th{background:#f0fdfa}
+.docbody input,.docbody textarea{border:none;border-bottom:2px solid #94a3b8;background:transparent;font-family:inherit}
+/* ===== BUBBLES (default): soft circles in the corners ===== */
+body.d-bubbles .sheet:before{content:"";position:absolute;top:-60px;right:-60px;width:200px;height:200px;border-radius:50%;background:radial-gradient(circle,#99f6e4,#5eead4);opacity:.45}
+body.d-bubbles .sheet:after{content:"";position:absolute;bottom:-55px;left:-55px;width:175px;height:175px;border-radius:50%;background:radial-gradient(circle,#fbcfe8,#f9a8d4);opacity:.4}
+body.d-bubbles .doctitle{color:#0d9488}
+/* ===== CONFETTI: dotty background + rainbow accents ===== */
+body.d-confetti{background:#fffbeb}
+body.d-confetti .sheet{background-image:radial-gradient(#fde68a 3px,transparent 4px),radial-gradient(#a7f3d0 3px,transparent 4px),radial-gradient(#bfdbfe 3px,transparent 4px);background-size:62px 62px,94px 94px,124px 124px;background-position:0 0,30px 24px,62px 50px}
+body.d-confetti .sheet:before{content:"🎉";position:absolute;top:14px;right:18px;font-size:30px;z-index:1}
+body.d-confetti .doctitle{color:#ea580c}body.d-confetti .titlebar{width:140px;background:linear-gradient(90deg,#f59e0b,#ef4444,#8b5cf6,#06b6d4)}
+body.d-confetti .docbody h2{background:#f59e0b}body.d-confetti .docbody h3{color:#ea580c}body.d-confetti .docbody ul li:before{background:#ef4444}
+/* ===== NOTEBOOK: ruled paper, red margin, washi-tape box ===== */
+body.d-notebook{background:#dfe6ef}
+body.d-notebook .sheet{background:#fffdf3;border:1px solid #d9cf9a;border-radius:8px;padding-left:66px;background-image:repeating-linear-gradient(transparent 0,transparent 27px,#c3d6ea 27px,#c3d6ea 28px)}
+body.d-notebook .sheet:before{content:"";position:absolute;top:0;bottom:0;left:48px;width:2px;background:#f1a0a0}
+body.d-notebook .sheet:after{content:"";position:absolute;top:-7px;left:120px;width:96px;height:26px;background:rgba(245,158,11,.5);transform:rotate(-4deg);z-index:1}
+body.d-notebook .doctitle,body.d-notebook .docbody{font-family:'Comic Sans MS','Comic Neue',cursive}body.d-notebook .doctitle{color:#c14a3e}
+body.d-notebook .titlebar{background:#e0796f}body.d-notebook .docbody h2{background:#e0796f}body.d-notebook .docbody h3{color:#c14a3e}body.d-notebook .docbody ul li:before{background:#e0796f}
+/* ===== ELEGANT: serif, gold corner brackets ===== */
+body.d-elegant{background:#f4f0e6}
+body.d-elegant .sheet{background:#fffdf8;border:1px solid #d6c9a8;border-radius:6px}
+body.d-elegant .sheet:before{content:"";position:absolute;top:18px;left:18px;width:56px;height:56px;border:3px solid #c9a94e;border-right:0;border-bottom:0;z-index:1}
+body.d-elegant .sheet:after{content:"";position:absolute;bottom:18px;right:18px;width:56px;height:56px;border:3px solid #c9a94e;border-left:0;border-top:0;z-index:1}
+body.d-elegant .doctitle,body.d-elegant .docbody{font-family:Georgia,'Times New Roman',serif}body.d-elegant .doctitle{color:#7c5e1e;text-align:center}
+body.d-elegant .titlebar{margin:8px auto 24px;width:120px;height:3px;background:#c9a94e}
+body.d-elegant .docbody h2{display:block;background:none;color:#7c5e1e;border-bottom:2px solid #c9a94e;border-radius:0;padding:0 0 5px}body.d-elegant .docbody h3{color:#7c5e1e}body.d-elegant .docbody ul li:before{background:#c9a94e}
+/* ===== NEON: dark mode with glowing circles ===== */
+body.d-neon{background:#0b1026}
+body.d-neon .sheet{background:#141b3a;border:1px solid #3a4690;color:#e8ecff;box-shadow:0 0 40px rgba(124,92,255,.25)}
+body.d-neon .sheet:before{content:"";position:absolute;top:-70px;right:-70px;width:210px;height:210px;border-radius:50%;background:radial-gradient(circle,rgba(124,92,255,.5),transparent 70%)}
+body.d-neon .sheet:after{content:"";position:absolute;bottom:-70px;left:-70px;width:210px;height:210px;border-radius:50%;background:radial-gradient(circle,rgba(57,208,255,.4),transparent 70%)}
+body.d-neon .doctitle{color:#a78bfa}body.d-neon .titlebar{background:linear-gradient(90deg,#7c5cff,#39d0ff)}
+body.d-neon .docbody h2{background:#7c5cff;box-shadow:0 0 14px rgba(124,92,255,.6)}body.d-neon .docbody h3{color:#39d0ff}
+body.d-neon .docbody ul li:before{background:#39d0ff;box-shadow:0 0 8px #39d0ff}
+body.d-neon .docbody th{background:#1e2750;border-color:#3a4690}body.d-neon .docbody td{border-color:#3a4690}body.d-neon .docbody input,body.d-neon .docbody textarea{border-color:#5b6bd6;color:#e8ecff}
+@media print{.bar{display:none}.sheet{box-shadow:none;max-width:none}body{background:#fff;padding:0}}
+</style></head><body class="d-bubbles">
+<div class="bar">
+<button class="active" onclick="setD('bubbles',this)">🫧 Bubbles</button>
+<button onclick="setD('confetti',this)">🎉 Confetti</button>
+<button onclick="setD('notebook',this)">📒 Notebook</button>
+<button onclick="setD('elegant',this)">📜 Elegant</button>
+<button onclick="setD('neon',this)">🌙 Neon</button>
+<button class="prt" onclick="window.print()">🖨️ Print</button>
+</div>
+<div class="sheet"><h1 class="doctitle">${safeTitle}</h1><div class="titlebar"></div><div class="docbody">${body}</div></div>
+<script>function setD(d,btn){document.body.className='d-'+d;var bs=document.querySelectorAll('.bar button');for(var i=0;i<bs.length;i++){if((bs[i].getAttribute('onclick')||'').indexOf('setD')>-1)bs[i].classList.remove('active');}if(btn)btn.classList.add('active');}</script>
+</body></html>`;
+}
+
 function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detective", kind: string = "worksheet", subject: string = ""): string {
   const T = ZTHEMES[themeKey] || ZTHEMES.detective;
   const kindWord = kind === "assessment" ? "Assessment" : "Worksheet";
@@ -1247,12 +1333,23 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       const t = String(q?.type || "").toLowerCase();
       return t.includes("fill") || t.includes("blank");
     });
-    if (!fills.length) return "";
+    // An explicit word bank (words shown inside boxes on the source worksheet)
+    // is rendered faithfully even when the section has no fill-in questions —
+    // single words / short terms only.
+    const explicit: string[] = Array.isArray(sec?.wordBank)
+      ? sec.wordBank
+          .map((w: any) => String(w).trim())
+          .filter((w: string) => w && w.split(/\s+/).length <= 4)
+      : [];
+    if (!fills.length && !explicit.length) return "";
     // One word per fill-in question so the bank ALWAYS tallies with the number
     // of questions. (Distinctness is enforced at generation by the prompt.)
-    const words = fills
-      .map((q: any) => String((q?.options && q.options[0]) || "").trim())
-      .filter(Boolean);
+    // Prefer the explicit word-bank from the source when present.
+    const words = explicit.length
+      ? explicit
+      : fills
+          .map((q: any) => String((q?.options && q.options[0]) || "").trim())
+          .filter(Boolean);
     if (!words.length) return "";
     // shuffle so the bank order doesn't match the question order
     const shuffled = words.slice();
@@ -1263,7 +1360,10 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
     const cells = shuffled
       .map((w: string) => `<span class="wbword">${zEsc(bankWord(w))}</span>`)
       .join("");
-    return `<div class="wbbank"><span class="wblabel">📋 Word Bank</span><span class="wbwords">${cells}</span></div><div class="wbinstr">✏️ Fill in the blanks using the words from the word bank.</div>`;
+    const instr = fills.length
+      ? `<div class="wbinstr">✏️ Fill in the blanks using the words from the word bank.</div>`
+      : "";
+    return `<div class="wbbank"><span class="wblabel">📋 Word Bank</span><span class="wbwords">${cells}</span></div>${instr}`;
   };
 
   const layout: string = T.layout || "stack";
@@ -1463,10 +1563,16 @@ body{font-family:'Baloo 2','Segoe UI',system-ui,sans-serif;background:${T.bg};co
 .lines .ln{display:block;border-bottom:2.5px dotted #94a3b8;height:4px}
 .wbbank{background:#eef2ff;border:1.5px solid #c7d2fe;border-radius:16px;padding:13px 18px 14px;margin:4px 0 10px}
 .wbbank .wblabel{display:block;font-weight:900;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#4338ca;margin-bottom:9px}
-.wbbank .wbwords{display:flex;flex-wrap:wrap;align-items:center;row-gap:8px}
-.wbword{font-weight:800;font-size:15px;color:#1e293b;padding:2px 18px;line-height:1.2;white-space:nowrap}
-.wbword:not(:last-child){border-right:2px solid #c7d2fe}
-.wbword:first-child{padding-left:0}
+.wbbank .wbwords{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+/* Each word sits in its OWN colourful box (matching the source worksheet's
+   boxed words), cycling through a friendly palette so the bank looks lively. */
+.wbword{font-weight:800;font-size:15px;line-height:1.2;white-space:nowrap;padding:7px 16px;border:2px solid #c7d2fe;border-radius:12px;background:#fff;color:#1e293b}
+.wbword:nth-child(6n+1){background:#fef3c7;border-color:#fbbf24;color:#92400e}
+.wbword:nth-child(6n+2){background:#dbeafe;border-color:#60a5fa;color:#1e40af}
+.wbword:nth-child(6n+3){background:#dcfce7;border-color:#4ade80;color:#166534}
+.wbword:nth-child(6n+4){background:#fce7f3;border-color:#f472b6;color:#9d174d}
+.wbword:nth-child(6n+5){background:#ede9fe;border-color:#a78bfa;color:#5b21b6}
+.wbword:nth-child(6n+6){background:#ccfbf1;border-color:#2dd4bf;color:#115e59}
 .wbinstr{font-weight:800;font-size:14px;color:#1e293b;margin:0 0 12px}
 .zblank{display:inline-block;min-width:96px;border-bottom:2px solid #1e293b;margin:0 5px;vertical-align:baseline}
 .sortins{font-size:13px;font-weight:700;color:#334155;margin-bottom:10px}
@@ -4718,6 +4824,43 @@ export default function App() {
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<{ url: string } | null>(null);
   // Upload HTML to the worker and show the short shareable link (+ QR).
+  const [isBuildingWs, setIsBuildingWs] = useState(false);
+  // Open an assistant worksheet in the Assessment Hub's interactive worksheet
+  // design: structure its questions into a worksheet, then render with
+  // buildInteractiveHTML (themed sheet, Name/Class/Date, section pills).
+  const openAsAssessmentWorksheet = async (artifact: ChatArtifact) => {
+    let bodyText = "";
+    try {
+      const doc = new DOMParser().parseFromString(artifact.html, "text/html");
+      bodyText = (doc.body?.textContent || "").replace(/[ \t]+/g, " ").trim();
+    } catch {
+      bodyText = artifact.html.replace(/<[^>]+>/g, " ");
+    }
+    setIsBuildingWs(true);
+    try {
+      const raw = await askAI(
+        `Convert the worksheet below into JSON ONLY (no markdown fences, no commentary). Shape: {"title":"...","sections":[{"title":"...","instructions":"...","wordBank":["..."],"questions":[{"text":"...","type":"...","options":["..."]}]}]}. "type" is one of "multiple-choice","true-false","short-answer","fill-in-the-blanks". Include "options" ONLY for multiple-choice (3-4) and true-false (["True","False"]).\n\nRULES — be FAITHFUL to the source:\n- Keep EVERY question. Use the worksheet's EXACT wording. Do NOT invent, drop, summarise, rephrase, reorder, or change any question, option, instruction, or section title.\n- If the worksheet shows words inside a box or "word bank" (single words/short terms students choose from), put those words in that section's "wordBank" array, keeping the same words and spelling. Only single words or short terms — never full sentences. Omit "wordBank" if the section has none.\n\nWORKSHEET:\n"""${bodyText.slice(0, 6000)}"""`,
+        [],
+      );
+      let ws: any;
+      try {
+        ws = JSON.parse(stripCodeFences(raw));
+      } catch {
+        throw new Error("Couldn't structure that worksheet — try Open or Designs instead.");
+      }
+      if (!ws?.sections?.length) throw new Error("No questions found to build a worksheet.");
+      const title = artifact.title || ws.title || "Worksheet";
+      // Don't inject the app's global subject (e.g. "Science") into the heading —
+      // an assistant worksheet has no chosen subject, so the plain "Open" view
+      // never shows it. Keep them consistent by leaving the subject blank.
+      const html = buildInteractiveHTML(ws, title, interactiveDesign, "worksheet", "");
+      setInteractiveDoc({ html, title, ws, design: interactiveDesign, kind: "worksheet", subject: "" });
+    } catch (e: any) {
+      alert(e?.message || "Couldn't build the interactive worksheet.");
+    } finally {
+      setIsBuildingWs(false);
+    }
+  };
   // The deployed Cloudflare worker that hosts published worksheets. Can be
   // overridden via localStorage (e.g. once a custom domain is set up).
   const WORKSHEET_HOST_DEFAULT = "https://zworksheets.nurshahidahmohdayob.workers.dev";
@@ -4933,6 +5076,8 @@ export default function App() {
     "600-700",
   ]);
   const [diffWsBook, setDiffWsBook] = useState("");
+  // Optional URL of an existing worksheet to re-level into the pack.
+  const [diffWsUrl, setDiffWsUrl] = useState("");
   const [diffWsNumQuestions, setDiffWsNumQuestions] = useState(8);
   const [isGeneratingDiffWs, setIsGeneratingDiffWs] = useState(false);
   const [diffWsProgress, setDiffWsProgress] = useState("");
@@ -7529,6 +7674,7 @@ export default function App() {
       };
     }
 
+    try {
     const result = await generateSlides(
       topic || content?.worksheet?.title || "Assessment-based Lesson",
       options,
@@ -7591,7 +7737,16 @@ export default function App() {
       setSidebarTab("slides");
       setCurrentView("slides");
     }
-    setIsGenerating(false);
+    } catch (err: any) {
+      // Without this, a failed generation (timeout, rate limit, 503…) would
+      // leave the UI stuck on "Generating Slides…" forever.
+      console.error("Slide generation failed:", err);
+      alert(
+        `Couldn't generate the slides — ${err?.message || "the AI service is busy"}. Please try again.`,
+      );
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const generateOnlyWorksheet = async (basedOnSlides: boolean = false) => {
@@ -19760,9 +19915,9 @@ export default function App() {
   );
 
   const renderEducatorSuite = () => (
-    <div className="flex-1 overflow-y-auto p-12 bg-[#FDFBF7] custom-scrollbar">
-      <div className="max-w-7xl mx-auto space-y-12">
-        <header className="flex justify-between items-center bg-[#064E3B] p-8 rounded-[2.5rem] shadow-2xl">
+    <div className="flex-1 overflow-y-auto p-6 bg-[#FDFBF7] custom-scrollbar">
+      <div className="max-w-7xl mx-auto space-y-6">
+        <header className="flex justify-between items-center bg-[#064E3B] p-6 rounded-3xl shadow-2xl">
           <div className="flex items-center gap-6">
             <button
               onClick={() => {
@@ -19858,16 +20013,16 @@ export default function App() {
           </div>
         </header>
 
-        <div className="space-y-16 animate-in fade-in slide-in-from-bottom-5 duration-700">
+        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-5 duration-700">
           <div>
-            <div className="flex items-center gap-4 mb-8">
+            <div className="flex items-center gap-4 mb-4">
               <h3 className="text-lg font-black uppercase tracking-[0.4em] text-[#064E3B]">
                 Resource Toolkit
               </h3>
               <div className="h-px flex-1 bg-gradient-to-r from-[#064E3B]/20 to-transparent" />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
               {[
                 {
                   id: "lesson-plan",
@@ -19943,23 +20098,23 @@ export default function App() {
                     } else if (tool.id === "lesson-plan") resetLessonPlan();
                     else setCurrentView(tool.id as any);
                   }}
-                  className="group p-8 bg-white rounded-[2.5rem] border-2 border-transparent hover:border-[#FACC15] hover:shadow-2xl transition-all text-left space-y-6 relative overflow-hidden"
+                  className="group p-4 bg-white rounded-2xl border-2 border-transparent hover:border-[#FACC15] hover:shadow-xl transition-all text-left space-y-2.5 relative overflow-hidden"
                 >
-                  <div className="w-16 h-16 rounded-2xl bg-[#F0FDF4] group-hover:bg-[#FACC15] flex items-center justify-center text-[#064E3B] text-2xl shadow-sm transition-all duration-500">
-                    <tool.icon size={28} />
+                  <div className="w-11 h-11 rounded-xl bg-[#F0FDF4] group-hover:bg-[#FACC15] flex items-center justify-center text-[#064E3B] shadow-sm transition-all duration-500">
+                    <tool.icon size={22} />
                   </div>
                   <div>
-                    <h3 className="text-2xl font-black text-[#064E3B]">
+                    <h3 className="text-base font-black text-[#064E3B] leading-tight">
                       {tool.name}
                     </h3>
-                    <p className="text-sm font-medium text-[#064E3B]/60">
+                    <p className="text-[11px] font-medium text-[#064E3B]/60 leading-snug mt-0.5">
                       {tool.desc}
                     </p>
                   </div>
-                  <div className="pt-4 flex items-center text-[10px] font-black uppercase tracking-widest text-[#064E3B]/40 group-hover:text-[#064E3B] transition-colors">
-                    Launch Tool{" "}
+                  <div className="flex items-center text-[9px] font-black uppercase tracking-widest text-[#064E3B]/40 group-hover:text-[#064E3B] transition-colors">
+                    Launch{" "}
                     <ChevronRight
-                      size={14}
+                      size={12}
                       className="ml-1 group-hover:translate-x-1 transition-transform"
                     />
                   </div>
@@ -24258,21 +24413,52 @@ export default function App() {
   // answer) worded once per Lexile band. No passage — students read their own
   // book; each student gets the worksheet matching their reading level.
   const handleGenerateDifferentiatedWorksheets = async () => {
-    const book =
-      diffWsBook.trim() ||
-      content?.readingProgram?.passageTitle ||
-      lessonInput;
-    if (!book) {
-      alert("Enter the book title or topic your students are reading.");
+    const wsUrl = diffWsUrl.trim();
+    const manualBook = diffWsBook.trim();
+    const fallbackBook = content?.readingProgram?.passageTitle || lessonInput || "";
+    if (!wsUrl && !manualBook && !fallbackBook) {
+      alert("Paste a worksheet URL, or enter the book title/topic your students are reading.");
       return;
     }
     if (diffWsLevels.length === 0) {
       alert("Select at least one Lexile level for the pack.");
       return;
     }
+    // The question count is only required when generating from a book/topic.
+    // With a link, we use the worksheet's own questions (however many it has).
+    if (!wsUrl && diffWsNumQuestions < 1) {
+      alert("Enter at least 1 question (0–100).");
+      return;
+    }
     setIsGeneratingDiffWs(true);
+    // If a worksheet URL was given, fetch its content first and re-level THAT.
+    let sourceContent = "";
+    let sourceTitle = "";
+    if (wsUrl) {
+      setDiffWsProgress("Reading your worksheet from the link…");
+      try {
+        const r = await fetch("/api/fetch-url", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: wsUrl }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d?.text) throw new Error(d?.error || `Couldn't read that link (HTTP ${r.status}).`);
+        sourceContent = d.text;
+        sourceTitle = (d.title || "").trim();
+      } catch (e: any) {
+        setIsGeneratingDiffWs(false);
+        alert(`Couldn't read the worksheet link: ${e?.message || e}`);
+        return;
+      }
+    }
+    // Title shown on the worksheet — the worksheet's own title, never a
+    // "from link" label.
+    const book = manualBook || sourceTitle || fallbackBook || "Reading Worksheet";
     setDiffWsProgress(
-      `Writing ${diffWsNumQuestions} shared questions, each worded for ${diffWsLevels.length} Lexile band(s)…`,
+      wsUrl
+        ? `Re-leveling your worksheet for ${diffWsLevels.length} Lexile band(s)…`
+        : `Writing ${diffWsNumQuestions} shared questions, each worded for ${diffWsLevels.length} Lexile band(s)…`,
     );
     try {
       const result = await generateLeveledQuestions(
@@ -24282,6 +24468,7 @@ export default function App() {
           yearGroup: content?.gradeLevel || yearGroup || "Year 3",
           subject: content?.subject || subject || "English",
           numQuestions: diffWsNumQuestions,
+          sourceContent,
         },
         (msg) => setDiffWsProgress(msg),
       );
@@ -24350,6 +24537,24 @@ export default function App() {
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
+    // "List/name/write down N things" → render N numbered answer boxes instead
+    // of plain lines. Returns the count (0 = not a list question).
+    const wordNum: Record<string, number> = {
+      one: 1, two: 2, three: 3, four: 4, five: 5,
+      six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+    };
+    const listCount = (text: string): number => {
+      const t = String(text || "");
+      if (!/\b(list|name|write down|jot down|give|state|mention|identify)\b/i.test(t)) return 0;
+      const m = t.match(/\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\b/i);
+      let n = 0;
+      if (m) n = wordNum[m[1].toLowerCase()] || parseInt(m[1], 10) || 0;
+      if (!n) n = 3; // a list question with no explicit number → 3 boxes
+      return Math.min(Math.max(n, 2), 8);
+    };
+    // Selector list that beats the .dbox.vN specificity for a template.
+    const boxSel = (t: string) =>
+      `body.tpl-${t} .dbox,body.tpl-${t} .dbox.v0,body.tpl-${t} .dbox.v1,body.tpl-${t} .dbox.v2,body.tpl-${t} .dbox.v3,body.tpl-${t} .dbox.v4`;
     const sheets = pack.levels
       .map((lvl) => {
         // Boxes stack compactly in two balanced columns (no grid rows, so a
@@ -24415,24 +24620,37 @@ export default function App() {
                 )
                 .join("");
             } else {
-              body = `<div class="dline"></div><div class="dline"></div><div class="dline"></div>`;
+              const lc = listCount(v.text);
+              if (lc > 0) {
+                body =
+                  `<div class="dlist">` +
+                  Array.from({ length: lc }, (_, i) =>
+                    `<div class="dlrow"><span class="dln">${i + 1}</span><span class="dlb"></span></div>`,
+                  ).join("") +
+                  `</div>`;
+              } else {
+                body = `<div class="dline"></div><div class="dline"></div><div class="dline"></div>`;
+              }
             }
             const boxHtml =
               `<div class="dbox v${qi % 5}${wide}">` +
-              `<div class="dq"><span class="dnum">${qi + 1}</span><span>${esc(v.text)}</span>${q.skill ? `<span class="dskill">${esc(q.skill)}</span>` : ""}</div>` +
-              body +
+              `<div class="dq"><span class="dnum">${qi + 1}</span><span class="dqt">${esc(v.text)}</span>${q.skill ? `<span class="dskill">${esc(q.skill)}</span>` : ""}</div>` +
+              `<div class="dans">` + body + `</div>` +
               `</div>`;
             if (wide) {
               flushColumns();
               segments.push(boxHtml);
             } else {
               const textRows = Math.ceil(String(v.text || "").length / 36);
+              const lcEst = listCount(v.text);
               const est =
                 52 +
                 textRows * 22 +
                 (v.options && v.options.length
                   ? v.options.length * 42
-                  : 3 * 30);
+                  : lcEst > 0
+                    ? lcEst * 34
+                    : 3 * 30);
               pending.push({ html: boxHtml, est });
             }
           });
@@ -24475,18 +24693,25 @@ export default function App() {
       `.dmrow i{flex:1;border-bottom:2px dotted #111;height:15px}` +
       `.dmrow b{font-weight:900}` +
       `.dbox{position:relative;background:#fff;border:3px solid #111;padding:14px 15px 12px;margin:14px 0 4px;break-inside:avoid;page-break-inside:avoid}` +
+      // Each question box is a DIFFERENT shape (cycles per question):
+      // v0 blob, v1 speech-bubble, v2 pill/capsule, v3 folded-corner, v4 sharp rectangle.
       `.dbox.v0{border-radius:36px 20px 40px 18px/20px 40px 18px 36px}` +
-      `.dbox.v1{border-radius:10px;transform:rotate(-.4deg);margin-top:20px}` +
-      `.dbox.v1:before{content:"";position:absolute;top:-12px;left:50%;width:104px;height:22px;transform:translateX(-50%) rotate(-2deg);background:radial-gradient(circle,#111 2.2px,transparent 2.8px) 4px 4px/14px 14px,#fff;border:2.5px solid #111;border-radius:3px}` +
-      `.dbox.v2{border-radius:18px;border-style:dashed;border-width:3px}` +
-      `.dbox.v3{border-radius:8px;transform:rotate(.4deg);box-shadow:7px 7px 0 -3px #fff,7px 7px 0 0 #111;width:calc(100% - 8px)}` +
-      `.dbox.v4{border-radius:22px;margin-top:18px}` +
+      `.dbox.v1{border-radius:22px;transform:rotate(-.5deg);margin-top:8px}` +
+      `.dbox.v1:before{content:"";position:absolute;bottom:-15px;left:34px;width:0;height:0;border:9px solid transparent;border-top-color:#111;border-bottom:0}` +
+      `.dbox.v1:after{content:"";position:absolute;bottom:-10px;left:36px;width:0;height:0;border:7px solid transparent;border-top-color:#fff;border-bottom:0}` +
+      `.dbox.v2{border-radius:46px}` +
+      `.dbox.v3{border-radius:8px;transform:rotate(.4deg)}` +
+      `.dbox.v4{border-radius:0;margin-top:18px}` +
       `.dbox.v4:before{content:"";position:absolute;top:-10px;left:22px;width:66px;height:18px;transform:rotate(-3deg);background:#fff;border:2.5px solid #111;border-radius:2px}` +
       `.dq{display:flex;align-items:flex-start;gap:9px;font-weight:800;font-size:14px;margin-bottom:9px}` +
       `.dnum{display:inline-flex;width:26px;height:26px;border:2.5px solid #111;border-radius:50% 45% 55% 48%/48% 55% 45% 50%;align-items:center;justify-content:center;font-weight:900;font-size:12px;flex:none}` +
       `.dq>span:nth-child(2){flex:1}` +
       `.dskill{flex:none;font-size:8.5px;font-weight:900;letter-spacing:1px;text-transform:uppercase;border:2px solid #111;border-radius:999px;padding:2px 8px;align-self:flex-start}` +
       `.dline{height:26px;border-bottom:2px dotted #111}` +
+      `.dlist{display:flex;flex-direction:column;gap:8px;margin-top:4px}` +
+      `.dlrow{display:flex;align-items:center;gap:9px}` +
+      `.dln{width:23px;height:23px;border:2.5px solid #111;border-radius:50% 45% 55% 48%/48% 55% 45% 50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:11px;flex:none}` +
+      `.dlb{flex:1;height:28px;border:2.5px solid #111;border-radius:10px;background:#fff}` +
       `.dopt{display:flex;align-items:center;gap:9px;width:100%;border:2.5px solid #111;background:#fff;border-radius:28px 12px 24px 14px/14px 24px 12px 28px;padding:6px 13px 6px 7px;font-family:inherit;font-size:12.5px;font-weight:800;color:#111;cursor:pointer;text-align:left;margin:5px 0;transition:.12s}` +
       `.dopt .dl{width:24px;height:24px;border-radius:50%;border:2.5px solid #111;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:12px;flex:none;background:#fff;color:#111}` +
       `.dopt.ticked{background:#111;color:#fff}` +
@@ -24503,13 +24728,81 @@ export default function App() {
       `.dmright .dmitem:before{content:"";position:absolute;left:-22px;top:50%;width:9px;height:9px;background:#111;border-radius:50%;transform:translateY(-50%)}` +
       `.dfoot{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:2px dashed #111;margin-top:16px;padding-top:8px;padding-bottom:6px;font-size:9px;font-weight:800;letter-spacing:.6px;text-transform:uppercase}` +
       `.pframe{display:none}` +
+      // ===== DOODLE extras: bubble-letter banner title + clip-art (no background) =====
+      `body.tpl-doodle .dtitle{font-size:40px;color:#fff;-webkit-text-stroke:1.5px #111;text-shadow:3px 3px 0 #111;letter-spacing:1px}` +
+      `body.tpl-doodle .sheet:before{content:"✏️";position:absolute;top:16px;right:86px;font-size:26px;transform:rotate(14deg);z-index:1}` +
+      `body.tpl-doodle .sheet:after{content:"🍎";position:absolute;bottom:48px;left:22px;font-size:26px;transform:rotate(-8deg);z-index:1}` +
+      `body.tpl-doodle .dsec{box-shadow:3px 3px 0 #fff,3px 3px 0 1px #111}` +
+      // ===== Template switcher bar =====
+      `.bar{position:sticky;top:10px;z-index:9;display:flex;flex-wrap:wrap;gap:7px;justify-content:center;margin-bottom:18px}` +
+      `.bar button{border:2px solid #111;background:#fff;color:#111;font-family:inherit;font-weight:800;font-size:12px;padding:8px 15px;border-radius:999px;cursor:pointer}` +
+      `.bar button.active{background:#111;color:#fff}.bar button.prt{background:#0d9488;color:#fff;border-color:#0d9488}` +
+      `.dq .dqt{flex:1}` +
+      // ----- FORM: question on the LEFT, answer box on the RIGHT (single-column rows) -----
+      `body.tpl-form{font-family:'Segoe UI',system-ui,sans-serif;background:#eef2f7}` +
+      `body.tpl-form .sheet{border:2px solid #cbd5e1;border-radius:14px;box-shadow:none}` +
+      `body.tpl-form .dcols{display:block}body.tpl-form .dcol{display:block}` +
+      `${boxSel("form")}{border:none;border-radius:0;transform:none;box-shadow:none;background:none;width:auto;margin:0;padding:13px 2px;border-bottom:1.5px solid #dbe3ec;display:flex;gap:18px;align-items:flex-start}` +
+      `body.tpl-form .dbox:before{display:none}body.tpl-form .dbox.dwide{display:block}` +
+      `body.tpl-form .dq{flex:0 0 47%;margin:0}body.tpl-form .dans{flex:1;min-width:0}` +
+      `body.tpl-form .dnum{background:#0d9488;color:#fff;border-color:#0d9488;border-radius:7px}` +
+      `body.tpl-form .dopt{border-color:#94a3b8;border-radius:8px}body.tpl-form .dsec{background:#0d9488;border-radius:6px;transform:none}` +
+      `body.tpl-form .dline,body.tpl-form .dlb{border-color:#94a3b8}body.tpl-form .dln{border-color:#0d9488;border-radius:7px}body.tpl-form .dscrib{display:none}` +
+      // ----- BANNER: each question is a card with a coloured header bar + answer panel -----
+      `body.tpl-banner{background:#eef0fb}` +
+      `body.tpl-banner .sheet{border:3px solid #6d4bd6;border-radius:20px;box-shadow:none}` +
+      `body.tpl-banner .dcols{display:block}body.tpl-banner .dcol{display:block}` +
+      `${boxSel("banner")}{border:none;border-radius:14px;transform:none;box-shadow:0 4px 12px rgba(80,40,160,.12);background:#fff;width:auto;margin:14px 0;padding:0;overflow:hidden}` +
+      `body.tpl-banner .dbox:before{display:none}` +
+      `body.tpl-banner .dq{background:#6d4bd6;color:#fff;margin:0;padding:11px 14px;align-items:center}` +
+      `body.tpl-banner .dnum{background:#fff;color:#6d4bd6;border-color:#fff}body.tpl-banner .dskill{border-color:#fff;color:#fff}` +
+      `body.tpl-banner .dans{padding:13px 15px}` +
+      `body.tpl-banner .dopt{border-color:#c4b5fd;border-radius:999px}body.tpl-banner .dsec{background:#6d4bd6;border-radius:999px;transform:none}` +
+      `body.tpl-banner .dline,body.tpl-banner .dlb{border-color:#c4b5fd}body.tpl-banner .dln{background:#6d4bd6;color:#fff;border-color:#6d4bd6}body.tpl-banner .dscrib{display:none}` +
+      // ----- TIMELINE: vertical connector line with numbered circles -----
+      `body.tpl-timeline{background:#fff}` +
+      `body.tpl-timeline .sheet{border:2px solid #0d9488;border-radius:16px;box-shadow:none}` +
+      `body.tpl-timeline .dcols{display:block}body.tpl-timeline .dcol{display:block;position:relative}` +
+      `body.tpl-timeline .dcol:before{content:"";position:absolute;left:14px;top:8px;bottom:8px;width:3px;background:#99f6e4;border-radius:2px}` +
+      `${boxSel("timeline")}{border:none;border-radius:0;transform:none;box-shadow:none;background:none;width:auto;margin:4px 0 18px;padding:0 0 0 42px;position:relative}` +
+      `body.tpl-timeline .dbox:before{display:none}` +
+      `body.tpl-timeline .dnum{position:absolute;left:3px;top:0;background:#0d9488;color:#fff;border-color:#0d9488;border-radius:50%;z-index:1}` +
+      `body.tpl-timeline .dopt{border-color:#5eead4;border-radius:999px}body.tpl-timeline .dsec{background:#0d9488;border-radius:999px;transform:none}` +
+      `body.tpl-timeline .dline,body.tpl-timeline .dlb{border-color:#5eead4}body.tpl-timeline .dln{background:#0d9488;color:#fff;border-color:#0d9488}body.tpl-timeline .dscrib{display:none}` +
+      // ----- NOTEBOOK: ruled paper, red margin, spiral binding -----
+      `body.tpl-notebook{background:#dfe6ef}` +
+      `body.tpl-notebook .sheet{background:#fffdf3;border:1px solid #d9cf9a;border-radius:6px;padding-left:62px;box-shadow:none;background-image:repeating-linear-gradient(transparent 0,transparent 27px,#c3d6ea 27px,#c3d6ea 28px)}` +
+      `body.tpl-notebook .sheet:before{content:"";position:absolute;top:0;bottom:0;left:46px;width:2px;background:#f1a0a0}body.tpl-notebook .sheet:after{content:"";position:absolute;top:0;bottom:0;left:12px;width:16px;background:radial-gradient(circle,#b9c4d4 4px,transparent 4.6px) 0 14px/16px 40px}` +
+      `body.tpl-notebook .dcols{display:block}body.tpl-notebook .dcol{display:block}` +
+      `${boxSel("notebook")}{border:none;border-radius:0;transform:none;box-shadow:none;background:none;width:auto;margin:8px 0}body.tpl-notebook .dbox:before{display:none}` +
+      `body.tpl-notebook .dq{font-family:'Comic Sans MS','Baloo 2',cursive}body.tpl-notebook .dnum{border-color:#e0796f;color:#c14a3e;border-radius:50%}` +
+      `body.tpl-notebook .dopt{border-color:#9fb3c8;border-radius:8px;background:rgba(255,255,255,.55)}body.tpl-notebook .dsec{background:#e0796f;border-radius:6px;transform:rotate(-1.5deg)}` +
+      `body.tpl-notebook .dline,body.tpl-notebook .dlb{border-color:#9fb3c8}body.tpl-notebook .dln{border-color:#e0796f;color:#c14a3e}body.tpl-notebook .dscrib{display:none}` +
+      // ----- EXAM: formal compact, square borders, serif, single column -----
+      `body.tpl-exam{font-family:'Times New Roman',Georgia,serif;background:#fff}` +
+      `body.tpl-exam .sheet{border:2px solid #111;border-radius:0;box-shadow:none}` +
+      `body.tpl-exam .dcols{display:block}body.tpl-exam .dcol{display:block}` +
+      `${boxSel("exam")}{border:1px solid #111;border-radius:0;transform:none;box-shadow:none;width:auto;margin:8px 0;padding:8px 10px}body.tpl-exam .dbox:before{display:none}` +
+      `body.tpl-exam .dnum{border-radius:0;border:1px solid #111;width:22px;height:22px}` +
+      `body.tpl-exam .dopt{border-radius:0;border-width:1px}body.tpl-exam .dopt .dl{border-radius:0;border-width:1px}` +
+      `body.tpl-exam .dsec{background:#111;border-radius:0;transform:none}body.tpl-exam .dtitle{text-transform:none;font-size:26px}` +
+      `body.tpl-exam .dscrib{display:none}body.tpl-exam .dmitem{border-radius:0;border-width:1px}body.tpl-exam .dln,body.tpl-exam .dlb{border-radius:0;border-width:1px}` +
+      // ===== make every design attractive: themed clip-art + colour titles (no background) =====
+      `body.tpl-form .sheet:before{content:"📋";position:absolute;top:14px;right:18px;font-size:28px}body.tpl-form .sheet:after{content:"✏️";position:absolute;bottom:16px;right:18px;font-size:24px;transform:rotate(20deg)}` +
+      `body.tpl-form .dtitle{color:#0d9488}` +
+      `body.tpl-banner .sheet:before{content:"🎫";position:absolute;top:14px;right:18px;font-size:28px}body.tpl-banner .sheet:after{content:"⭐";position:absolute;bottom:14px;left:18px;font-size:26px}` +
+      `body.tpl-banner .dtitle{color:#6d4bd6}` +
+      `body.tpl-timeline .sheet:before{content:"🚀";position:absolute;top:14px;right:18px;font-size:28px}body.tpl-timeline .sheet:after{content:"🌟";position:absolute;bottom:14px;right:18px;font-size:24px}` +
+      `body.tpl-timeline .dtitle{color:#0d9488}` +
+      `body.tpl-notebook .dtitle{color:#c14a3e}body.tpl-notebook .dtitle:after{content:" ✏️";font-size:22px}` +
+      `body.tpl-exam .sheet:before{content:"🏆";position:absolute;top:14px;right:18px;font-size:26px}body.tpl-exam .sheet:after{content:"⭐";position:absolute;bottom:14px;left:18px;font-size:24px}` +
       `@page{margin:12mm}` +
       `@media print{` +
       `body{background:#fff;padding:0;min-height:0}` +
       `.bar{display:none}` +
       // complete doodle frame on EVERY printed page (fixed repeats per page);
       // the sheet sheds its own border so it never slices across pages
-      `.pframe{display:block;position:fixed;inset:0;border:3px solid #111;border-radius:24px;pointer-events:none;z-index:9}` +
+      `body.tpl-doodle .pframe{display:block;position:fixed;inset:0;border:3px solid #111;border-radius:24px;pointer-events:none;z-index:9}` +
       `.sheet{max-width:none;margin:0;border:none;border-radius:0;padding:14px 20px 6px}` +
       `.sheet:last-of-type{page-break-after:auto}` +
       `.dbox{margin:10px 0 4px}` +
@@ -24518,10 +24811,19 @@ export default function App() {
       `.dfoot{margin-top:12px;padding-top:6px}` +
       `}` +
       `@media(max-width:640px){.dcols{flex-direction:column}.dtitle{font-size:28px}}` +
-      `</style></head><body>` +
-      `<div class="bar"><button onclick="window.print()">🖨️ Print all ${pack.levels.length} worksheets</button></div>` +
+      `</style></head><body class="tpl-doodle">` +
+      `<div class="bar">` +
+      `<button class="active" onclick="setTpl('doodle',this)">✏️ Doodle Cards</button>` +
+      `<button onclick="setTpl('form',this)">📋 Q&amp;A Form</button>` +
+      `<button onclick="setTpl('banner',this)">🎫 Banner</button>` +
+      `<button onclick="setTpl('timeline',this)">🪜 Timeline</button>` +
+      `<button onclick="setTpl('notebook',this)">📒 Notebook</button>` +
+      `<button onclick="setTpl('exam',this)">📝 Exam</button>` +
+      `<button class="prt" onclick="window.print()">🖨️ Print all ${pack.levels.length}</button>` +
+      `</div>` +
       `<div class="pframe"></div>` +
       sheets +
+      `<script>function setTpl(t,btn){document.body.className='tpl-'+t;var bs=document.querySelectorAll('.bar button');for(var i=0;i<bs.length;i++){if(bs[i].getAttribute('onclick').indexOf('setTpl')>-1)bs[i].classList.remove('active');}if(btn)btn.classList.add('active');}</script>` +
       `</body></html>`;
     // Show in the in-app viewer (iframe modal with Print / Download / New Tab)
     // instead of window.open + document.write, which browsers silently block.
@@ -25346,6 +25648,22 @@ export default function App() {
                     </div>
                   </div>
 
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-stone-500">
+                      Worksheet link / file (optional) — re-level an existing worksheet
+                    </label>
+                    <input
+                      type="text"
+                      value={diffWsUrl}
+                      onChange={(e) => setDiffWsUrl(e.target.value)}
+                      placeholder="Paste a worksheet URL (https://…) or a downloaded file (file:///Users/…/worksheet.html)"
+                      className="w-full p-2.5 text-sm font-bold bg-stone-50 rounded-xl border-2 border-stone-200 text-stone-800 focus:outline-none focus:border-[#0d9488] transition-all"
+                    />
+                    <p className="text-[10px] font-semibold text-stone-400 leading-snug">
+                      Paste a worksheet link or a downloaded <span className="font-bold">file://…html</span> path, and we read it, then generate it at every Lexile level you select. (The book/topic below is optional when a link is given.)
+                    </p>
+                  </div>
+
                   <div className="grid md:grid-cols-3 gap-3">
                     <div className="md:col-span-2 space-y-1.5">
                       <label className="text-[10px] font-black uppercase tracking-widest text-stone-500">
@@ -25364,19 +25682,23 @@ export default function App() {
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-black uppercase tracking-widest text-stone-500">
-                        Questions
+                        {diffWsUrl.trim() ? "Questions (from link)" : "Questions (0–100)"}
                       </label>
-                      <select
-                        value={diffWsNumQuestions}
-                        onChange={(e) =>
-                          setDiffWsNumQuestions(parseInt(e.target.value) || 8)
-                        }
-                        className="w-full p-2.5 text-sm font-bold bg-stone-50 rounded-xl border-2 border-stone-200 text-stone-800 focus:outline-none focus:border-[#0d9488] transition-all"
-                      >
-                        <option value={5}>5 questions</option>
-                        <option value={8}>8 questions</option>
-                        <option value={10}>10 questions</option>
-                      </select>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        inputMode="numeric"
+                        disabled={!!diffWsUrl.trim()}
+                        value={diffWsUrl.trim() ? "" : diffWsNumQuestions}
+                        placeholder={diffWsUrl.trim() ? "Uses the worksheet's own questions" : ""}
+                        onChange={(e) => {
+                          const raw = e.target.value.replace(/^0+(?=\d)/, "");
+                          const n = raw === "" ? 0 : Math.min(100, Math.max(0, parseInt(raw, 10) || 0));
+                          setDiffWsNumQuestions(n);
+                        }}
+                        className="w-full p-2.5 text-sm font-bold bg-stone-50 rounded-xl border-2 border-stone-200 text-stone-800 focus:outline-none focus:border-[#0d9488] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      />
                     </div>
                   </div>
 
@@ -29745,6 +30067,33 @@ export default function App() {
               </button>
             </div>
           </div>
+          {interactiveDoc.kind === "worksheet" && interactiveDoc.ws && (
+            <div className="bg-[#F0FDF4] border-b-2 border-[#D1FAE5] px-4 py-2.5 flex items-center gap-2 flex-wrap shrink-0">
+              <span className="text-[10px] font-black uppercase tracking-widest text-[#064E3B]/50 mr-1">
+                🎨 Design:
+              </span>
+              {ZDESIGN_LIST.map((key) => {
+                const th = ZTHEMES[key];
+                const active = (interactiveDoc.design || "detective") === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => pickInteractiveDesign(key)}
+                    className={cn(
+                      "px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all border-2",
+                      active
+                        ? "text-white shadow-md border-transparent"
+                        : "bg-white text-[#064E3B]/70 border-[#D1FAE5] hover:border-[#059669]",
+                    )}
+                    style={active ? { background: th.border } : undefined}
+                  >
+                    <span>{th.icon}</span> {th.name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <iframe
             id="assessmentFrame"
             title="Interactive Assessment"
@@ -29863,6 +30212,14 @@ export default function App() {
                             className="inline-flex items-center gap-1 bg-[#7c3aed] hover:bg-[#6d28d9] text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg cursor-pointer"
                           >
                             <Sparkles size={12} /> Open
+                          </button>
+                          <button
+                            disabled={isBuildingWs}
+                            onClick={() => openAsAssessmentWorksheet(m.artifact!)}
+                            className="inline-flex items-center gap-1 bg-[#db2777] hover:bg-[#be185d] disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1.5 rounded-lg cursor-pointer"
+                            title="Open in the Assessment Hub interactive worksheet design (with theme templates)"
+                          >
+                            {isBuildingWs ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} Designs
                           </button>
                           <button
                             onClick={() =>

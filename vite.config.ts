@@ -18,13 +18,22 @@ export default defineConfig(({mode}) => {
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
+      // The app is served at https://suite.test (Caddy reverse-proxies 443 →
+      // this dev server on :3004). Vite blocks unknown Host headers in dev, so
+      // the proxied hostname must be allow-listed or the page shows
+      // "Blocked request. This host is not allowed."
+      allowedHosts: ['suite.test', 'localhost', '127.0.0.1'],
+      // HMR rides the SAME HTTPS proxy: the page loads over https, so the HMR
+      // socket must be wss on 443 (mixed-content rules block ws:// from an https
+      // page). server.ts shares its HTTP server with Vite's HMR so the websocket
+      // upgrade reaches Vite through Caddy.
       hmr:
         process.env.DISABLE_HMR === 'true'
           ? false
           : {
-              port: process.env.HMR_PORT
-                ? parseInt(process.env.HMR_PORT, 10)
-                : 24678,
+              protocol: 'wss',
+              host: 'suite.test',
+              clientPort: 443,
             },
     },
   };
