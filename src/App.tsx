@@ -7772,6 +7772,7 @@ export default function App() {
       (fileContext
         ? `Analysis and answer sheet for uploaded exam: ${fileContext.name}`
         : content?.lessonTitle || "");
+    try {
     const result = await generateWorksheet(
       lessonInstructions.trim()
         ? `${baseTopic}\n\nADDITIONAL INSTRUCTIONS (follow these): ${lessonInstructions.trim()}`
@@ -7891,7 +7892,16 @@ export default function App() {
       // Auto-save to vault commented out per user request
       // saveToVault('worksheet', true, eduContent, lessonInput || result.title);
     }
-    setIsGenerating(false);
+    } catch (err: any) {
+      // Without this, a failed generation (timeout, rate limit, 503…) would
+      // leave the UI stuck on "Generating Worksheet…" forever.
+      console.error("Worksheet generation failed:", err);
+      alert(
+        `Couldn't generate the worksheet — ${err?.message || "the AI service is busy"}. Please try again.`,
+      );
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const handleRelevelPassage = async () => {
