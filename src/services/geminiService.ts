@@ -940,6 +940,13 @@ Return ONLY a JSON object in exactly this shape: {"title": "<a short, fitting pa
     mainPrompt += bahasaMelayuDirective(options.subject);
     mainPrompt += bahasaMelayuFormatGuide(options.subject);
 
+    // When a file was uploaded, its text is included below as "UPLOADED DOCUMENT
+    // CONTENT". Override the generic "about the topic <filename>" instructions
+    // above so the questions are based on the ACTUAL document, not the filename.
+    if (options.fileContext) {
+      mainPrompt += `\n\nUPLOADED SOURCE (CRITICAL — HIGHEST PRIORITY): An uploaded document is included below as "UPLOADED DOCUMENT CONTENT". Base EVERY question and answer STRICTLY on that document's actual content — its topics, facts, definitions, examples, and vocabulary. The questions must assess understanding of THAT document. IGNORE the filename as a topic; do NOT invent unrelated questions. If the document already contains questions/exercises, use or closely adapt them.`;
+    }
+
     const encodingRules = `QUESTION "type" FIELD — set it to one of these exact lowercase values based on the question, and follow the encoding rules for each:
 - "multiple-choice": "options" are 3-4 short answer choices (exactly one correct, the rest clearly wrong, correct one in a varying position). The options within a question must ALL be different from each other (no repeated choices), and across questions DO NOT keep reusing the same answer choices — vary them. NEVER use "True"/"False"/"Maybe" as options here. The "text" must be written in ONE of these two forms, and MUST NEVER contain or reveal the correct answer:
    (1) a QUESTION ending in "?" — e.g. {"text":"Which planet is closest to the Sun?","options":["Mercury","Venus","Earth","Mars"]};
@@ -2148,7 +2155,35 @@ async function groqGenerate(
   const rawParts = request?.contents?.parts;
   const parts = Array.isArray(rawParts) ? rawParts : rawParts ? [rawParts] : [];
   let promptText = parts
-    .map((p: any) => (typeof p === "string" ? p : p?.text || ""))
+    .map((p: any) => {
+      if (typeof p === "string") return p;
+      if (p?.text) return p.text;
+      // An uploaded file is passed as Gemini-style inlineData. Groq can't read
+      // inlineData, so a TEXT file (pptx/docx/xlsx/csv/txt/md/html… — all
+      // extracted to text/plain upstream) would be silently dropped and the
+      // output would ignore the document. Decode it into the prompt so the
+      // model actually uses the uploaded content. (Binary image/PDF can't be
+      // decoded to text here and is skipped — those need a vision/OCR path.)
+      const inl = p?.inlineData;
+      if (inl?.data && /^text\//i.test(inl.mimeType || "")) {
+        let decoded = "";
+        try {
+          decoded =
+            typeof Buffer !== "undefined"
+              ? Buffer.from(inl.data, "base64").toString("utf-8")
+              : decodeURIComponent(escape(atob(inl.data)));
+        } catch {
+          decoded = "";
+        }
+        decoded = decoded.trim();
+        if (decoded)
+          return `UPLOADED DOCUMENT CONTENT (base ALL questions/answers strictly on this):\n"""\n${decoded.slice(
+            0,
+            14000,
+          )}\n"""`;
+      }
+      return "";
+    })
     .filter(Boolean)
     .join("\n\n");
   const wantsJson = request?.config?.responseMimeType === "application/json";
