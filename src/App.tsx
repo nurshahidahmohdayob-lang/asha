@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   LayoutDashboard,
   BookOpen,
@@ -23486,16 +23487,22 @@ export default function App() {
                           </div>
                         </div>
                         {(() => {
-                          const fills = section.questions.filter((q) =>
-                            /fill|blank/.test((q.type || "").toLowerCase()),
-                          );
-                          // One word per fill-in question so the bank always
-                          // tallies with the number of questions.
-                          const words = fills
-                            .map((q) => String((q.options && q.options[0]) || "").trim())
-                            .filter(Boolean)
-                            .sort((a, b) => a.localeCompare(b));
-                          if (!words.length) return null;
+                          // Each word bank entry is the answer (options[0]) of a
+                          // fill-in-the-blank question; keep its question index so
+                          // edits persist back to the right question. One word per
+                          // fill-in so the bank always tallies with the questions.
+                          const entries = section.questions
+                            .map((q, qi) => ({ q, qi }))
+                            .filter(({ q }) =>
+                              /fill|blank/.test((q.type || "").toLowerCase()),
+                            )
+                            .map(({ q, qi }) => ({
+                              word: String((q.options && q.options[0]) || "").trim(),
+                              qi,
+                            }))
+                            .filter((e) => e.word)
+                            .sort((a, b) => a.word.localeCompare(b.word));
+                          if (!entries.length) return null;
                           return (
                             <div className="pl-14">
                               <div className="bg-indigo-50 border border-indigo-200 rounded-2xl px-4 py-3 mb-2">
@@ -23503,17 +23510,29 @@ export default function App() {
                                   📋 Word Bank
                                 </span>
                                 <div className="flex flex-wrap items-center gap-y-2">
-                                  {words.map((w, i) => (
+                                  {entries.map((e, i) => (
                                     <span
-                                      key={i}
+                                      key={e.qi}
+                                      contentEditable={true}
+                                      suppressContentEditableWarning={true}
+                                      onMouseDown={(ev) => ev.stopPropagation()}
+                                      onBlur={(ev) =>
+                                        updateWorksheetOption(
+                                          si,
+                                          e.qi,
+                                          0,
+                                          (ev.currentTarget.textContent || "").trim(),
+                                        )
+                                      }
+                                      dangerouslySetInnerHTML={{ __html: e.word }}
+                                      title="Click to edit this word"
                                       className={cn(
-                                        "font-bold text-[15px] text-[#1e293b] px-[18px] leading-tight whitespace-nowrap",
+                                        "font-bold text-[15px] text-[#1e293b] px-[18px] leading-tight whitespace-nowrap outline-none focus:ring-1 focus:ring-[#059669]/30 rounded cursor-text select-text",
                                         i === 0 && "pl-0",
-                                        i !== words.length - 1 && "border-r-2 border-indigo-200",
+                                        i !== entries.length - 1 &&
+                                          "border-r-2 border-indigo-200",
                                       )}
-                                    >
-                                      {w}
-                                    </span>
+                                    />
                                   ))}
                                 </div>
                               </div>
@@ -30113,18 +30132,26 @@ export default function App() {
         </div>
       )}
 
-      {/* ===== Zera Assistant — ChatGPT-style Q&A ===== */}
+      {/* ===== Zera Assistant — portaled to <body> so its fixed z-index isn't
+          trapped by an ancestor's stacking context (transform/isolate), which
+          made the worksheet bleed through the panel. ===== */}
+      {createPortal(
+        <>
       {!chatOpen && (
         <button
           onClick={() => setChatOpen(true)}
           title="Ask Zera Assistant"
-          className="fixed bottom-5 right-5 z-[60] w-14 h-14 rounded-full bg-gradient-to-br from-[#059669] to-[#047857] text-white shadow-2xl shadow-[#059669]/40 flex items-center justify-center hover:scale-105 active:scale-95 transition-all"
+          style={{ zIndex: 1000 }}
+          className="fixed bottom-5 right-5 w-14 h-14 rounded-full bg-gradient-to-br from-[#059669] to-[#047857] text-white shadow-2xl shadow-[#059669]/40 flex items-center justify-center hover:scale-105 active:scale-95 transition-all"
         >
           <Sparkles size={24} />
         </button>
       )}
       {chatOpen && (
-        <div className="fixed bottom-5 right-5 z-[60] w-[min(94vw,400px)] h-[min(80vh,620px)] bg-white rounded-3xl shadow-2xl border-2 border-[#D1FAE5] flex flex-col overflow-hidden">
+        <div
+          style={{ zIndex: 1000, backgroundColor: "#ffffff" }}
+          className="fixed bottom-5 right-5 w-[min(94vw,400px)] h-[min(80vh,620px)] rounded-3xl shadow-2xl border-2 border-[#D1FAE5] flex flex-col overflow-hidden"
+        >
           <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-[#059669] to-[#047857] text-white">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
@@ -30161,7 +30188,8 @@ export default function App() {
 
           <div
             ref={chatScrollRef}
-            className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3 bg-[#F8FFFB]"
+            style={{ backgroundColor: "#F8FFFB" }}
+            className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3"
           >
             {chatMessages.length === 0 && !chatLoading && (
               <div className="h-full flex flex-col items-center justify-center text-center gap-3 px-2">
@@ -30325,6 +30353,9 @@ export default function App() {
             </div>
           </form>
         </div>
+      )}
+        </>,
+        document.body,
       )}
 
       <style>{`
