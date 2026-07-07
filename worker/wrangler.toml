@@ -11,3 +11,18 @@ id = "44e8431297864a79968701085d82415e"
 # Workers AI binding — lets the worker generate images (Flux) without any token.
 [ai]
 binding = "AI"
+
+# ── Short custom domain (optional) ─────────────────────────────────────────
+# Gives clean links like https://zedu.my/reading-week instead of the long
+# workers.dev URL. STEPS:
+#   1. Register a short domain (e.g. zedu.my).
+#   2. Add it to THIS Cloudflare account (Dashboard → Add a site) and point its
+#      nameservers to Cloudflare.
+#   3. Then EITHER attach it in the dashboard
+#      (Workers & Pages → zworksheets → Settings → Domains & Routes → Add →
+#      Custom Domain → "zedu.my"),  OR  uncomment the block below and run
+#      `npx wrangler deploy` from this folder.
+#   4. In the app: HTML Host → Link domain (advanced) → enter https://zedu.my.
+# [[routes]]
+# pattern = "zedu.my"
+# custom_domain = true
