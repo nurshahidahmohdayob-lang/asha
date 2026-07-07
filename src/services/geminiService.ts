@@ -252,7 +252,7 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
     "methodology": ONE to TWO sentences (MAX 45 words) on the pedagogical approach, mentioning the Cambridge subject code. Be concise — do NOT write a paragraph.
     "description": ONE sentence (MAX 25 words) high-level overview.
     "type" for slides: one of title, content, activity, quiz.
-    "content": 3-4 bullet points. EACH bullet must state a KEY POINT and then EXPLAIN it, written as "Key point: explanation." — a short key phrase, an em dash or colon, then ONE clear sentence (about 12-25 words) that explains or gives an example so students understand it. Do NOT give bare labels with no explanation, and do NOT use HTML or markdown tags (plain text only).
+    "content": a FEW (3-4) main points, each with a short description. Format each bullet as "Main point — its description": a short key phrase (about 2-6 words), then an em dash or colon, then ONE clear sentence (about 12-25 words) that explains or gives an example so students understand it. Do NOT write the literal words "key point" / "main point" as a label, and do NOT repeat or restate the key phrase inside its own description. Do NOT give bare labels with no explanation, and do NOT use HTML or markdown tags (plain text only).
     "illustrationPrompt": 3-5 search keywords only.
     "layoutType": (OPTIONAL) suggest one of 'infographic-cards', 'infographic-flow', 'infographic-grid', 'infographic-bubbles' if the content suits a non-list layout, otherwise 'standard'.
     IMPORTANT:
@@ -380,7 +380,7 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
             parts: [
               ...baseParts,
               {
-                text: `${planNote}\n\nGenerate EXACTLY ${rg.count} slides — these are slides ${rg.start} to ${rg.start + rg.count - 1} of ${total} (part ${rg.idx + 1} of ${chunkCount}). Return ONLY a "slides" array (no metadata). Every bullet in "content" must still state a key point AND a one-sentence explanation, as described above.`,
+                text: `${planNote}\n\nGenerate EXACTLY ${rg.count} slides — these are slides ${rg.start} to ${rg.start + rg.count - 1} of ${total} (part ${rg.idx + 1} of ${chunkCount}). Return ONLY a "slides" array (no metadata). Every bullet in "content" must still be a main point followed by a one-sentence description, as described above — do NOT write the words "key point" and do NOT repeat the point inside its explanation.`,
               },
             ],
           },

@@ -57,6 +57,9 @@ import {
   Undo,
   Redo,
   Eye,
+  Globe,
+  Copy,
+  PenTool,
   MousePointer2,
   Users,
   UserCheck,
@@ -4818,12 +4821,64 @@ export default function App() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  // Persisted log of the teacher's own requests to the assistant (per user,
+  // kept in localStorage so it survives reloads and appears on this device).
+  type HistoryItem = { text: string; ts: number };
+  const [requestHistory, setRequestHistory] = useState<HistoryItem[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const historyKey = () => `zera_assistant_history_${user?.uid || "anon"}`;
+  const recordRequest = (text: string) => {
+    setRequestHistory((prev) => {
+      const next = [
+        { text, ts: Date.now() },
+        ...prev.filter((h) => h.text !== text),
+      ].slice(0, 100);
+      try {
+        localStorage.setItem(historyKey(), JSON.stringify(next));
+      } catch {
+        /* ignore quota / private-mode errors */
+      }
+      return next;
+    });
+  };
+  const clearRequestHistory = () => {
+    setRequestHistory([]);
+    try {
+      localStorage.removeItem(historyKey());
+    } catch {
+      /* ignore */
+    }
+  };
+  const fmtHistoryTime = (ts: number) => {
+    const min = Math.floor((Date.now() - ts) / 60000);
+    if (min < 1) return "just now";
+    if (min < 60) return `${min}m ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr}h ago`;
+    const day = Math.floor(hr / 24);
+    if (day < 7) return `${day}d ago`;
+    return new Date(ts).toLocaleDateString();
+  };
   // WYSIWYG editing of an assistant-generated document/HTML artifact.
   const [editArtifact, setEditArtifact] = useState<{ index: number; title: string } | null>(null);
   const editFrameRef = useRef<HTMLIFrameElement>(null);
   // Publishing a worksheet to the Cloudflare worker → short public student link.
   const [publishing, setPublishing] = useState(false);
-  const [publishResult, setPublishResult] = useState<{ url: string } | null>(null);
+  const [publishResult, setPublishResult] = useState<{ url: string; note?: string } | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const copyPublishedLink = (url: string) => {
+    navigator.clipboard
+      .writeText(url)
+      .then(() => {
+        setLinkCopied(true);
+        setTimeout(() => setLinkCopied(false), 1800);
+      })
+      .catch(() => {});
+  };
+  // ===== HTML Host tool — paste any HTML, publish it, share a student link =====
+  const [htmlHostInput, setHtmlHostInput] = useState("");
+  const [htmlHostCode, setHtmlHostCode] = useState("");
+  const [zipStatus, setZipStatus] = useState<string | null>(null);
   // Upload HTML to the worker and show the short shareable link (+ QR).
   const [isBuildingWs, setIsBuildingWs] = useState(false);
   // Open an assistant worksheet in the Assessment Hub's interactive worksheet
@@ -4862,22 +4917,24 @@ export default function App() {
       setIsBuildingWs(false);
     }
   };
-  // The deployed Cloudflare worker that hosts published worksheets. Can be
-  // overridden via localStorage (e.g. once a custom domain is set up).
-  const WORKSHEET_HOST_DEFAULT = "https://zworksheets.nurshahidahmohdayob.workers.dev";
-  const publishHtml = async (html: string) => {
-    const host = (localStorage.getItem("zera_worksheet_host") || WORKSHEET_HOST_DEFAULT)
-      .trim()
-      .replace(/\/+$/, "");
+  // The Cloudflare Pages host that stores & serves published pages. Short,
+  // reliable, and no long account name — links are e.g. zera-4ag.pages.dev/cat.
+  const WORKSHEET_HOST_DEFAULT = "https://zera-4ag.pages.dev";
+
+  const publishHtml = async (html: string, presetCode?: string) => {
+    // When a preset code is supplied (e.g. from the HTML Host tool) skip the
+    // prompt entirely — an empty string just means "use a random code".
     const code = (
-      window.prompt(
-        "Optional: a short memorable code for the link (e.g. cat → /s/cat). Leave blank for a random one.",
-        "",
-      ) || ""
+      presetCode !== undefined
+        ? presetCode
+        : window.prompt(
+            "Optional: a short memorable code for the link (e.g. cat → /s/cat). Leave blank for a random one.",
+            "",
+          ) || ""
     ).trim();
     setPublishing(true);
     try {
-      const res = await fetch(`${host}/upload`, {
+      const res = await fetch(`${WORKSHEET_HOST_DEFAULT}/upload`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ html, code }),
@@ -4885,15 +4942,16 @@ export default function App() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.url)
         throw new Error(data?.error || `Publish failed (HTTP ${res.status})`);
-      setPublishResult({ url: data.url });
+      const url = data.url as string;
+      setPublishResult({ url });
       try {
-        await navigator.clipboard.writeText(data.url);
+        await navigator.clipboard.writeText(url);
       } catch {
         /* ignore */
       }
     } catch (e: any) {
       alert(
-        `Couldn't publish: ${e?.message || e}\n\nMake sure the worker URL is correct and deployed. To reset it, clear the site data.`,
+        `Couldn't publish: ${e?.message || e}\n\nMake sure you're online and try again.`,
       );
     } finally {
       setPublishing(false);
@@ -4986,12 +5044,26 @@ export default function App() {
       text: m.text,
     }));
     setChatMessages((prev) => [...prev, { role: "user", text: q }]);
+    recordRequest(q);
     setChatInput("");
     setChatLoading(true);
     try {
       if (looksLikeHtmlRequest(q)) {
         const raw = await askAI(
-          `You are an expert web designer. Build a COMPLETE, self-contained, standalone HTML5 document (inline <style>, only small inline <script> if needed, NO external files or CDNs) that fulfils this request: "${q}". Make it attractive, colourful and well-structured. Use a proper descriptive title for the topic — do NOT use the request sentence as the title, and do NOT restate, quote, echo or display the request/instruction text anywhere in the page. Produce only the finished worksheet content itself. Any boxes where a student types/writes an answer MUST be COMPLETELY EMPTY — no text inside them at all: no "[ Click & type here ]", no "type here", no "write your answer", no brackets, no hint of any kind. Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no explanation.`,
+          `You are an expert educational web designer. Build a COMPLETE, self-contained, standalone HTML5 document (inline <style> and inline <script>, NO external files, CDNs or frameworks) that fulfils this request: "${q}".
+
+DESIGN: Make it VERY colourful, vibrant and genuinely attractive for school students — bold lively palettes, gradients, playful rounded cards, fun emoji/icons, smooth hover and click animations, and big clear tap targets. Never plain or dull. Keep it mobile-friendly so it works well on a phone. Use a proper descriptive title for the topic — do NOT use the request sentence as the title, and do NOT restate, quote, echo or display the request/instruction text anywhere in the page.
+
+INTERACTIVE & SELF-CHECKING (REQUIRED — this is the whole point): The student does the activity ON SCREEN and then checks their own answers. So:
+- Every question must be answerable in the browser: clickable multiple-choice options, True/False buttons, text inputs for fill-in / short-answer, or click-to-match. No "print it out" steps.
+- Embed the correct answer for EVERY question inside the inline <script> as an answer key.
+- Add ONE big, obvious "Check Answers" button. When clicked it grades everything client-side and: marks each question with a green ✓ if correct or a red ✗ if wrong, reveals the correct answer next to anything the student got wrong, and shows a total score (e.g. "8 / 10") with a cheerful message. For typed answers, compare case-insensitively, trim spaces, and accept obvious equivalent spellings.
+- Add a "Try Again" button that clears all the marks and the score so the student can retry.
+- Do NOT show which answers are correct until the student presses Check Answers.
+
+Any box where a student types an answer MUST START COMPLETELY EMPTY — no placeholder, no "[ Click & type here ]", no "type here", no "write your answer", no brackets, no hint of any kind.
+
+Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no explanation.`,
           history,
         );
         const html = clearInputPlaceholders(stripCodeFences(raw));
@@ -5051,6 +5123,16 @@ export default function App() {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     }
   }, [chatMessages, chatLoading, chatOpen]);
+  // Load this user's saved request history whenever the signed-in user changes.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(historyKey());
+      setRequestHistory(raw ? JSON.parse(raw) : []);
+    } catch {
+      setRequestHistory([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
   const [yearGroup, setYearGroup] = useState("Year 3");
   const [subject, setSubject] = useState("");
   const [lexileLevel, setLexileLevel] = useState("400-500");
@@ -8376,6 +8458,7 @@ export default function App() {
     | "notes"
     | "reading-program"
     | "poster"
+    | "html-host"
     | "admin"
   >("home");
   const [previousView, setPreviousView] = useState<
@@ -8414,6 +8497,7 @@ export default function App() {
         "worksheet",
         "notes",
         "reading-program",
+        "html-host",
       ];
       if (hash && validViews.includes(hash)) {
         setCurrentView((prev) => {
@@ -19740,6 +19824,389 @@ export default function App() {
     }
   };
 
+  // Load a .html file picked from disk straight into the editor.
+  const loadHtmlFile = (file: File) => {
+    if (!file) return;
+    setZipStatus(null);
+    const reader = new FileReader();
+    reader.onload = () => setHtmlHostInput(String(reader.result || ""));
+    reader.readAsText(file);
+  };
+
+  // ===== ZIP → one self-contained HTML file =====
+  // A teacher's zipped web project (index.html + css/js/images) is unpacked in
+  // the browser and every local asset is folded inline (CSS/JS as text, images
+  // & fonts as data URIs) so it can be published as a single HTML document.
+  const zipMime = (p: string): string => {
+    const ext = p.split(".").pop()?.toLowerCase() || "";
+    const m: Record<string, string> = {
+      png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+      svg: "image/svg+xml", webp: "image/webp", ico: "image/x-icon", bmp: "image/bmp",
+      css: "text/css", js: "text/javascript", mjs: "text/javascript", json: "application/json",
+      woff: "font/woff", woff2: "font/woff2", ttf: "font/ttf", otf: "font/otf",
+      eot: "application/vnd.ms-fontobject", mp3: "audio/mpeg", wav: "audio/wav",
+      ogg: "audio/ogg", mp4: "video/mp4", webm: "video/webm", txt: "text/plain",
+    };
+    return m[ext] || "application/octet-stream";
+  };
+  const zipDirOf = (p: string) => {
+    const i = p.lastIndexOf("/");
+    return i < 0 ? "" : p.slice(0, i);
+  };
+  // Resolve a relative asset reference (from a file in `fromDir`) to a zip path.
+  // Returns null for anything we should leave untouched (absolute URLs, data:).
+  const zipResolve = (fromDir: string, ref: string): string | null => {
+    if (!ref) return null;
+    const clean = ref.trim().replace(/^['"]|['"]$/g, "").split("#")[0].split("?")[0];
+    if (
+      !clean ||
+      /^(https?:)?\/\//i.test(clean) ||
+      /^(data|blob|mailto|tel|javascript):/i.test(clean)
+    )
+      return null;
+    const base = clean.startsWith("/") ? [] : fromDir.split("/").filter(Boolean);
+    const out = [...base];
+    for (const seg of clean.split("/")) {
+      if (seg === "" || seg === ".") continue;
+      if (seg === "..") out.pop();
+      else out.push(seg);
+    }
+    return out.join("/");
+  };
+  // String.replace can't await, so collect matches then rebuild with async fn.
+  const zipReplaceAsync = async (
+    str: string,
+    re: RegExp,
+    fn: (...groups: string[]) => Promise<string>,
+  ): Promise<string> => {
+    const rex = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
+    const found: { index: number; len: number; groups: string[] }[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = rex.exec(str))) {
+      found.push({ index: m.index, len: m[0].length, groups: Array.from(m) });
+      if (m.index === rex.lastIndex) rex.lastIndex++;
+    }
+    let result = "";
+    let pos = 0;
+    for (const f of found) {
+      result += str.slice(pos, f.index) + (await fn(...f.groups));
+      pos = f.index + f.len;
+    }
+    return result + str.slice(pos);
+  };
+
+  const loadHtmlZip = async (file: File) => {
+    if (!file) return;
+    setZipStatus("Unpacking ZIP…");
+    try {
+      const JSZip = (await import("jszip")).default;
+      const zip = await JSZip.loadAsync(file);
+      const byPath = new Map<string, any>();
+      zip.forEach((rel, entry) => {
+        if (!entry.dir)
+          byPath.set(rel.replace(/\\/g, "/").replace(/^\.?\//, ""), entry);
+      });
+      if (!byPath.size) throw new Error("the ZIP is empty.");
+      const htmls = [...byPath.keys()].filter((p) => /\.html?$/i.test(p));
+      if (!htmls.length) throw new Error("no .html file found inside the ZIP.");
+      // Prefer an index.html, else the shallowest html file.
+      const entryPath =
+        htmls.find((p) => /(^|\/)index\.html?$/i.test(p)) ||
+        htmls.sort((a, b) => a.split("/").length - b.split("/").length)[0];
+      const entryDir = zipDirOf(entryPath);
+
+      const textCache = new Map<string, string | null>();
+      const dataCache = new Map<string, string | null>();
+      const readText = async (p: string) => {
+        if (textCache.has(p)) return textCache.get(p)!;
+        const e = byPath.get(p);
+        const t = e ? await e.async("string") : null;
+        textCache.set(p, t);
+        return t;
+      };
+      const readDataUri = async (p: string) => {
+        if (dataCache.has(p)) return dataCache.get(p)!;
+        const e = byPath.get(p);
+        const uri = e ? `data:${zipMime(p)};base64,${await e.async("base64")}` : null;
+        dataCache.set(p, uri);
+        return uri;
+      };
+      const processCss = async (
+        css: string,
+        cssDir: string,
+        seen = new Set<string>(),
+      ): Promise<string> => {
+        css = await zipReplaceAsync(
+          css,
+          /@import\s+(?:url\(\s*)?['"]?([^'")]+)['"]?\s*\)?\s*;?/gi,
+          async (whole, ref) => {
+            const p = zipResolve(cssDir, ref);
+            if (!p || seen.has(p)) return p ? "" : whole;
+            seen.add(p);
+            const imported = await readText(p);
+            return imported == null ? whole : await processCss(imported, zipDirOf(p), seen);
+          },
+        );
+        return zipReplaceAsync(css, /url\(\s*['"]?([^'")]+)['"]?\s*\)/gi, async (whole, ref) => {
+          const p = zipResolve(cssDir, ref);
+          if (!p) return whole;
+          const uri = await readDataUri(p);
+          return uri ? `url(${uri})` : whole;
+        });
+      };
+
+      const doc = new DOMParser().parseFromString(
+        (await byPath.get(entryPath).async("string")) as string,
+        "text/html",
+      );
+      // <link rel=stylesheet> → inline <style>
+      for (const link of Array.from(doc.querySelectorAll('link[rel~="stylesheet"][href]'))) {
+        const p = zipResolve(entryDir, link.getAttribute("href") || "");
+        if (!p) continue;
+        const css = await readText(p);
+        if (css == null) continue;
+        const style = doc.createElement("style");
+        style.textContent = await processCss(css, zipDirOf(p));
+        link.replaceWith(style);
+      }
+      // existing inline <style> url()
+      for (const style of Array.from(doc.querySelectorAll("style")))
+        if (style.textContent)
+          style.textContent = await processCss(style.textContent, entryDir);
+      // icons / manifest / preloaded assets
+      for (const link of Array.from(doc.querySelectorAll("link[href]"))) {
+        if (!/icon|apple-touch|manifest|preload/i.test(link.getAttribute("rel") || "")) continue;
+        const p = zipResolve(entryDir, link.getAttribute("href") || "");
+        const uri = p && (await readDataUri(p));
+        if (uri) link.setAttribute("href", uri);
+      }
+      // <script src> → inline <script>
+      for (const s of Array.from(doc.querySelectorAll("script[src]"))) {
+        const p = zipResolve(entryDir, s.getAttribute("src") || "");
+        if (!p) continue;
+        const js = await readText(p);
+        if (js == null) continue;
+        const ns = doc.createElement("script");
+        const type = s.getAttribute("type");
+        if (type) ns.setAttribute("type", type);
+        ns.textContent = js;
+        s.replaceWith(ns);
+      }
+      // media/image src + poster → data URIs
+      for (const [tag, attr] of [
+        ["img", "src"], ["source", "src"], ["audio", "src"], ["video", "src"],
+        ["video", "poster"], ["track", "src"], ["embed", "src"], ["input", "src"],
+      ] as [string, string][]) {
+        for (const el of Array.from(doc.querySelectorAll(`${tag}[${attr}]`))) {
+          const p = zipResolve(entryDir, el.getAttribute(attr) || "");
+          const uri = p && (await readDataUri(p));
+          if (uri) el.setAttribute(attr, uri);
+        }
+      }
+      // srcset (img / source)
+      for (const el of Array.from(doc.querySelectorAll("img[srcset], source[srcset]"))) {
+        const parts = await Promise.all(
+          (el.getAttribute("srcset") || "").split(",").map(async (part) => {
+            const seg = part.trim();
+            if (!seg) return "";
+            const [u, d] = seg.split(/\s+/, 2);
+            const p = zipResolve(entryDir, u);
+            const uri = p && (await readDataUri(p));
+            return uri ? (d ? `${uri} ${d}` : uri) : seg;
+          }),
+        );
+        el.setAttribute("srcset", parts.filter(Boolean).join(", "));
+      }
+      // inline style="" url()
+      for (const el of Array.from(doc.querySelectorAll("[style]"))) {
+        const st = el.getAttribute("style") || "";
+        if (/url\(/i.test(st)) el.setAttribute("style", await processCss(st, entryDir));
+      }
+
+      const out = "<!doctype html>\n" + doc.documentElement.outerHTML;
+      setHtmlHostInput(out);
+      const mb = out.length / (1024 * 1024);
+      setZipStatus(
+        `Loaded "${entryPath}" — assets inlined ✓` +
+          (mb > 20
+            ? ` (⚠️ ${mb.toFixed(1)} MB — this may be too large to publish; try smaller images)`
+            : ""),
+      );
+    } catch (err: any) {
+      setZipStatus(`Couldn't load ZIP: ${err?.message || err}`);
+    }
+  };
+
+  const renderHtmlHostView = () => (
+    <div className="flex-1 flex flex-col bg-[#FDFBF7] overflow-hidden">
+      <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20 shrink-0">
+        <button
+          onClick={() => setCurrentView("educator-suite")}
+          className="flex items-center gap-2 text-[#064E3B]/60 font-bold hover:text-[#064E3B] transition-colors"
+        >
+          <ChevronLeft size={18} /> Educator Studio
+        </button>
+        <div className="flex items-center gap-3">
+          <Globe size={20} className="text-[#059669]" />
+          <h2 className="text-lg font-black text-[#064E3B] uppercase tracking-wide">
+            HTML Host
+          </h2>
+        </div>
+        <ZeraBrandLogo size="sm" variant="original" />
+      </div>
+      <div className="flex-1 flex overflow-hidden">
+        <aside className="w-[26rem] bg-white border-r-2 border-[#D1FAE5] p-6 overflow-y-auto custom-scrollbar space-y-5 shrink-0">
+          <div className="space-y-1.5">
+            <h3 className="text-sm font-black text-[#064E3B] uppercase tracking-wide">
+              Paste your HTML
+            </h3>
+            <p className="text-[11px] font-semibold text-[#7C7A65] leading-relaxed">
+              Drop in any complete HTML page (a game, quiz, story, slideshow…),
+              or upload a ZIP of a whole web project — its files get folded into
+              one page automatically. Publish it to get a short link you can
+              share with your students — they just open it on any device, no
+              login needed.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-black uppercase text-[#7C7A65] tracking-widest">
+                HTML code
+              </label>
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-1.5 text-[10px] font-black uppercase text-[#059669] tracking-widest cursor-pointer hover:text-[#047857] transition-colors">
+                  <FileCode size={13} /> Upload .html
+                  <input
+                    type="file"
+                    accept=".html,.htm,text/html"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) loadHtmlFile(f);
+                      e.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+                <label className="flex items-center gap-1.5 text-[10px] font-black uppercase text-[#059669] tracking-widest cursor-pointer hover:text-[#047857] transition-colors">
+                  <FolderPlus size={13} /> Upload ZIP
+                  <input
+                    type="file"
+                    accept=".zip,application/zip,application/x-zip-compressed"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) loadHtmlZip(f);
+                      e.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+            {zipStatus && (
+              <p
+                className={cn(
+                  "text-[10px] font-bold leading-snug px-2.5 py-1.5 rounded-lg",
+                  zipStatus.startsWith("Couldn't")
+                    ? "bg-red-50 text-red-600"
+                    : "bg-[#F0FDF4] text-[#047857]",
+                )}
+              >
+                {zipStatus}
+              </p>
+            )}
+            <textarea
+              value={htmlHostInput}
+              onChange={(e) => setHtmlHostInput(e.target.value)}
+              spellCheck={false}
+              placeholder={"<!doctype html>\n<html>\n  <head><title>My Page</title></head>\n  <body>\n    <h1>Hello, class! 👋</h1>\n  </body>\n</html>"}
+              className="w-full h-72 p-3 bg-[#F9F8F0] border-2 border-[#D1FAE5] rounded-xl text-[12px] font-mono leading-relaxed resize-none focus:border-[#059669] outline-none transition-all"
+            />
+            <div className="flex items-center justify-between text-[10px] font-bold text-[#7C7A65]/80">
+              <span>{htmlHostInput.length.toLocaleString()} characters</span>
+              {htmlHostInput.length > 0 && (
+                <button
+                  onClick={() => setHtmlHostInput("")}
+                  className="flex items-center gap-1 hover:text-red-500 transition-colors"
+                >
+                  <Trash2 size={12} /> Clear
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase text-[#7C7A65] tracking-widest">
+              Custom link word (optional)
+            </label>
+            <div className="flex items-center bg-[#F9F8F0] border-2 border-[#D1FAE5] rounded-xl px-3 focus-within:border-[#059669] transition-all">
+              <span className="text-[12px] font-bold text-[#7C7A65]/70 select-none">zera-4ag.pages.dev/</span>
+              <input
+                value={htmlHostCode}
+                onChange={(e) =>
+                  setHtmlHostCode(e.target.value.replace(/[^a-z0-9-]/gi, "").toLowerCase())
+                }
+                placeholder="reading-week"
+                className="flex-1 py-2.5 pl-1 bg-transparent text-sm font-bold outline-none min-w-0"
+              />
+            </div>
+            <p className="text-[10px] font-semibold text-[#7C7A65]/70 leading-snug">
+              A memorable word makes the link easy to share, e.g.
+              zera-4ag.pages.dev/reading-week. Leave blank for a random one.
+              Letters, numbers and dashes only.
+            </p>
+          </div>
+
+          <button
+            onClick={() => publishHtml(htmlHostInput, htmlHostCode)}
+            disabled={publishing || htmlHostInput.trim().length < 20}
+            className="w-full py-3.5 bg-[#059669] text-white rounded-xl font-black uppercase text-xs tracking-widest flex items-center justify-center gap-2 hover:bg-[#047857] transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-md"
+          >
+            {publishing ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <Globe size={16} />
+            )}
+            {publishing ? "Publishing…" : "Publish & Get Link"}
+          </button>
+          <p className="text-[10px] font-semibold text-[#7C7A65] leading-relaxed">
+            Published pages stay live for about 120 days. Re-publish any time to
+            refresh the link or update the page.
+          </p>
+        </aside>
+
+        <main className="flex-1 flex flex-col bg-[#F9F8F0] overflow-hidden">
+          <div className="h-11 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-5 shrink-0">
+            <span className="flex items-center gap-2 text-[10px] font-black uppercase text-[#7C7A65] tracking-widest">
+              <Eye size={14} /> Live preview
+            </span>
+            <span className="text-[10px] font-bold text-[#7C7A65]/60">
+              Exactly what your students will see
+            </span>
+          </div>
+          {htmlHostInput.trim().length > 0 ? (
+            <iframe
+              title="HTML preview"
+              srcDoc={htmlHostInput}
+              sandbox="allow-scripts allow-popups allow-forms allow-modals"
+              className="flex-1 w-full bg-white"
+            />
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-8 text-[#7C7A65]/60">
+              <Globe size={48} className="mb-4 opacity-40" />
+              <p className="text-sm font-black uppercase tracking-wide">
+                Your page will preview here
+              </p>
+              <p className="text-xs font-semibold mt-1 max-w-xs">
+                Paste or upload some HTML on the left to see it come to life.
+              </p>
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+
   const renderPosterView = () => (
     <div className="flex-1 flex flex-col bg-[#FDFBF7] overflow-hidden">
       <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20 shrink-0">
@@ -20071,10 +20538,34 @@ export default function App() {
                   icon: Palette,
                   desc: "Create any image from a description",
                 },
+                {
+                  id: "html-host",
+                  name: "HTML Host",
+                  icon: Globe,
+                  desc: "Publish any HTML & share a student link",
+                },
+                {
+                  id: "canva",
+                  name: "Canva",
+                  icon: PenTool,
+                  desc: "Design posters, slides & visuals",
+                  href: "https://www.canva.com/",
+                },
+                {
+                  id: "twinkl",
+                  name: "Twinkl",
+                  icon: Sparkles,
+                  desc: "Ready-made teaching resources",
+                  href: "https://www.twinkl.my/",
+                },
               ].map((tool) => (
                 <button
                   key={tool.id}
                   onClick={() => {
+                    if ((tool as any).href) {
+                      window.open((tool as any).href, "_blank", "noopener,noreferrer");
+                      return;
+                    }
                     if (tool.id === "slides") resetSlides();
                     else if (tool.id === "worksheet") resetWorksheet();
                     else if (tool.id === "reading-program") {
@@ -20123,11 +20614,23 @@ export default function App() {
                     </p>
                   </div>
                   <div className="flex items-center text-[9px] font-black uppercase tracking-widest text-[#064E3B]/40 group-hover:text-[#064E3B] transition-colors">
-                    Launch{" "}
-                    <ChevronRight
-                      size={12}
-                      className="ml-1 group-hover:translate-x-1 transition-transform"
-                    />
+                    {(tool as any).href ? (
+                      <>
+                        Open{" "}
+                        <ExternalLink
+                          size={12}
+                          className="ml-1 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform"
+                        />
+                      </>
+                    ) : (
+                      <>
+                        Launch{" "}
+                        <ChevronRight
+                          size={12}
+                          className="ml-1 group-hover:translate-x-1 transition-transform"
+                        />
+                      </>
+                    )}
                   </div>
                 </button>
               ))}
@@ -29892,6 +30395,17 @@ export default function App() {
             {renderPosterView()}
           </motion.div>
         )}
+        {currentView === "html-host" && (
+          <motion.div
+            key="html-host"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            className="flex-1 flex overflow-hidden"
+          >
+            {renderHtmlHostView()}
+          </motion.div>
+        )}
       </AnimatePresence>
 
       {/* ===== Published-worksheet short link + QR ===== */}
@@ -29903,20 +30417,35 @@ export default function App() {
             <p className="text-xs text-stone-500 leading-relaxed">
               Students can open this on any device. The link is already copied to your clipboard.
             </p>
+            {publishResult.note && (
+              <p className="text-[11px] font-bold text-amber-700 bg-amber-50 rounded-xl px-3 py-2 leading-snug">
+                {publishResult.note}
+              </p>
+            )}
             <div className="flex items-center gap-2 bg-stone-100 rounded-xl p-1.5">
               <input
                 readOnly
                 value={publishResult.url}
                 onFocus={(e) => e.currentTarget.select()}
-                className="flex-1 bg-transparent text-sm font-bold text-[#064E3B] outline-none px-2 min-w-0"
+                onClick={() => copyPublishedLink(publishResult.url)}
+                className="flex-1 bg-transparent text-sm font-bold text-[#064E3B] outline-none px-2 min-w-0 cursor-pointer"
               />
               <button
-                onClick={() => {
-                  navigator.clipboard.writeText(publishResult.url).catch(() => {});
-                }}
-                className="shrink-0 bg-[#0ea5e9] hover:bg-[#0284c7] text-white text-[11px] font-black uppercase px-3 py-1.5 rounded-lg cursor-pointer"
+                onClick={() => copyPublishedLink(publishResult.url)}
+                className={cn(
+                  "shrink-0 text-white text-[11px] font-black uppercase px-3 py-1.5 rounded-lg cursor-pointer transition-colors flex items-center gap-1",
+                  linkCopied
+                    ? "bg-[#059669] hover:bg-[#047857]"
+                    : "bg-[#0ea5e9] hover:bg-[#0284c7]",
+                )}
               >
-                Copy
+                {linkCopied ? (
+                  <>
+                    <Check size={13} /> Copied!
+                  </>
+                ) : (
+                  "Copy"
+                )}
               </button>
             </div>
             <img
@@ -29939,7 +30468,10 @@ export default function App() {
                 Open
               </a>
               <button
-                onClick={() => setPublishResult(null)}
+                onClick={() => {
+                  setPublishResult(null);
+                  setLinkCopied(false);
+                }}
                 className="bg-stone-200 hover:bg-stone-300 text-stone-700 text-[11px] font-black uppercase px-4 py-2 rounded-xl cursor-pointer"
               >
                 Close
@@ -30167,6 +30699,18 @@ export default function App() {
               </div>
             </div>
             <div className="flex items-center gap-1">
+              <button
+                onClick={() => setShowHistory((s) => !s)}
+                title="Your request history"
+                className={cn(
+                  "text-[10px] font-black uppercase px-2 py-1 rounded-lg transition-all flex items-center gap-1",
+                  showHistory
+                    ? "bg-white text-[#059669]"
+                    : "bg-white/15 hover:bg-white/25",
+                )}
+              >
+                <History size={12} /> History
+              </button>
               {chatMessages.length > 0 && (
                 <button
                   onClick={() => setChatMessages([])}
@@ -30186,6 +30730,58 @@ export default function App() {
             </div>
           </div>
 
+          {showHistory && (
+            <div
+              style={{ backgroundColor: "#F8FFFB" }}
+              className="flex-1 overflow-y-auto custom-scrollbar p-3"
+            >
+              <div className="flex items-center justify-between px-1 pb-2">
+                <span className="text-[11px] font-black uppercase tracking-widest text-[#064E3B]/70">
+                  Your requests
+                </span>
+                {requestHistory.length > 0 && (
+                  <button
+                    onClick={clearRequestHistory}
+                    className="text-[10px] font-black uppercase text-red-500 hover:text-red-600 transition-colors"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+              {requestHistory.length === 0 ? (
+                <div className="h-[80%] flex flex-col items-center justify-center text-center gap-2 text-[#064E3B]/45 px-4">
+                  <History size={30} />
+                  <p className="text-xs font-bold">
+                    No requests yet.
+                    <br />
+                    Everything you ask will be saved here.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {requestHistory.map((h, i) => (
+                    <button
+                      key={i}
+                      onClick={() => {
+                        setChatInput(h.text);
+                        setShowHistory(false);
+                      }}
+                      title="Use this request again"
+                      className="w-full text-left bg-white border-2 border-[#D1FAE5] rounded-xl px-3 py-2 hover:border-[#059669] transition-all"
+                    >
+                      <div className="text-xs font-bold text-[#064E3B] line-clamp-2 break-words">
+                        {h.text}
+                      </div>
+                      <div className="text-[9px] font-bold text-[#064E3B]/40 mt-0.5">
+                        {fmtHistoryTime(h.ts)}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {!showHistory && (
           <div
             ref={chatScrollRef}
             style={{ backgroundColor: "#F8FFFB" }}
@@ -30319,6 +30915,7 @@ export default function App() {
               </div>
             )}
           </div>
+          )}
 
           <form
             onSubmit={sendChat}
