@@ -281,10 +281,11 @@ async function startServer() {
   const otpCache = new Map<string, { code: string; expiresAt: number; name: string; role: 'admin' | 'educator' }>();
 
   const ADMIN_EMAILS = [
-    'nurshahidahmohdayob@gmail.com', 
-    'shahidah.a@zera.edu.my', 
+    'nurshahidahmohdayob@gmail.com',
+    'shahidah.a@zera.edu.my',
     'shahidah.a@zera.edumy',
-    'nurshahidah@zera.edu.my'
+    'nurshahidah@zera.edu.my',
+    'zixin.l@zera.edu.my'
   ];
 
   // Helper to look up if email is in the school API or is an admin

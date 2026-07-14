@@ -3130,6 +3130,7 @@ const ADMIN_EMAILS = [
   "shahidah.a@zera.edu.my",
   "shahidah.a@zera.edumy",
   "nurshahidah@zera.edu.my",
+  "zixin.l@zera.edu.my",
 ];
 
 enum OperationType {
