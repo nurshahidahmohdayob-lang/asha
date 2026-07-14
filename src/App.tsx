@@ -5569,9 +5569,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           throw new Error("Display Name is required for registration.");
         }
 
-        // Validate admin registration permissions securely checking if they are already registered in the Firebase Firestore users collection
+        // Validate admin registration permissions securely checking if they are already registered in the Firebase Firestore users collection.
+        // Staff on the school domain are authorized admins, so they may register
+        // as admin directly (skip the "already in Firebase" check).
         let rolesToSave = [...registerRoles];
-        if (rolesToSave.includes("admin")) {
+        if (rolesToSave.includes("admin") && !isAdminEmail(cleanEmail)) {
           const { query, collection, where, getDocs } =
             await import("firebase/firestore");
           const usersRef = collection(db, "users");
