@@ -3133,6 +3133,12 @@ const ADMIN_EMAILS = [
   "zixin.l@zera.edu.my",
 ];
 
+// Admin = any staff member on the school domain, plus the explicit list above.
+const isAdminEmail = (email?: string | null): boolean => {
+  const e = (email || "").trim().toLowerCase();
+  return e.endsWith("@zera.edu.my") || ADMIN_EMAILS.includes(e);
+};
+
 enum OperationType {
   CREATE = "create",
   UPDATE = "update",
@@ -3662,7 +3668,7 @@ export default function App() {
   const checkIsAuthorizedAdmin = (emailToCheck: string) => {
     const cleanEmail = emailToCheck.trim().toLowerCase();
     if (!cleanEmail) return false;
-    if (ADMIN_EMAILS.includes(cleanEmail)) {
+    if (isAdminEmail(cleanEmail)) {
       return true;
     }
     // Check in local teachers list if loaded
@@ -5670,7 +5676,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           // admin (which can see all teachers' submissions) is granted only
           // to the designated admin emails, same as the normal login path.
           setUserRoles(
-            ADMIN_EMAILS.includes((rawUser.email || "").toLowerCase())
+            isAdminEmail(rawUser.email)
               ? ["admin", "educator"]
               : ["educator"],
           );
@@ -5696,9 +5702,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         try {
           const userDoc = await getDoc(doc(db, "users", fbUser.uid));
 
-          let isAuthorizedObj = ADMIN_EMAILS.includes(
-            fbUser.email?.toLowerCase() || "",
-          );
+          let isAuthorizedObj = isAdminEmail(fbUser.email);
           if (!isAuthorizedObj && fbUser.email) {
             try {
               const resValidation = await fetch(
@@ -5776,7 +5780,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             console.error("Error fetching user profile:", err);
           }
 
-          if (ADMIN_EMAILS.includes(fbUser.email?.toLowerCase() || "")) {
+          if (isAdminEmail(fbUser.email)) {
             setUserRoles(["admin", "educator"]);
           } else {
             setUserRoles(["educator"]);

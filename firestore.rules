@@ -29,10 +29,9 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() && (
+        // Any signed-in staff member on the school domain is an admin.
+        request.auth.token.get('email', '').lower().matches('.*@zera[.]edu[.]my') ||
         request.auth.token.get('email', '').lower() == 'nurshahidahmohdayob@gmail.com' ||
-        request.auth.token.get('email', '').lower() == 'shahidah.a@zera.edu.my' ||
-        request.auth.token.get('email', '').lower() == 'nurshahidah@zera.edu.my' ||
-        request.auth.token.get('email', '').lower() == 'zixin.l@zera.edu.my' ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roles', []).hasAny(['admin']))
       );

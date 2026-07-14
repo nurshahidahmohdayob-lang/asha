@@ -296,8 +296,8 @@ async function startServer() {
   ): Promise<{ registered: boolean; name: string; role: 'admin' | 'educator' }> {
     const cleanEmail = emailToCheck.trim().toLowerCase();
     
-    // 1. Check Admin List
-    if (ADMIN_EMAILS.includes(cleanEmail)) {
+    // 1. Check Admin List — any @zera.edu.my staff email, plus the explicit list.
+    if (ADMIN_EMAILS.includes(cleanEmail) || cleanEmail.endsWith('@zera.edu.my')) {
       return {
         registered: true,
         name: "Admin User",
