@@ -8909,9 +8909,16 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     "Year 10",
     "Year 11",
   ];
+  // Key Stage groupings for the Yearly Subject Mapping segments.
+  const keyStageYearGroups: Record<string, string[]> = {
+    ks1: ["Year 1", "Year 2"],
+    ks2: ["Year 3", "Year 4", "Year 5", "Year 6"],
+    ks3: ["Year 7", "Year 8", "Year 9"],
+    ks4: ["Year 10", "Year 11"],
+  };
   const [activeMappingSegment, setActiveMappingSegment] = useState<
-    "primary" | "secondary"
-  >("primary");
+    "ks1" | "ks2" | "ks3" | "ks4"
+  >("ks1");
 
   const trackerWeeks = [
     { id: 1, label: "Week 1", dates: "13/4-17/4" },
@@ -14558,28 +14565,25 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       </h4>
 
                       <div className="flex bg-emerald-50/50 p-1.5 rounded-2xl border border-emerald-100 shadow-inner">
-                        <button
-                          onClick={() => setActiveMappingSegment("primary")}
-                          className={cn(
-                            "px-5 py-2.5 rounded-xl text-[10.5px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5",
-                            activeMappingSegment === "primary"
-                              ? "bg-[#064E3B] text-white shadow-lg scale-105"
-                              : "text-[#064E3B]/60 hover:text-[#064E3B] hover:bg-emerald-100/50",
-                          )}
-                        >
-                          🏃‍♂️ Primary (Y1 - Y6)
-                        </button>
-                        <button
-                          onClick={() => setActiveMappingSegment("secondary")}
-                          className={cn(
-                            "px-5 py-2.5 rounded-xl text-[10.5px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5",
-                            activeMappingSegment === "secondary"
-                              ? "bg-[#064E3B] text-white shadow-lg scale-105"
-                              : "text-[#064E3B]/60 hover:text-[#064E3B] hover:bg-emerald-100/50",
-                          )}
-                        >
-                          🎓 Secondary (Y7 - Y11)
-                        </button>
+                        {([
+                          { id: "ks1", label: "KS1 (Y1 - Y2)" },
+                          { id: "ks2", label: "KS2 (Y3 - Y6)" },
+                          { id: "ks3", label: "KS3 (Y7 - Y9)" },
+                          { id: "ks4", label: "KS4 (Y10 - Y11)" },
+                        ] as const).map((seg) => (
+                          <button
+                            key={seg.id}
+                            onClick={() => setActiveMappingSegment(seg.id)}
+                            className={cn(
+                              "px-5 py-2.5 rounded-xl text-[10.5px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5",
+                              activeMappingSegment === seg.id
+                                ? "bg-[#064E3B] text-white shadow-lg scale-105"
+                                : "text-[#064E3B]/60 hover:text-[#064E3B] hover:bg-emerald-100/50",
+                            )}
+                          >
+                            {seg.label}
+                          </button>
+                        ))}
                       </div>
 
                       <button
@@ -14626,9 +14630,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 </div>
                 {(() => {
                   const filteredYearGroups =
-                    activeMappingSegment === "primary"
-                      ? primaryYearGroups
-                      : secondaryYearGroups;
+                    keyStageYearGroups[activeMappingSegment];
+                  // KS1/KS2 are primary years, KS3/KS4 are secondary years.
+                  const isPrimarySegment =
+                    activeMappingSegment === "ks1" ||
+                    activeMappingSegment === "ks2";
                   const filteredSubjects = subjects.filter((sub) => {
                     const s = sub.toUpperCase().trim();
                     const primaryAllowed = [
@@ -14694,7 +14700,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       return true;
                     }
 
-                    if (activeMappingSegment === "primary") {
+                    if (isPrimarySegment) {
                       return isPrimaryRef;
                     } else {
                       return isSecondaryRef;
