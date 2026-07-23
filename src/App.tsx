@@ -2860,7 +2860,7 @@ const getSubjectColorClass = (subject: string): string => {
   if (s.includes("music")) {
     return "bg-fuchsia-100 text-fuchsia-950 border-fuchsia-300";
   }
-  if (s.includes("silent reading")) {
+  if (s.includes("dear")) {
     return "bg-slate-100 text-slate-900 border-slate-300";
   }
   if (s.includes("art") || s.includes("design")) {
@@ -2978,7 +2978,7 @@ const getSubjectHexColor = (
   if (s.includes("music")) {
     return { fill: "FAE8FF", textColor: "701A75" }; // fuchsia-105 / fuchsia-950
   }
-  if (s.includes("silent reading")) {
+  if (s.includes("dear")) {
     return { fill: "F1F5F9", textColor: "0F172A" }; // slate-105 / slate-900
   }
   if (s.includes("art") || s.includes("design")) {
@@ -3077,6 +3077,7 @@ import { ImageEditor } from "./components/ImageEditor";
 import { GENERATED_THEMES, THEMES } from "./constants";
 import { PRESET_WALLPAPERS } from "./constants/wallpapers";
 import { ZERA_LOGO_B64 } from "./constants/zeraLogo";
+import { ZERA_ACORN_B64 } from "./constants/zeraAcorn";
 import {
   EduContent,
   AppTheme,
@@ -3125,18 +3126,21 @@ const setFirestoreConnected = (val: boolean) => {
   );
 };
 
+// The admin portal is restricted to exactly these accounts. Being on the
+// @zera.edu.my domain is NOT enough -- an address must be on this list to get
+// admin. Everyone else who signs in is a regular educator.
 const ADMIN_EMAILS = [
-  "nurshahidahmohdayob@gmail.com",
-  "shahidah.a@zera.edu.my",
-  "shahidah.a@zera.edumy",
-  "nurshahidah@zera.edu.my",
+  "elliot.y@zera.edu.my",
   "zixin.l@zera.edu.my",
+  "wafi.a@zera.edu.my",
+  "shahidah.a@zera.edu.my",
+  "alex.h@zera.edu.my",
+  "jared.l@zera.edu.my",
 ];
 
-// Admin = any staff member on the school domain, plus the explicit list above.
 const isAdminEmail = (email?: string | null): boolean => {
   const e = (email || "").trim().toLowerCase();
-  return e.endsWith("@zera.edu.my") || ADMIN_EMAILS.includes(e);
+  return ADMIN_EMAILS.includes(e);
 };
 
 enum OperationType {
@@ -3651,6 +3655,278 @@ function SearchableSelect({
   );
 }
 
+/* =====================================================================
+   LOCKED PERIOD BLOCKS
+
+   A locked block reserves a period for a subject before the generator runs.
+   The subject is written into the timetable up front and the period is then
+   unavailable, so nothing can ever be allocated on top of it.
+
+   target: "ALL" | "KS1".."KS4" | a year group name ("Year 3")
+   period: the period NUMBER as shown on the timetable (P1, P2 ...), not the
+           raw slot index -- the index differs between primary and secondary.
+   double: reserve this period AND the one next to it.
+   ===================================================================== */
+export type LockedBlock = {
+  id: string;
+  target: string;
+  day: string;
+  period: number;
+  subject: string;
+  double: boolean;
+};
+
+export const KEY_STAGE_OF = (yg: string): string => {
+  const n = parseInt(String(yg).replace(/\D/g, ""), 10);
+  if (n >= 1 && n <= 2) return "KS1";
+  if (n >= 3 && n <= 6) return "KS2";
+  if (n >= 7 && n <= 9) return "KS3";
+  if (n >= 10 && n <= 11) return "KS4";
+  return "CAMBRIDGE PLUS";
+};
+
+const blockAppliesTo = (b: LockedBlock, yg: string) =>
+  b.target === "ALL" || b.target === yg || b.target === KEY_STAGE_OF(yg);
+
+// The school's standing blocks. Fully editable in the scheduler.
+const DEFAULT_LOCKED_BLOCKS: LockedBlock[] = [
+  // Assembly / Homeroom — P3 for primary, P4 for secondary
+  { id: "b-asm-ks1", target: "KS1", day: "Monday", period: 3, subject: "ASSEMBLY", double: false },
+  { id: "b-asm-ks2", target: "KS2", day: "Monday", period: 3, subject: "ASSEMBLY", double: false },
+  { id: "b-asm-ks3", target: "KS3", day: "Monday", period: 4, subject: "ASSEMBLY", double: false },
+  { id: "b-asm-ks4", target: "KS4", day: "Monday", period: 4, subject: "ASSEMBLY", double: false },
+  // Whole-school blocks
+  { id: "b-sr", target: "ALL", day: "Wednesday", period: 1, subject: "DEAR PROGRAM", double: false },
+  { id: "b-wb", target: "ALL", day: "Thursday", period: 1, subject: "WELLBEING", double: false },
+  // PE — one pinned double per year group
+  { id: "b-pe-1", target: "Year 1", day: "Monday", period: 1, subject: "PHYSICAL EDUCATION", double: true },
+  { id: "b-pe-2", target: "Year 2", day: "Tuesday", period: 1, subject: "PHYSICAL EDUCATION", double: true },
+  { id: "b-pe-3", target: "Year 3", day: "Friday", period: 1, subject: "PHYSICAL EDUCATION", double: true },
+  { id: "b-pe-4", target: "Year 4", day: "Tuesday", period: 3, subject: "PHYSICAL EDUCATION", double: true },
+  { id: "b-pe-5", target: "Year 5", day: "Wednesday", period: 3, subject: "PHYSICAL EDUCATION", double: true },
+  { id: "b-pe-6", target: "Year 6", day: "Thursday", period: 3, subject: "PHYSICAL EDUCATION", double: true },
+  { id: "b-pe-7", target: "Year 7", day: "Monday", period: 5, subject: "PHYSICAL EDUCATION", double: true },
+  { id: "b-pe-8", target: "Year 8", day: "Tuesday", period: 5, subject: "PHYSICAL EDUCATION", double: true },
+  { id: "b-pe-9", target: "Year 9", day: "Wednesday", period: 6, subject: "PHYSICAL EDUCATION", double: true },
+  { id: "b-pe-10", target: "Year 10", day: "Thursday", period: 6, subject: "PHYSICAL EDUCATION", double: true },
+  { id: "b-pe-11", target: "Year 11", day: "Friday", period: 5, subject: "PHYSICAL EDUCATION", double: true },
+];
+
+/* =====================================================================
+   TEACHER DUTY ROTA
+
+   Duty posts are the stations a teacher can be rostered to. Each post has a
+   time band, a location and a standing list of duties. Friday is a short day:
+   there is no lunch duty and the two dismissal windows collapse into one.
+   ===================================================================== */
+export type DutyPost = {
+  id: string;
+  group: string;
+  time: string;
+  location: string;
+  duties: string[];
+  days: string[];
+};
+
+const MON_THU = ["Monday", "Tuesday", "Wednesday", "Thursday"];
+const ALL_DAYS = [...MON_THU, "Friday"];
+
+const DUTY_POSTS: DutyPost[] = [
+  // --- Morning arrival ---
+  {
+    id: "am-lift",
+    group: "MORNING",
+    time: "0800-0820",
+    location: "Ground Floor — In Front of the Lift",
+    duties: [
+      "Stand in front of the lift at the ground floor.",
+      "Supervise and ensure students enter the lift safely.",
+      "Accompany the students in the lift if necessary.",
+    ],
+    days: ALL_DAYS,
+  },
+  {
+    id: "am-l4",
+    group: "MORNING",
+    time: "0800-0820",
+    location: "Level 4 Entrance",
+    duties: [
+      "Make sure the students go to the canteen when they arrive at school.",
+      "0820: Allow students to go to classroom.",
+    ],
+    days: ALL_DAYS,
+  },
+  {
+    id: "am-canteen",
+    group: "MORNING",
+    time: "0800-0820",
+    location: "Canteen",
+    duties: [
+      "Make sure the students go to the canteen when they arrive at school.",
+      "0820: Allow students to go to classroom.",
+    ],
+    days: ALL_DAYS,
+  },
+  // --- Break ---
+  {
+    id: "br-canteen",
+    group: "BREAK",
+    time: "1020-1055",
+    location: "Canteen",
+    duties: [
+      "Supervise students to ensure appropriate behaviour.",
+      "1053: Ensure the students line up and go back to their classrooms.",
+    ],
+    days: ALL_DAYS,
+  },
+  {
+    id: "br-corridor",
+    group: "BREAK",
+    time: "1020-1055",
+    location: "Corridor / Play Area",
+    duties: [
+      "Make sure no students are in the classrooms.",
+      "Supervise students in the play area.",
+      "Monitor and manage students' behaviour to ensure safety and discipline.",
+      "1053: Remind students to line up and return to their classrooms.",
+    ],
+    days: ALL_DAYS,
+  },
+  // --- Lunch (no lunch duty on Friday: the day ends at 1310) ---
+  {
+    id: "ln-canteen",
+    group: "LUNCH",
+    time: "1240-1315",
+    location: "Canteen",
+    duties: [
+      "Supervise students to ensure appropriate behaviour.",
+      "1313: Ensure students line up and go back to their classrooms.",
+    ],
+    days: MON_THU,
+  },
+  {
+    id: "ln-corridor",
+    group: "LUNCH",
+    time: "1240-1315",
+    location: "Corridor / Play Area",
+    duties: [
+      "Make sure no students are in the classrooms.",
+      "Supervise students in the play area.",
+      "Monitor and manage students' behaviour to ensure safety and discipline.",
+      "1313: Remind students to line up and return to their classrooms.",
+    ],
+    days: MON_THU,
+  },
+  // --- Primary dismissal ---
+  {
+    id: "pd-lobby",
+    group: "PRIMARY DISMISSAL",
+    time: "1430-1445",
+    location: "Ground Floor Lobby",
+    duties: [
+      "Gather the students in front of the lift and ensure all students are ready to leave for the ground floor.",
+      "Monitor the pickup from the pick-up area.",
+    ],
+    days: MON_THU,
+  },
+  {
+    id: "pd-lift",
+    group: "PRIMARY DISMISSAL",
+    time: "1430-1445",
+    location: "Ground Floor Lift",
+    duties: [
+      "Bring the students to the ground floor through the lift.",
+      "Monitor the pickup from the pick-up area.",
+      "1445: Bring any remaining students back to the office if their parents have not arrived.",
+    ],
+    days: MON_THU,
+  },
+  {
+    id: "pd-pickup",
+    group: "PRIMARY DISMISSAL",
+    time: "1430-1445",
+    location: "Ground Floor Pick-up Area",
+    duties: [
+      "Monitor students' behaviour and ensure their safety at the pick-up area.",
+      "Ensure students are picked up by their parents / guardians / drivers.",
+      "1445: Bring any remaining students back to the office if their parents have not arrived.",
+    ],
+    days: MON_THU,
+  },
+  // --- Secondary dismissal ---
+  {
+    id: "sd-lobby",
+    group: "SECONDARY DISMISSAL",
+    time: "1500-1515",
+    location: "Ground Floor Lobby",
+    duties: [
+      "Gather the students in front of the lift and ensure all students are ready to leave for the ground floor.",
+      "Monitor the pickup from the pick-up area.",
+    ],
+    days: MON_THU,
+  },
+  {
+    id: "sd-lift",
+    group: "SECONDARY DISMISSAL",
+    time: "1500-1515",
+    location: "Ground Floor Lift",
+    duties: [
+      "Bring the students to the ground floor through the lift.",
+      "Monitor the pickup from the pick-up area.",
+      "1515: Bring any remaining students back to the office if their parents have not arrived.",
+    ],
+    days: MON_THU,
+  },
+  {
+    id: "sd-pickup",
+    group: "SECONDARY DISMISSAL",
+    time: "1500-1515",
+    location: "Ground Floor Pick-up Area",
+    duties: [
+      "Monitor students' behaviour and ensure their safety at the pick-up area.",
+      "Ensure students are picked up by their parents / guardians / drivers.",
+      "1515: Bring any remaining students back to the office if their parents have not arrived.",
+    ],
+    days: MON_THU,
+  },
+  // --- Friday dismissal (single early window) ---
+  {
+    id: "fd-lobby",
+    group: "FRIDAY DISMISSAL",
+    time: "1310-1325",
+    location: "Ground Floor Lobby",
+    duties: [
+      "Gather the students in front of the lift and ensure all students are ready to leave for the ground floor.",
+    ],
+    days: ["Friday"],
+  },
+  {
+    id: "fd-lift",
+    group: "FRIDAY DISMISSAL",
+    time: "1310-1325",
+    location: "Ground Floor Lift",
+    duties: [
+      "Bring the students to the ground floor through the lift.",
+      "1325: Bring any remaining students back to the office if their parents have not arrived.",
+    ],
+    days: ["Friday"],
+  },
+  {
+    id: "fd-pickup",
+    group: "FRIDAY DISMISSAL",
+    time: "1310-1325",
+    location: "Ground Floor Pick-up Area",
+    duties: [
+      "Monitor students' behaviour and ensure their safety at the pick-up area.",
+      "1325: Bring any remaining students back to the office if their parents have not arrived.",
+    ],
+    days: ["Friday"],
+  },
+];
+
+// A post can also be covered by non-teaching staff.
+const SECURITY = "SECURITY";
+
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -4123,21 +4399,97 @@ export default function App() {
         if (snapshot.exists()) {
           const data = snapshot.data();
           if (data.teachers) setTeachers(data.teachers);
-          setStaffAssignments(data.staffAssignments || {});
-          setAssignmentQuotas(data.assignmentQuotas || []);
-          setTimetableGrid(data.timetableGrid || {});
+
+          /* MIGRATION: rename legacy subjects in saved configs on load.
+             - "ASSEMBLY/ HOMEROOM" split into ASSEMBLY (Monday block) and
+               HOMEROOM (daily registration); the staff-assignment key belongs
+               to HOMEROOM, the locked block becomes ASSEMBLY.
+             - "SILENT READING" was renamed to "DEAR PROGRAM".
+             Without this, those teachers/blocks would read as unassigned. */
+          // subject -> new name for staffAssignment keys and quotas.
+          const KEY_RENAMES: Record<string, string> = {
+            "ASSEMBLY/ HOMEROOM": "HOMEROOM",
+            "SILENT READING": "DEAR PROGRAM",
+          };
+          // subject -> new name for locked blocks (assembly keeps the block).
+          const BLOCK_RENAMES: Record<string, string> = {
+            "ASSEMBLY/ HOMEROOM": "ASSEMBLY",
+            "SILENT READING": "DEAR PROGRAM",
+          };
+          const LEGACY_SUBJECTS = ["ASSEMBLY/ HOMEROOM", "SILENT READING"];
+
+          const migrated: Record<string, string> = {};
+          Object.entries(
+            (data.staffAssignments || {}) as Record<string, string>,
+          ).forEach(([key, val]) => {
+            let k = key;
+            for (const [from, to] of Object.entries(KEY_RENAMES)) {
+              if (k.endsWith(`-${from}`)) {
+                k = k.replace(`-${from}`, `-${to}`);
+                break;
+              }
+            }
+            migrated[k] = val;
+          });
+          setStaffAssignments(migrated);
+
+          setAssignmentQuotas(
+            ((data.assignmentQuotas || []) as any[]).map((q) =>
+              q?.subject && KEY_RENAMES[q.subject]
+                ? { ...q, subject: KEY_RENAMES[q.subject] }
+                : q,
+            ),
+          );
+
+          // Rename any subject strings still written into grid cells.
+          const rawGrid = data.timetableGrid || {};
+          const fixGrid: any = {};
+          Object.entries(rawGrid).forEach(([yg, daysData]: any) => {
+            fixGrid[yg] = {};
+            Object.entries(daysData || {}).forEach(([day, slots]: any) => {
+              fixGrid[yg][day] = (slots || []).map((slot: any) => {
+                if (!slot) return slot;
+                const fix = (it: any) =>
+                  it && KEY_RENAMES[it.subject]
+                    ? { ...it, subject: KEY_RENAMES[it.subject] }
+                    : it;
+                return Array.isArray(slot) ? slot.map(fix) : fix(slot);
+              });
+            });
+          });
+          setTimetableGrid(fixGrid);
+
+          // Locked blocks: fall back to the school defaults if none saved yet.
+          if (Array.isArray(data.lockedBlocks) && data.lockedBlocks.length)
+            setLockedBlocks(
+              data.lockedBlocks.map((b: LockedBlock) =>
+                b?.subject && BLOCK_RENAMES[b.subject]
+                  ? { ...b, subject: BLOCK_RENAMES[b.subject] }
+                  : b,
+              ),
+            );
           setTeacherDuties(data.teacherDuties || {});
+          setDutyRota(data.dutyRota || {});
           setCombinedClasses(data.combinedClasses || []);
           if (data.parallelRules) setParallelRules(data.parallelRules);
           if (data.classroomClassMappings)
             setClassroomClassMappings(data.classroomClassMappings);
-          if (data.classroomSubjectMappings)
-            setClassroomSubjectMappings(data.classroomSubjectMappings);
+          if (data.classroomSubjectMappings) {
+            // Rename legacy keys in the subject->room map.
+            const rooms: Record<string, string> = {};
+            Object.entries(
+              data.classroomSubjectMappings as Record<string, string>,
+            ).forEach(([k, v]) => {
+              rooms[KEY_RENAMES[k] || k] = v;
+            });
+            setClassroomSubjectMappings(rooms);
+          }
           if (data.subjects) {
             const loaded: string[] = data.subjects || [];
             const required = [
-              "ASSEMBLY/ HOMEROOM",
-              "SILENT READING",
+              "ASSEMBLY",
+              "HOMEROOM",
+              "DEAR PROGRAM",
               "ENGLISH",
               "MATHEMATICS",
               "SCIENCE",
@@ -4170,7 +4522,10 @@ export default function App() {
               "Additional Mathematics",
               "Accounting",
             ];
-            const merged = [...loaded];
+            // Drop legacy subject names -- their replacements are in `required`.
+            const merged = loaded.filter(
+              (s) => !LEGACY_SUBJECTS.includes(s),
+            );
             required.forEach((req) => {
               if (!merged.includes(req)) {
                 merged.push(req);
@@ -4597,9 +4952,11 @@ export default function App() {
         assignmentQuotas: finalQuotas,
         timetableGrid: finalGrid,
         teacherDuties: finalDuties,
+        dutyRota: dutyRota,
         combinedClasses: newCombined,
         subjects: newSubjects,
         parallelRules: newParallelRules,
+        lockedBlocks: lockedBlocks,
         classroomClassMappings: classroomClassMappings,
         classroomSubjectMappings: classroomSubjectMappings,
         updatedAt: Date.now(),
@@ -4710,6 +5067,7 @@ export default function App() {
         assignmentQuotas: finalQuotas,
         timetableGrid: finalGrid,
         teacherDuties: finalDuties,
+        dutyRota: dutyRota,
         combinedClasses: combinedClasses,
         parallelRules: parallelRules,
         subjects: subjects,
@@ -4814,7 +5172,7 @@ export default function App() {
   const [lessonInput, setLessonInput] = useState("");
   // Optional extra instructions for generation, separate from the topic.
   const [lessonInstructions, setLessonInstructions] = useState("");
-  // --- Zera Assistant chat (ChatGPT-style Q&A + poster/image generation) ---
+  // --- ZeraBot chat (ChatGPT-style Q&A + poster/image generation) ---
   // An "artifact" is a downloadable doc / interactive HTML the assistant builds.
   type ChatArtifact = { type: "html" | "doc"; html: string; title: string };
   type ChatMessage = {
@@ -4941,10 +5299,11 @@ export default function App() {
     ).trim();
     setPublishing(true);
     try {
+      // Publish an A4-print-ready version so the shared link prints cleanly.
       const res = await fetch(`${WORKSHEET_HOST_DEFAULT}/upload`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ html, code }),
+        body: JSON.stringify({ html: ensurePrintableA4(html), code }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.url)
@@ -4995,6 +5354,56 @@ export default function App() {
     `@media print{body{background:#fff;padding:0}.sheet{box-shadow:none;border:0}.bar{display:none}}` +
     `</style></head><body><div class="bar"><button onclick="window.print()">🖨️ Print / Save as PDF</button></div>` +
     `<div class="sheet">${bodyHtml}</div></body></html>`;
+
+  /* Make any HTML print cleanly on A4 before it is published: an @page A4 rule,
+     white background, sensible page-break avoidance, and a floating print
+     button. Idempotent and safe for already-styled pages -- a page that already
+     has its own print button keeps it (we don't add a second). Fragments (no
+     <html>/<body>) are wrapped in the printable A4 sheet above. */
+  const ensurePrintableA4 = (raw: string) => {
+    let html = String(raw || "").trim();
+    if (!html) return html;
+
+    const isFullDoc =
+      /<!doctype/i.test(html) ||
+      /<html[\s>]/i.test(html) ||
+      /<body[\s>]/i.test(html);
+    if (!isFullDoc) return wrapDocHtml("Zera Worksheet", html);
+
+    if (html.includes("zera-a4-print")) return html; // already processed
+
+    const style =
+      `<style id="zera-a4-print">@media print{` +
+      `@page{size:A4;margin:14mm}` +
+      `html,body{background:#fff!important;margin:0!important;padding:0!important;` +
+      `-webkit-print-color-adjust:exact;print-color-adjust:exact}` +
+      `.zera-print-hide{display:none!important}` +
+      `img,svg,table,tr,td,figure,pre,blockquote,section,article,` +
+      `.card,.question,.q,.item,li{break-inside:avoid;page-break-inside:avoid}` +
+      `h1,h2,h3,h4{break-after:avoid;page-break-after:avoid}` +
+      `}</style>`;
+
+    if (/<\/head>/i.test(html))
+      html = html.replace(/<\/head>/i, `${style}</head>`);
+    else if (/<body[^>]*>/i.test(html))
+      html = html.replace(/(<body[^>]*>)/i, `$1${style}`);
+    else html = style + html;
+
+    // Add a floating print button only if the page has none of its own.
+    if (!/window\.print\s*\(/i.test(raw)) {
+      const btn =
+        `<button class="zera-print-hide" onclick="window.print()" ` +
+        `style="position:fixed;top:14px;right:14px;z-index:2147483647;` +
+        `font:600 13px/1 system-ui,-apple-system,sans-serif;background:#0d9488;` +
+        `color:#fff;border:0;padding:10px 16px;border-radius:999px;` +
+        `box-shadow:0 4px 14px rgba(0,0,0,.18);cursor:pointer">` +
+        `🖨️ Print / Save as PDF</button>`;
+      if (/<body[^>]*>/i.test(html))
+        html = html.replace(/(<body[^>]*>)/i, `$1${btn}`);
+      else html = btn + html;
+    }
+    return html;
+  };
   // Trigger a browser download of a text/HTML artifact.
   const downloadTextFile = (filename: string, mime: string, content: string) => {
     const blob = new Blob([content], { type: `${mime};charset=utf-8` });
@@ -5546,9 +5955,43 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const handleResetPassword = async (e: React.MouseEvent) => {
     e.preventDefault();
     setAuthError("");
+    setResetMessage("");
     setResetEmailSent(false);
-    setResetMessage("Contact your administrator.");
-    alert("Contact your administrator.");
+
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
+      setAuthError(
+        "Enter your email address above, then tap “Forgot password?” again.",
+      );
+      return;
+    }
+
+    setIsResettingPassword(true);
+    try {
+      await sendPasswordResetEmail(auth, cleanEmail);
+      // Always report success, even if the address isn't registered, so the
+      // form can't be used to probe which emails have accounts.
+      setResetEmailSent(true);
+      setResetMessage(
+        `If an account exists for ${cleanEmail}, a password reset link is on its way. Check your inbox (and spam folder).`,
+      );
+    } catch (err: any) {
+      // An unregistered email still "succeeds" for privacy; surface only real
+      // errors (malformed address, network, rate limiting).
+      if (
+        err?.code === "auth/user-not-found" ||
+        err?.code === "auth/invalid-credential"
+      ) {
+        setResetEmailSent(true);
+        setResetMessage(
+          `If an account exists for ${cleanEmail}, a password reset link is on its way. Check your inbox (and spam folder).`,
+        );
+      } else {
+        setAuthError(getFriendlyAuthError(err));
+      }
+    } finally {
+      setIsResettingPassword(false);
+    }
   };
 
   const handlePasswordAuth = async (e: React.FormEvent) => {
@@ -5704,28 +6147,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         try {
           const userDoc = await getDoc(doc(db, "users", fbUser.uid));
 
-          let isAuthorizedObj = isAdminEmail(fbUser.email);
-          if (!isAuthorizedObj && fbUser.email) {
-            try {
-              const resValidation = await fetch(
-                "/api/auth/check-registration",
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ email: fbUser.email }),
-                },
-              );
-              if (resValidation.ok) {
-                const valData = await resValidation.json();
-                isAuthorizedObj = valData.success && valData.role === "admin";
-              }
-            } catch (ttErr) {
-              console.error(
-                "Failed to validate admin role on registration check server-side:",
-                ttErr,
-              );
-            }
-          }
+          // Admin is granted ONLY to the fixed allowlist (isAdminEmail).
+          // The external schools API is deliberately NOT consulted for admin:
+          // it can return role "admin" for accounts outside the allowlist,
+          // which would defeat the restriction to the six admin emails.
+          const isAuthorizedObj = isAdminEmail(fbUser.email);
 
           if (userDoc.exists()) {
             const data = userDoc.data();
@@ -6478,9 +6904,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 <button
                   type="button"
                   onClick={handleResetPassword}
-                  className="text-[#059669] text-xs font-bold hover:underline focus:outline-none"
+                  disabled={isResettingPassword}
+                  className="text-[#059669] text-xs font-bold hover:underline focus:outline-none disabled:opacity-50 disabled:no-underline"
                 >
-                  Forgot password?
+                  {isResettingPassword ? "Sending…" : "Forgot password?"}
                 </button>
               )}
             </div>
@@ -6501,7 +6928,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           </div>
 
           {resetMessage && (
-            <p className="text-amber-800 text-sm font-bold text-center px-4 bg-amber-50 py-3 rounded-xl border border-amber-200">
+            <p
+              className={cn(
+                "text-sm font-bold text-center px-4 py-3 rounded-xl border",
+                resetEmailSent
+                  ? "text-emerald-800 bg-emerald-50 border-emerald-200"
+                  : "text-amber-800 bg-amber-50 border-amber-200",
+              )}
+            >
               {resetMessage}
             </p>
           )}
@@ -8553,6 +8987,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     | "timetable"
     | "teachers"
     | "assignments"
+    | "duty"
     | "plans"
     | "members"
     | "cover"
@@ -8845,8 +9280,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
   const [subjects, setSubjects] = useState<string[]>(() => {
     return [
-      "ASSEMBLY/ HOMEROOM",
-      "SILENT READING",
+      "ASSEMBLY",
+      "HOMEROOM",
+      "DEAR PROGRAM",
       "ENGLISH",
       "MATHEMATICS",
       "SCIENCE",
@@ -8910,14 +9346,101 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     "Year 11",
   ];
   // Key Stage groupings for the Yearly Subject Mapping segments.
+  // "cambridgePlus" is a cross-year programme, so it spans every year group.
   const keyStageYearGroups: Record<string, string[]> = {
     ks1: ["Year 1", "Year 2"],
     ks2: ["Year 3", "Year 4", "Year 5", "Year 6"],
     ks3: ["Year 7", "Year 8", "Year 9"],
     ks4: ["Year 10", "Year 11"],
+    cambridgePlus: [
+      "Year 1", "Year 2", "Year 3", "Year 4", "Year 5", "Year 6",
+      "Year 7", "Year 8", "Year 9", "Year 10", "Year 11",
+    ],
+  };
+  // Primary (Y1–Y6) subject set — shared by the KS1 and KS2 segments.
+  const primaryMappingSubjects = [
+    "Assembly",
+    "DEAR Program/Islamic Studies",
+    "Wellbeing",
+    "English",
+    "Mathematics",
+    "Science",
+    "Chinese",
+    "Malay",
+    "Library",
+    "Art & Design",
+    "Music",
+    "Physical Education",
+    "Computing",
+    "Life Competencies",
+    "CCA",
+  ];
+  // Subjects shown per segment, matching the school's yearly subject mapping.
+  const segmentSubjects: Record<string, string[]> = {
+    ks1: primaryMappingSubjects,
+    ks2: primaryMappingSubjects,
+    // KS3 (Y7–Y9)
+    ks3: [
+      "Assembly",
+      "DEAR Program/Islamic Studies",
+      "Wellbeing",
+      "English First",
+      "English Second",
+      "Mathematics",
+      "Science",
+      "Chinese (Foundation)",
+      "Chinese (Intermediate)",
+      "Malay",
+      "Art & Design",
+      "Music",
+      "Physical Education",
+      "History",
+      "Sejarah",
+      "Malaysian Studies",
+      "Computing",
+      "Global Perspectives",
+      "CCA",
+    ],
+    // KS4 IGCSE (Y10–Y11) — core subjects plus the IGCSE elective options.
+    ks4: [
+      "Assembly",
+      "DEAR Program/Islamic Studies",
+      "Physical Education",
+      "English (First Language)",
+      "English (Second Language)",
+      "Mathematics (Core)",
+      "Mathematics (Extended)",
+      "Chinese (First Language)",
+      "Chinese (Second Language)",
+      "Chinese (Foreign Language)",
+      "Malay (Foreign Language)",
+      "CCA",
+      "Biology",
+      "Chemistry",
+      "Physics",
+      "Additional Mathematics",
+      "Combined Science",
+      "Accounting",
+      "Business Studies",
+      "Art & Design",
+      "Music",
+      "Global Perspectives / Enrichment",
+      "Travel & Tourism",
+    ],
+    // Cambridge Plus programme
+    cambridgePlus: [
+      "Assembly",
+      "English",
+      "Mathematics",
+      "Science",
+      "Physical Education",
+      "Art & Craft",
+      "Intervention",
+      "Music",
+    ],
   };
   const [activeMappingSegment, setActiveMappingSegment] = useState<
-    "ks1" | "ks2" | "ks3" | "ks4"
+    "ks1" | "ks2" | "ks3" | "ks4" | "cambridgePlus"
   >("ks1");
 
   const trackerWeeks = [
@@ -8943,8 +9466,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
     // Explicit Year 1 Assignments
     const y1Mappings: Record<string, string> = {
-      "ASSEMBLY/ HOMEROOM": "c-1",
-      "SILENT READING": "c-1",
+      "HOMEROOM": "c-1",
+      "DEAR PROGRAM": "c-1",
       ENGLISH: "c-1",
       MATHEMATICS: "t-1",
       SCIENCE: "t-2",
@@ -8965,8 +9488,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
     // Explicit Year 2 Assignments
     const y2Mappings: Record<string, string> = {
-      "ASSEMBLY/ HOMEROOM": "t-2",
-      "SILENT READING": "t-2",
+      "HOMEROOM": "t-2",
+      "DEAR PROGRAM": "t-2",
       ENGLISH: "t-8",
       MATHEMATICS: "t-1",
       SCIENCE: "t-2",
@@ -8987,8 +9510,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
     // Explicit Year 3 Assignments
     const y3Mappings: Record<string, string> = {
-      "ASSEMBLY/ HOMEROOM": "t-1",
-      "SILENT READING": "t-1",
+      "HOMEROOM": "t-1",
+      "DEAR PROGRAM": "t-1",
       ENGLISH: "t-8",
       MATHEMATICS: "t-1",
       SCIENCE: "t-9",
@@ -9009,8 +9532,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
     // Explicit Year 4 Assignments
     const y4Mappings: Record<string, string> = {
-      "ASSEMBLY/ HOMEROOM": "t-10",
-      "SILENT READING": "t-10",
+      "HOMEROOM": "t-10",
+      "DEAR PROGRAM": "t-10",
       ENGLISH: "t-8",
       MATHEMATICS: "t-10",
       SCIENCE: "t-9",
@@ -9031,8 +9554,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
     // Explicit Year 5 Assignments
     const y5Mappings: Record<string, string> = {
-      "ASSEMBLY/ HOMEROOM": "t-11",
-      "SILENT READING": "t-11",
+      "HOMEROOM": "t-11",
+      "DEAR PROGRAM": "t-11",
       ENGLISH: "t-11",
       MATHEMATICS: "t-12",
       SCIENCE: "c-1",
@@ -9053,8 +9576,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
     // Explicit Year 6 Assignments (Same as Year 5)
     const y6Mappings: Record<string, string> = {
-      "ASSEMBLY/ HOMEROOM": "t-11",
-      "SILENT READING": "t-11",
+      "HOMEROOM": "t-11",
+      "DEAR PROGRAM": "t-11",
       ENGLISH: "t-11",
       MATHEMATICS: "t-12",
       SCIENCE: "c-1",
@@ -9124,6 +9647,32 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     return list;
   });
 
+  const [lockedBlocks, setLockedBlocks] =
+    useState<LockedBlock[]>(DEFAULT_LOCKED_BLOCKS);
+
+  // dutyRota[day][postId] = teacherId | "SECURITY" | ""
+  const [dutyRota, setDutyRota] = useState<
+    Record<string, Record<string, string>>
+  >({});
+  // The cell currently being assigned in the Duty Rota tab.
+  const [dutyPicker, setDutyPicker] = useState<{
+    day: string;
+    postId: string;
+  } | null>(null);
+  const [dutySearch, setDutySearch] = useState("");
+  // Show each candidate's full week grid in the duty picker (on by default, so
+  // you review the timetable before assigning). Toggle off for a compact list.
+  const [dutyShowGrids, setDutyShowGrids] = useState(true);
+
+  // Draft state for the "Locked Periods" form in the scheduler.
+  const [newBlock, setNewBlock] = useState<Omit<LockedBlock, "id">>({
+    target: "ALL",
+    day: "Monday",
+    period: 1,
+    subject: "LIBRARY",
+    double: false,
+  });
+
   const [timetableGrid, setTimetableGrid] = useState<
     Record<
       string,
@@ -9180,6 +9729,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     "Year 9": "3-1",
     "Year 10": "5-3",
     "Year 11": "5-1",
+    "Cambridge Plus": "Cambridge Plus 1",
   });
 
   const [classroomSubjectMappings, setClassroomSubjectMappings] = useState<
@@ -9193,10 +9743,36 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     MUSIC: "Music Room 1",
     "PHYSICAL EDUCATION": "Hall",
     LIBRARY: "Library",
-    "SILENT READING": "Library",
+    "DEAR PROGRAM": "Library",
     BREAKFAST: "Canteen",
     LUNCH: "Canteen",
   });
+
+  // Classes that get a home room. Cambridge Plus is a programme (not one of the
+  // Year 1-11 groups that drive the timetable), but it still needs a room, so
+  // it is listed here for room allocation only.
+  const ROOM_ALLOC_CLASSES = [...yearGroups, "Cambridge Plus"];
+
+  // Canonical school room inventory used for all room allocation.
+  const CLASSROOM_OPTIONS = [
+    "1-1", "1-2", "1-3", "1-4", "1-5",
+    "2-1", "2-2", "2-3", "2-4",
+    "3-1", "3-2", "3-3",
+    "5-1", "5-2", "5-3",
+    "Cambridge Plus 1",
+  ];
+  // Facilities (Hall/Canteen) are kept for PE/assembly/meals even though they
+  // aren't teaching classrooms in the room list. Room 2-4 is the Art Room.
+  const VENUE_OPTIONS = [
+    "Science Lab", "Library", "Music Room 1", "Music Room 2", "Hall", "Canteen", "Art Room 2-4",
+    ...CLASSROOM_OPTIONS.filter((r) => r !== "2-4"),
+  ];
+  const roomLabel = (r: string) =>
+    r === "2-4"
+      ? "Room 2-4 (Art Room)"
+      : /^\d+-\d+$/.test(r)
+        ? `Room ${r}`
+        : r;
 
   const getDynamicVenue = (subject: string, yearGroup: string): string => {
     const cleanSub = subject ? subject.toUpperCase().trim() : "";
@@ -9224,7 +9800,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     ) {
       return "Hall";
     }
-    if (cleanSub.includes("LIBRARY") || cleanSub.includes("SILENT READING")) {
+    if (cleanSub.includes("LIBRARY") || cleanSub.includes("DEAR PROGRAM")) {
       return "Library";
     }
     if (
@@ -9874,7 +10450,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       ["Year 1", "Year 2", "Year 3", "Year 4", "Year 5", "Year 6"].includes(yg);
 
     const year1Pool = [
-      ...Array(1).fill("ASSEMBLY/ HOMEROOM"),
+      ...Array(1).fill("ASSEMBLY"),
       ...Array(7).fill("ENGLISH"),
       ...Array(6).fill("MATHEMATICS"),
       ...Array(4).fill("SCIENCE"),
@@ -9884,7 +10460,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       ...Array(2).fill("PHYSICAL EDUCATION"),
       ...Array(2).fill("DIGITAL LITERACY"),
       ...Array(2).fill("MUSIC"), // Indices 30, 31
-      ...Array(1).fill("SILENT READING"), // Index 32: Friday 8:30 AM
+      ...Array(1).fill("DEAR PROGRAM"), // Index 32: Friday 8:30 AM
       ...Array(2).fill("ART & DESIGN"),
       ...Array(1).fill("WELLBEING"),
       ...Array(1).fill("LIBRARY"),
@@ -9897,45 +10473,112 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     const year5Pool = [...year1Pool];
     const year6Pool = [...year1Pool];
 
-    // Time slot generation
+    /* ------------------------------------------------------------------
+       PERIOD RULER + FIXED BLOCKS
+
+       KS1 (Y1-Y2) and KS2 (Y3-Y6) run the primary day: 8 teaching periods,
+       break after P2. KS3 (Y7-Y9) and KS4 (Y10-Y11) run the secondary day:
+       9 teaching periods, break after P3. Friday is a short day for both and
+       ends with CCA.
+
+       Fixed blocks (Registration, Break, Lunch, Assembly, DEAR Program,
+       Wellbeing, PE, CCA) are baked into the ruler as non-"period" slots, so
+       every existing consumer -- the generator, the quality scorer, the cell
+       renderer, the exports -- already treats them as unavailable. A subject
+       can never be allocated on top of one.
+       ------------------------------------------------------------------ */
+
+    // Which period number sits at each slot index, per day shape.
+    // Primary : reg P1 P2 BREAK P3 P4 P5 LUNCH P6 P7 P8
+    // Secondary: reg P1 P2 P3 BREAK P4 P5 P6 LUNCH P7 P8 P9
+    const periodIndex = (primary: boolean, p: number) => {
+      const map = primary
+        ? { 1: 1, 2: 2, 3: 4, 4: 5, 5: 6, 6: 8, 7: 9, 8: 10 }
+        : { 1: 1, 2: 2, 3: 3, 4: 5, 5: 6, 6: 7, 7: 9, 8: 10, 9: 11 };
+      return (map as Record<number, number>)[p];
+    };
+
+    // Every subject that owns a locked block, plus CCA (structural). The
+    // generator must never allocate these -- they are already placed.
+    const FIXED_BLOCK_SUBJECTS = new Set([
+      "CCA",
+      // Homeroom is the daily Registration slot, not a teaching period.
+      "HOMEROOM",
+      ...lockedBlocks.map((b) => b.subject.toUpperCase().trim()),
+    ]);
+
     const getSlots = (day: string, yearGroup: string) => {
-      const isMon = day === "Monday";
+      const yg = yearGroup || "Year 1";
+      const primary = isPrimary(yg);
       const isFriday = day === "Friday";
-      const primary = isPrimary(yearGroup || "Year 1");
 
-      const sessionTimes = [
-        { start: "08:00", end: "08:30", type: "registration" },
-        { start: "08:30", end: "09:10", type: "period" },
-        { start: "09:10", end: "09:45", type: "period" },
-        { start: "09:45", end: "10:20", type: "period" },
-        { start: "10:20", end: "10:55", type: "breakfast" },
-        { start: "10:55", end: "11:30", type: isMon ? "assembly" : "period" },
-        { start: "11:30", end: "12:05", type: "period" },
-      ];
+      const slots: {
+        start: string;
+        end: string;
+        type: string;
+        label?: string;
+      }[] = primary
+        ? [
+            { start: "08:20", end: "08:30", type: "registration" },
+            { start: "08:30", end: "09:10", type: "period" },
+            { start: "09:10", end: "09:45", type: "period" },
+            { start: "09:45", end: "10:20", type: "breakfast" },
+            { start: "10:20", end: "10:55", type: "period" },
+            { start: "10:55", end: "11:30", type: "period" },
+            { start: "11:30", end: "12:05", type: "period" },
+            { start: "12:05", end: "12:40", type: "lunch" },
+            { start: "12:40", end: "13:15", type: "period" },
+            { start: "13:15", end: "13:50", type: "period" },
+            { start: "13:50", end: "14:30", type: "period" },
+          ]
+        : [
+            { start: "08:20", end: "08:30", type: "registration" },
+            { start: "08:30", end: "09:10", type: "period" },
+            { start: "09:10", end: "09:45", type: "period" },
+            { start: "09:45", end: "10:20", type: "period" },
+            { start: "10:20", end: "10:55", type: "breakfast" },
+            { start: "10:55", end: "11:30", type: "period" },
+            { start: "11:30", end: "12:05", type: "period" },
+            { start: "12:05", end: "12:40", type: "period" },
+            { start: "12:40", end: "13:15", type: "lunch" },
+            { start: "13:15", end: "13:50", type: "period" },
+            { start: "13:50", end: "14:25", type: "period" },
+            { start: "14:25", end: "15:00", type: "period" },
+          ];
 
-      if (isFriday) {
-        return sessionTimes;
-      }
+      // Friday is a short day: keep the morning, then CCA closes the week.
+      const week = isFriday
+        ? [
+            ...slots.slice(0, primary ? 7 : 7),
+            { start: "12:05", end: "13:10", type: "cca", label: "CCA" },
+          ]
+        : slots;
 
-      // Add lunch and afternoon periods for Mon-Thu
-      sessionTimes.push(
-        { start: "12:05", end: "12:40", type: "period" },
-        { start: "12:40", end: "13:15", type: "lunch" },
-        { start: "13:15", end: "13:50", type: "period" },
-      );
+      const lock = (idx: number, label: string, type = "fixed") => {
+        if (week[idx] && week[idx].type === "period")
+          week[idx] = { ...week[idx], type, label };
+      };
 
-      if (primary) {
-        // For primary, the timetable is until 2:30 (14:30)
-        sessionTimes.push({ start: "13:50", end: "14:30", type: "period" });
-      } else {
-        // For secondary, the timetable is until 3:00 (15:00)
-        sessionTimes.push(
-          { start: "13:50", end: "14:25", type: "period" },
-          { start: "14:25", end: "15:00", type: "period" },
-        );
-      }
+      // Apply every locked block that targets this class on this day.
+      lockedBlocks
+        .filter((b) => b.day === day && blockAppliesTo(b, yg))
+        .forEach((b) => {
+          const idx = periodIndex(primary, b.period);
+          if (idx == null || week[idx]?.type !== "period") return;
 
-      return sessionTimes;
+          // Assembly keeps its own slot type so it renders as the assembly cell.
+          const isAssembly = b.subject.toUpperCase().includes("ASSEMBLY");
+          lock(idx, b.subject, isAssembly ? "assembly" : "fixed");
+
+          if (b.double) {
+            // Pair forward into the next teaching period; if that slot is break,
+            // lunch, CCA or the end of a short day, pair backward instead.
+            if (week[idx + 1]?.type === "period") lock(idx + 1, b.subject);
+            else if (week[idx - 1]?.type === "period") lock(idx - 1, b.subject);
+          }
+        });
+
+      return week;
     };
 
     const getTimetableCellData = (day: string, sIdx: number) => {
@@ -9986,7 +10629,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           };
         } else if (isRegistration) {
           const homeroomTeacherId =
-            staffAssignments[`${schedulerYearGroup}-ASSEMBLY/ HOMEROOM`];
+            staffAssignments[`${schedulerYearGroup}-HOMEROOM`];
           const homeroomTeacher = teachers.find(
             (t) => t.id === homeroomTeacherId,
           );
@@ -10084,10 +10727,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           Object.entries(staffAssignments).forEach(([key, tId]) => {
             const ids = tId ? tId.split(",") : [];
             if (
-              key.endsWith("-ASSEMBLY/ HOMEROOM") &&
+              key.endsWith("-HOMEROOM") &&
               ids.includes(selectedTeacherSchedule)
             ) {
-              homeroomFor = key.replace("-ASSEMBLY/ HOMEROOM", "");
+              homeroomFor = key.replace("-HOMEROOM", "");
             }
           });
           if (homeroomFor) {
@@ -10352,7 +10995,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           }
           if (
             cleanSub.includes("LIBRARY") ||
-            cleanSub.includes("SILENT READING")
+            cleanSub.includes("DEAR PROGRAM")
           ) {
             return "Library";
           }
@@ -11543,7 +12186,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         {
           key: "slot-0",
           label: "0",
-          sub: "0800-0830",
+          sub: "0820-0830",
           type: "registration",
           width: "115px",
         },
@@ -11576,6 +12219,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           width: "105px",
         },
         {
+          // Monday P4 IS the assembly period, so the period numbering does not shift.
           key: "slot-5",
           label: day === "Monday" ? "Assembly" : "4",
           sub: "1055-1130",
@@ -11584,18 +12228,27 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         },
         {
           key: "slot-6",
-          label: day === "Monday" ? "4" : "5",
+          label: "5",
           sub: "1130-1205",
           type: "period",
           width: "115px",
         },
       ];
 
-      if (!isFri) {
+      if (isFri) {
+        // Friday is a short day and closes with CCA.
+        cols.push({
+          key: "slot-7",
+          label: "CCA",
+          sub: "1205-1310",
+          type: "cca",
+          width: "115px",
+        });
+      } else {
         cols.push(
           {
             key: "slot-7",
-            label: day === "Monday" ? "5" : "6",
+            label: "6",
             sub: "1205-1240",
             type: "period",
             width: "115px",
@@ -11609,21 +12262,21 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           },
           {
             key: "slot-9",
-            label: day === "Monday" ? "6" : "7",
+            label: "7",
             sub: "1315-1350",
             type: "period",
             width: "115px",
           },
           {
             key: "slot-10",
-            label: day === "Monday" ? "7" : "8",
+            label: "8",
             sub: "1350-1425",
             type: "period",
             width: "115px",
           },
           {
             key: "slot-11",
-            label: day === "Monday" ? "8" : "9",
+            label: "9",
             sub: "1425-1500",
             type: "period",
             width: "115px",
@@ -11679,8 +12332,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       let homeroomYg = "";
       Object.entries(staffAssignments).forEach(([key, val]) => {
         const ids = val ? val.split(",") : [];
-        if (ids.includes(teacherId) && key.endsWith("-ASSEMBLY/ HOMEROOM")) {
-          homeroomYg = key.replace("-ASSEMBLY/ HOMEROOM", "");
+        if (ids.includes(teacherId) && key.endsWith("-HOMEROOM")) {
+          homeroomYg = key.replace("-HOMEROOM", "");
         }
       });
 
@@ -11789,6 +12442,403 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       XLSX.writeFile(wb, "Overall_Teachers_Master_Spreadsheet.xlsx");
     };
 
+    /* ------------------------------------------------------------------
+       TEACHER WORKLOAD
+
+       Walk every class, day and slot once, and attribute each period to the
+       teacher who owns it. Grid lessons come from timetableGrid; the locked
+       blocks (Assembly, PE, DEAR Program, Wellbeing, CCA) and Registration
+       live in the ruler, so their teacher is resolved from staffAssignments.
+
+       Cells are keyed by START TIME, not slot index: teachers work across key
+       stages, and primary and secondary run different bells, so a primary
+       10:20 lesson would otherwise land in the secondary BREAK column.
+
+       Shared by the master export and the Duty Rota tab.
+       ------------------------------------------------------------------ */
+    const startOf = (band: string) => band.split("-")[0]; // "0830-0910" -> "0830"
+    const timeKey = (slot: any) => String(slot.start).replace(":", "");
+
+    const workload = (() => {
+      // start/end are HHMM strings ("0830"), so they compare lexicographically.
+      type Cell = {
+        subject: string;
+        yg: string;
+        start: string;
+        end: string;
+      };
+      const week: Record<string, Record<string, Record<string, Cell[]>>> = {};
+      const tally: Record<string, Record<string, number>> = {};
+      const totals: Record<string, number> = {};
+
+      const put = (
+        teacherId: string,
+        day: string,
+        slot: any,
+        subject: string,
+        yg: string,
+        countIt = true,
+      ) => {
+        if (!teacherId) return;
+        const key = timeKey(slot);
+        ((week[teacherId] ??= {})[day] ??= {})[key] ??= [];
+        week[teacherId][day][key].push({
+          subject,
+          yg,
+          start: key,
+          end: String(slot.end).replace(":", ""),
+        });
+        if (countIt) {
+          const k = `${yg}|||${subject}`;
+          (tally[teacherId] ??= {})[k] = ((tally[teacherId] ??= {})[k] || 0) + 1;
+          totals[teacherId] = (totals[teacherId] || 0) + 1;
+        }
+      };
+      const staffFor = (yg: string, subject: string) =>
+        (staffAssignments[`${yg}-${subject.toUpperCase()}`] || "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+
+      yearGroups.forEach((yg) => {
+        ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach(
+          (day) => {
+            getSlots(day, yg).forEach((slot: any, sIdx) => {
+              if (slot.type === "registration") {
+                staffFor(yg, "HOMEROOM").forEach((id) =>
+                  put(id, day, slot, "Registration", yg, false),
+                );
+              } else if (slot.type === "cca") {
+                staffFor(yg, "CCA").forEach((id) =>
+                  put(id, day, slot, "CCA", yg),
+                );
+              } else if (slot.label) {
+                // A locked block: PE, Assembly, DEAR Program, Wellbeing...
+                staffFor(yg, slot.label).forEach((id) =>
+                  put(id, day, slot, slot.label, yg),
+                );
+              } else if (slot.type === "period") {
+                const raw = timetableGrid[yg]?.[day]?.[sIdx];
+                if (!raw) return;
+                (Array.isArray(raw) ? raw : [raw]).forEach((it: any) => {
+                  if (it?.teacherId)
+                    put(it.teacherId, day, slot, it.subject, yg);
+                });
+              }
+            });
+          },
+        );
+      });
+      return { week, tally, totals };
+    })();
+
+    // How many duties each teacher currently holds across the week.
+    const dutyCount = (teacherId: string) =>
+      Object.values(dutyRota).reduce(
+        (n, posts) =>
+          n + Object.values(posts || {}).filter((v) => v === teacherId).length,
+        0,
+      );
+
+    // Is this teacher already rostered somewhere else in the same time band?
+    const dutyClash = (teacherId: string, day: string, post: DutyPost) =>
+      DUTY_POSTS.filter(
+        (p) =>
+          p.id !== post.id &&
+          p.time === post.time &&
+          dutyRota[day]?.[p.id] === teacherId,
+      );
+
+    /* Lessons that overlap a duty window. Two intervals overlap when each starts
+       before the other ends -- checking start times alone would miss a lesson
+       running 1425-1500 across a 1430-1445 dismissal duty. HHMM strings compare
+       lexicographically, so plain < and > are safe here. */
+    const lessonsAround = (teacherId: string, day: string, post: DutyPost) => {
+      const mine = workload.week[teacherId]?.[day] || {};
+      const [from, to] = post.time.split("-");
+      return Object.values(mine)
+        .flat()
+        .filter((i) => i.start < to && i.end > from);
+    };
+
+    /* The duty rota as a printable page: TIME / LOCATION / DUTIES header stack,
+       a row per day, and the frequency table underneath. */
+    const openDutyRotaHtml = () => {
+      const esc = (s: any) =>
+        String(s ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      const nameOf = (v: string) =>
+        v === SECURITY ? SECURITY : teachers.find((t) => t.id === v)?.name || "";
+
+      const groupRow = DUTY_POSTS.map(
+        (p) => `<th class="grp">${esc(p.group)}</th>`,
+      ).join("");
+      const timeRow = DUTY_POSTS.map(
+        (p) => `<th class="tm">${esc(p.time)}</th>`,
+      ).join("");
+      const locRow = DUTY_POSTS.map(
+        (p) => `<th class="loc">${esc(p.location)}</th>`,
+      ).join("");
+      const dutyRow = DUTY_POSTS.map(
+        (p) =>
+          `<td class="dut"><ul>${p.duties
+            .map((d) => `<li>${esc(d)}</li>`)
+            .join("")}</ul></td>`,
+      ).join("");
+
+      const dayRows = ALL_DAYS.map((day) => {
+        const cells = DUTY_POSTS.map((p) => {
+          if (!p.days.includes(day)) return `<td class="na"></td>`;
+          const n = nameOf(dutyRota[day]?.[p.id] || "");
+          return n
+            ? `<td class="who">${esc(n)}</td>`
+            : `<td class="none">—</td>`;
+        }).join("");
+        return `<tr><th class="day">${esc(day.toUpperCase())}</th>${cells}</tr>`;
+      }).join("");
+
+      const freq = teachers
+        .map((t) => ({ t, n: dutyCount(t.id), p: workload.totals[t.id] || 0 }))
+        .sort((a, b) => b.n - a.n || a.t.name.localeCompare(b.t.name))
+        .map(
+          (r, i) =>
+            `<tr><td>${i + 1}</td><td class="nm">${esc(r.t.name)}</td><td>${r.p}</td><td class="f">${r.n}</td></tr>`,
+        )
+        .join("");
+
+      const html =
+        `<!doctype html><html lang="en"><head><meta charset="utf-8"/>` +
+        `<title>Teacher's Duty Rota</title><style>` +
+        `*{box-sizing:border-box}body{margin:0;font-family:system-ui,'Segoe UI',sans-serif;background:#f1f5f9;color:#0f172a}` +
+        `.bar{position:sticky;top:0;z-index:9;display:flex;align-items:center;justify-content:space-between;background:#064E3B;color:#fff;padding:14px 22px}` +
+        `.bar h1{font-size:15px;margin:0;font-weight:800;letter-spacing:.04em}` +
+        `.bar button{font:inherit;font-weight:800;border:0;background:#FACC15;color:#064E3B;padding:9px 16px;border-radius:10px;cursor:pointer}` +
+        `.page{padding:18px}.hd{text-align:center;margin-bottom:14px}` +
+        `.hd h2{margin:0;font-size:17px;color:#064E3B;font-weight:900}` +
+        `.hd p{margin:2px 0;font-size:12px;color:#475569;font-weight:700}` +
+        `table{border-collapse:collapse;width:100%;background:#fff;font-size:10px}` +
+        `th,td{border:1px solid #cbd5e1;padding:5px 6px;text-align:center;vertical-align:top}` +
+        `th.grp{background:#064E3B;color:#fff;font-size:8px;letter-spacing:.08em;text-transform:uppercase}` +
+        `th.tm{background:#ecfdf5;color:#064E3B;font-weight:900;font-size:10px}` +
+        `th.loc{background:#f8fafc;color:#0f172a;font-weight:800;font-size:9px}` +
+        `th.corner{background:#064E3B;color:#fff;width:86px;font-size:9px;letter-spacing:.08em}` +
+        `td.dut{background:#fffbeb;text-align:left}` +
+        `td.dut ul{margin:0;padding-left:12px}td.dut li{font-size:8px;color:#78350f;line-height:1.35;font-weight:600}` +
+        `th.day{background:#ecfdf5;color:#064E3B;font-weight:900;font-size:9px;letter-spacing:.06em;text-align:left}` +
+        `td.who{font-weight:900;color:#064E3B;text-transform:uppercase;font-size:10px;vertical-align:middle}` +
+        `td.none{color:#cbd5e1;vertical-align:middle}` +
+        `td.na{background:#f1f5f9;background-image:repeating-linear-gradient(45deg,#e2e8f0 0 5px,#f1f5f9 5px 10px)}` +
+        `.freq{margin-top:20px;max-width:520px;font-size:11px}` +
+        `.freq th{background:#f0fdf4;color:#065f46;font-size:9px;text-transform:uppercase;letter-spacing:.06em}` +
+        `.freq td{text-align:center}.freq td.nm{text-align:left;font-weight:800;color:#064E3B;text-transform:uppercase}` +
+        `.freq td.f{font-weight:900}` +
+        `@media print{.bar{display:none}.page{padding:0}@page{size:A3 landscape;margin:8mm}}` +
+        `</style></head><body>` +
+        `<div class="bar"><h1>Teacher's Duty Rota</h1>` +
+        `<button onclick="window.print()">🖨️ Print / Save as PDF</button></div>` +
+        `<div class="page"><div class="hd">` +
+        `<h2>Zera International School</h2><p>Teacher's Duty Rota</p>` +
+        `<p>${new Date().getFullYear()}/${new Date().getFullYear() + 1}</p></div>` +
+        `<table><thead>` +
+        `<tr><th class="corner">GROUP</th>${groupRow}</tr>` +
+        `<tr><th class="corner">TIME</th>${timeRow}</tr>` +
+        `<tr><th class="corner">LOCATION</th>${locRow}</tr>` +
+        `<tr><th class="corner">DUTIES</th>${dutyRow}</tr>` +
+        `</thead><tbody>${dayRows}</tbody></table>` +
+        `<table class="freq"><thead><tr><th>No.</th><th>Name</th><th>Periods</th><th>Frequency</th></tr></thead>` +
+        `<tbody>${freq}</tbody></table>` +
+        `</div></body></html>`;
+
+      const blob = new Blob([html], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      const win = window.open(url, "_blank");
+      if (!win) {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "Duty_Rota.html";
+        a.click();
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    };
+
+    /* Open the master spreadsheet as a styled, printable HTML page: one card per
+       teacher, laid out like the school's "Teacher" tab -- a weekly grid, then a
+       Class / Subject / Total summary so the period count per subject and the
+       teacher's total teaching load are both visible at a glance. */
+    const openMasterHtml = () => {
+      const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+      const esc = (s: any) =>
+        String(s ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      const short = (yg: string) => yg.replace("Year ", "Y");
+
+      // The canonical column ruler (Mon-Thu, duty columns dropped).
+      const ruler = getDayMasterColumns("Monday").filter(
+        (c) => c.type !== "duty",
+      );
+      const { week, tally } = workload;
+
+      const filteredTeachers = teachers.filter((t) =>
+        t.name.toLowerCase().includes(masterTeacherSearch.toLowerCase()),
+      );
+
+      const cards = filteredTeachers
+        .map((teacher) => {
+          const mine = week[teacher.id] || {};
+
+          // --- weekly grid ---
+          const headLabels = ruler
+            .map(
+              (c) =>
+                `<th class="${c.type === "period" ? "pn" : "st"}">${esc(c.label)}</th>`,
+            )
+            .join("");
+          const headTimes = ruler
+            .map((c) => `<th class="tm">${esc(c.sub)}</th>`)
+            .join("");
+
+          const rows = days
+            .map((day) => {
+              const dayCols = getDayMasterColumns(day).filter(
+                (c) => c.type !== "duty",
+              );
+              // What this day actually offers, keyed by start time.
+              const byTime = Object.fromEntries(
+                dayCols.map((c) => [startOf(c.sub), c]),
+              );
+
+              const cells = ruler
+                .map((rc) => {
+                  const t = startOf(rc.sub);
+                  const col: any = byTime[t];
+                  // Friday ends early -- no such period that day.
+                  if (!col) return `<td class="na"></td>`;
+
+                  // A lesson always wins over the column's default label: primary
+                  // and secondary bells differ, so one class's break time is
+                  // another's teaching period.
+                  const items = mine[day]?.[t] || [];
+                  if (items.length)
+                    return `<td class="les">${items
+                      .map(
+                        (i) =>
+                          `<span class="yg">${esc(short(i.yg))}</span><span class="sb">${esc(i.subject)}</span>`,
+                      )
+                      .join('<hr class="pl"/>')}</td>`;
+
+                  if (col.type === "break" || col.type === "lunch")
+                    return `<td class="brk">${esc(col.label)}</td>`;
+                  if (col.type === "cca")
+                    return `<td class="cca">CCA<span>${esc(col.sub)}</span></td>`;
+                  return `<td class="free"></td>`;
+                })
+                .join("");
+              return `<tr><th class="day">${esc(day.toUpperCase())}</th>${cells}</tr>`;
+            })
+            .join("");
+
+          // --- Class / Subject / Total summary ---
+          const counts = tally[teacher.id] || {};
+          const entries = Object.entries(counts).sort((a, b) => {
+            const [ya, sa] = a[0].split("|||");
+            const [yb, sb] = b[0].split("|||");
+            return ya.localeCompare(yb, undefined, { numeric: true }) ||
+              sa.localeCompare(sb);
+          });
+          const grand = entries.reduce((n, [, v]) => n + v, 0);
+
+          const summary = entries
+            .map(
+              ([k, v]) =>
+                `<tr><td class="cl">${esc(k.split("|||")[0])}</td><td class="sj">${esc(
+                  k.split("|||")[1],
+                )}</td><td class="tt">${v}</td></tr>`,
+            )
+            .join("");
+
+          return `<section class="card">
+            <div class="who"><h2>${esc(teacher.name)}</h2>
+              <span class="load">${grand} periods / week</span></div>
+            <div class="scroll"><table class="tt-grid">
+              <thead><tr><th class="corner"></th>${headLabels}</tr>
+                     <tr><th class="corner"></th>${headTimes}</tr></thead>
+              <tbody>${rows}</tbody>
+            </table></div>
+            <table class="sum">
+              <thead><tr><th>Class</th><th>Subject</th><th>Total</th></tr></thead>
+              <tbody>${summary || `<tr><td colspan="3" class="none">No periods assigned</td></tr>`}
+                <tr class="grand"><td>Total</td><td></td><td>${grand}</td></tr>
+              </tbody>
+            </table>
+          </section>`;
+        })
+        .join("");
+
+      const html =
+        `<!doctype html><html lang="en"><head><meta charset="utf-8"/>` +
+        `<meta name="viewport" content="width=device-width, initial-scale=1"/>` +
+        `<title>Master Spreadsheet — Teachers</title><style>` +
+        `*{box-sizing:border-box}body{margin:0;font-family:system-ui,'Segoe UI',sans-serif;background:#f1f5f9;color:#0f172a}` +
+        `.bar{position:sticky;top:0;z-index:9;display:flex;align-items:center;justify-content:space-between;gap:16px;background:#064E3B;color:#fff;padding:14px 22px}` +
+        `.bar h1{font-size:16px;margin:0;font-weight:800;letter-spacing:.04em}` +
+        `.bar button{font:inherit;font-weight:800;border:0;background:#FACC15;color:#064E3B;padding:9px 16px;border-radius:10px;cursor:pointer}` +
+        `.page{padding:18px;max-width:1400px;margin:0 auto}` +
+        `.card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px 18px;margin-bottom:18px;page-break-inside:avoid;break-inside:avoid}` +
+        `.who{display:flex;align-items:baseline;justify-content:space-between;gap:12px;border-bottom:2px solid #064E3B;padding-bottom:8px;margin-bottom:12px}` +
+        `.who h2{margin:0;font-size:15px;font-weight:900;color:#064E3B;text-transform:uppercase;letter-spacing:.04em}` +
+        `.load{font-size:11px;font-weight:800;color:#065f46;background:#ecfdf5;border:1px solid #a7f3d0;padding:3px 10px;border-radius:20px;white-space:nowrap}` +
+        `.scroll{overflow-x:auto}` +
+        `table{border-collapse:collapse;width:100%}` +
+        `.tt-grid{font-size:10px;table-layout:fixed;min-width:900px}` +
+        `.tt-grid th,.tt-grid td{border:1px solid #e2e8f0;padding:3px 2px;text-align:center;vertical-align:middle}` +
+        `.tt-grid th.pn{background:#064E3B;color:#fff;font-size:12px;font-weight:900}` +
+        `.tt-grid th.st{background:#475569;color:#fff;font-size:8px;letter-spacing:.04em}` +
+        `.tt-grid th.tm{background:#f8fafc;color:#64748b;font-size:8px;font-weight:600}` +
+        `.tt-grid th.corner{background:#fff;border:0;width:80px}` +
+        `.tt-grid th.day{background:#ecfdf5;color:#064E3B;font-size:9px;font-weight:900;letter-spacing:.06em;text-align:left;padding-left:8px}` +
+        `.tt-grid td{height:42px}` +
+        `.tt-grid td.les{background:#fff}` +
+        `.tt-grid td.les .yg{display:block;font-weight:900;color:#064E3B;font-size:9px}` +
+        `.tt-grid td.les .sb{display:block;font-weight:600;color:#0f172a;font-size:9px;line-height:1.15}` +
+        `.tt-grid td.les hr.pl{border:0;border-top:1px dashed #cbd5e1;margin:2px 4px}` +
+        `.tt-grid td.free{background:#fcfcfd}` +
+        `.tt-grid td.brk{background:#fef9c3;color:#a16207;font-weight:900;font-size:8px;letter-spacing:.08em}` +
+        `.tt-grid td.cca{background:#ede9fe;color:#5b21b6;font-weight:900;font-size:9px}` +
+        `.tt-grid td.cca span{display:block;font-weight:600;font-size:7px;opacity:.75}` +
+        `.tt-grid td.na{background:#f1f5f9;background-image:repeating-linear-gradient(45deg,#e2e8f0 0 5px,#f1f5f9 5px 10px)}` +
+        `.sum{margin-top:12px;font-size:11px;max-width:460px}` +
+        `.sum th,.sum td{border:1px solid #e2e8f0;padding:4px 10px;text-align:left}` +
+        `.sum thead th{background:#f0fdf4;color:#065f46;font-weight:800;font-size:9px;text-transform:uppercase;letter-spacing:.06em}` +
+        `.sum td.tt{text-align:center;font-weight:800;width:60px}` +
+        `.sum td.cl{font-weight:700;color:#064E3B;width:110px}` +
+        `.sum td.none{color:#94a3b8;font-style:italic;text-align:center}` +
+        `.sum tr.grand td{background:#064E3B;color:#fff;font-weight:900}` +
+        `@media print{.bar{position:static}.bar button{display:none}.page{padding:0;max-width:none}` +
+        `.card{border:0;border-radius:0;padding:0 0 10mm}.scroll{overflow:visible}.tt-grid{min-width:0}` +
+        `@page{size:A4 landscape;margin:8mm}}` +
+        `</style></head><body>` +
+        `<div class="bar"><h1>Master Spreadsheet — Teacher Timetables &amp; Loads</h1>` +
+        `<button onclick="window.print()">🖨️ Print / Save as PDF</button></div>` +
+        `<div class="page">${cards || `<p style="padding:20px">No teachers match the current search.</p>`}</div>` +
+        `</body></html>`;
+
+      const blob = new Blob([html], { type: "text/html" });
+      const url = URL.createObjectURL(blob);
+      const win = window.open(url, "_blank");
+      if (!win) {
+        // Popup blocked — download the file instead.
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "Master_Spreadsheet.html";
+        a.click();
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    };
+
     const renderMasterSpreadsheet = () => {
       const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
       const filteredTeachers = teachers.filter((t) => {
@@ -11838,14 +12888,24 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={downloadMasterExcel}
-              className="flex items-center gap-2 bg-[#064E3B] hover:bg-[#064E3B]/95 text-white font-black uppercase text-[10px] tracking-wider px-4 py-2 rounded-xl transition-all shadow-md cursor-pointer hover:scale-[1.02]"
-            >
-              <Download size={14} className="stroke-[3]" />
-              Download Excel Spreadsheet
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={openMasterHtml}
+                className="flex items-center gap-2 bg-white border-2 border-[#064E3B] text-[#064E3B] hover:bg-[#064E3B] hover:text-white font-black uppercase text-[10px] tracking-wider px-4 py-2 rounded-xl transition-all shadow-md cursor-pointer hover:scale-[1.02]"
+              >
+                <Globe size={14} className="stroke-[3]" />
+                Open in HTML
+              </button>
+              <button
+                type="button"
+                onClick={downloadMasterExcel}
+                className="flex items-center gap-2 bg-[#064E3B] hover:bg-[#064E3B]/95 text-white font-black uppercase text-[10px] tracking-wider px-4 py-2 rounded-xl transition-all shadow-md cursor-pointer hover:scale-[1.02]"
+              >
+                <Download size={14} className="stroke-[3]" />
+                Download Excel Spreadsheet
+              </button>
+            </div>
           </div>
 
           <div className="border border-gray-150 rounded-2xl overflow-hidden shadow-md max-w-full bg-white">
@@ -12226,7 +13286,36 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         currentSlot.type !== "assembly" &&
         currentSlot.type !== "registration"
       ) {
-        cellContent = (
+        // Locked fixed blocks (PE, DEAR Program, Wellbeing, CCA) carry a label
+        // and are pre-assigned -- they are never available to the generator.
+        const locked = !!(currentSlot as any).label;
+        const lockedTeacher = locked
+          ? teachers.find(
+              (t) =>
+                t.id ===
+                (
+                  staffAssignments[
+                    `${schedulerYearGroup}-${(currentSlot as any).label.toUpperCase()}`
+                  ] || ""
+                ).split(",")[0],
+            )
+          : undefined;
+
+        cellContent = locked ? (
+          <div className="min-h-[70px] p-2 rounded-xl bg-emerald-50 border-2 border-emerald-200 flex flex-col justify-center items-center text-center w-full">
+            <p className="text-[10px] font-black text-emerald-800 uppercase tracking-wide leading-tight">
+              {(currentSlot as any).label}
+            </p>
+            {lockedTeacher && (
+              <p className="text-[8px] font-bold text-emerald-600/70 uppercase tracking-wider mt-0.5">
+                {lockedTeacher.name}
+              </p>
+            )}
+            <p className="text-[7px] font-black text-emerald-500/60 uppercase tracking-widest mt-1">
+              🔒 Locked
+            </p>
+          </div>
+        ) : (
           <div className="min-h-[70px] p-2 rounded-xl bg-amber-50/30 border-2 border-dashed border-amber-200/50 flex flex-col justify-center items-center text-center w-full">
             <p className="text-[9px] font-black text-amber-600/40 uppercase tracking-widest">
               {currentSlot.type.replace("_", " ")}
@@ -12257,7 +13346,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           );
         } else if (isRegistration) {
           const homeroomTeacherId =
-            staffAssignments[`${schedulerYearGroup}-ASSEMBLY/ HOMEROOM`];
+            staffAssignments[`${schedulerYearGroup}-HOMEROOM`];
           const homeroomTeacher = teachers.find(
             (t) => t.id === homeroomTeacherId,
           );
@@ -12286,14 +13375,18 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
                 const isPe = checkIsPE(draggedAssignment.subject);
 
-                // Check Physical Education slot restriction (9:10 - 10:20 a.m. only, ie. sIdx === 2 or sIdx === 3)
-                if (isPe) {
-                  if (sIdx !== 2 && sIdx !== 3) {
-                    alert(
-                      "Physical Education can only be scheduled at 9.10-10.20 a.m. (Slot 2 or 3).",
-                    );
-                    return;
-                  }
+                // PE and the other fixed blocks own a locked slot in the ruler --
+                // they are pre-assigned and cannot be dropped anywhere else.
+                if (
+                  isPe ||
+                  FIXED_BLOCK_SUBJECTS.has(
+                    draggedAssignment.subject.toUpperCase().trim(),
+                  )
+                ) {
+                  alert(
+                    `${draggedAssignment.subject} is a fixed block — its period is locked in the timetable and cannot be moved here.`,
+                  );
+                  return;
                 }
 
                 // Check if teacher is already busy at this time in another year group
@@ -12634,10 +13727,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           Object.entries(staffAssignments).forEach(([key, tId]) => {
             const ids = tId ? tId.split(",") : [];
             if (
-              key.endsWith("-ASSEMBLY/ HOMEROOM") &&
+              key.endsWith("-HOMEROOM") &&
               ids.includes(selectedTeacherSchedule)
             ) {
-              homeroomFor = key.replace("-ASSEMBLY/ HOMEROOM", "");
+              homeroomFor = key.replace("-HOMEROOM", "");
             }
           });
 
@@ -12768,23 +13861,18 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           },
         );
 
-        // FIX SILENT READING: Friday 8:30 (Index 1)
-        // Only place if not already occupied by a locked slot
-        if (newGrid[yg]["Friday"][1] === null) {
-          const srTeacher = staffAssignments[`${yg}-SILENT READING`] || "c-1";
-          newGrid[yg]["Friday"][1] = {
-            teacherId: srTeacher,
-            subject: "SILENT READING",
-          };
-        }
+        // DEAR Program, Wellbeing, Assembly, PE and CCA are fixed blocks in the
+        // ruler now (see getSlots) -- they are pre-assigned and locked, so nothing
+        // needs writing into the grid for them here.
       });
 
-      // 2. Prepare assignments - filter out Silent Reading and locked teachers as they are already fixed
-      // Prioritize Physical Education to be scheduled first since it is extremely constrained to only 9.10 - 10.20 a.m.
+      // 2. Prepare assignments. The fixed-block subjects are excluded: they already
+      // own their period in the ruler and the generator must not place them again.
       const assignments = [...assignmentQuotas]
         .filter(
           (a) =>
-            a.subject !== "SILENT READING" &&
+            !FIXED_BLOCK_SUBJECTS.has(a.subject.toUpperCase().trim()) &&
+            !checkIsPE(a.subject) &&
             !lockedTeacherIds.has(a.teacherId),
         )
         .sort((a, b) => {
@@ -13372,8 +14460,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               [];
             subjects.forEach((sub) => {
               if (
-                sub === "ASSEMBLY/ HOMEROOM" ||
-                sub === "SILENT READING" ||
+                sub === "ASSEMBLY" ||
+                sub === "HOMEROOM" ||
+                sub === "DEAR PROGRAM" ||
                 checkIsPE(sub)
               )
                 return;
@@ -13523,8 +14612,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               const ygSubjects = subjects
                 .filter(
                   (s) =>
-                    s !== "ASSEMBLY/ HOMEROOM" &&
-                    s !== "SILENT READING" &&
+                    s !== "ASSEMBLY" &&
+                    s !== "HOMEROOM" &&
+                    s !== "DEAR PROGRAM" &&
                     !checkIsPE(s) &&
                     !isEvenQuotaSubject(yg, s),
                 )
@@ -13600,8 +14690,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               const ygSubjects = subjects
                 .filter(
                   (s) =>
-                    s !== "ASSEMBLY/ HOMEROOM" &&
-                    s !== "SILENT READING" &&
+                    s !== "ASSEMBLY" &&
+                    s !== "HOMEROOM" &&
+                    s !== "DEAR PROGRAM" &&
                     !checkIsPE(s) &&
                     !isEvenQuotaSubject(yg, s),
                 )
@@ -13651,8 +14742,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 const ygSubjects = subjects
                   .filter(
                     (s) =>
-                      s !== "ASSEMBLY/ HOMEROOM" &&
-                      s !== "SILENT READING" &&
+                      s !== "ASSEMBLY" &&
+                      s !== "HOMEROOM" &&
+                      s !== "DEAR PROGRAM" &&
                       !checkIsPE(s) &&
                       !isEvenQuotaSubject(yg, s),
                   )
@@ -13681,8 +14773,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 const ygSubjects = subjects
                   .filter(
                     (s) =>
-                      s !== "ASSEMBLY/ HOMEROOM" &&
-                      s !== "SILENT READING" &&
+                      s !== "ASSEMBLY" &&
+                      s !== "HOMEROOM" &&
+                      s !== "DEAR PROGRAM" &&
                       !checkIsPE(s),
                   )
                   .sort(() => Math.random() - 0.5);
@@ -13806,7 +14899,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       const hasHomeroom = Object.entries(staffAssignments).some(
         ([key, tId]) => {
           const ids = tId ? tId.split(",") : [];
-          return key.endsWith("-ASSEMBLY/ HOMEROOM") && ids.includes(teacherId);
+          return key.endsWith("-HOMEROOM") && ids.includes(teacherId);
         },
       );
       if (hasHomeroom) {
@@ -13864,10 +14957,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
       const homeroomYg = Object.entries(staffAssignments).find(([key, tId]) => {
         const ids = tId ? tId.split(",") : [];
-        return key.endsWith("-ASSEMBLY/ HOMEROOM") && ids.includes(teacherId);
+        return key.endsWith("-HOMEROOM") && ids.includes(teacherId);
       });
       if (homeroomYg) {
-        const yg = homeroomYg[0].replace("-ASSEMBLY/ HOMEROOM", "");
+        const yg = homeroomYg[0].replace("-HOMEROOM", "");
         const regSlot = daySlots[0];
         duties.push({
           yg,
@@ -14043,7 +15136,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         });
       });
 
-      // Add exactly 1 period for each year group where mapped to ASSEMBLY/ HOMEROOM in staffAssignments
+      // Add exactly 1 period for each year group where mapped to HOMEROOM in staffAssignments
       Object.entries(staffAssignments || {}).forEach(([key, val]) => {
         if (
           key.toUpperCase().includes("ASSEMBLY") ||
@@ -14224,7 +15317,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         }
         if (
           cleanSub.includes("LIBRARY") ||
-          cleanSub.includes("SILENT READING")
+          cleanSub.includes("DEAR PROGRAM")
         ) {
           return "Library";
         }
@@ -14354,6 +15447,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 "timetable",
                 "teachers",
                 "assignments",
+                "duty",
                 "classrooms",
                 "plans",
                 "cover",
@@ -14372,6 +15466,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 >
                   {tab === "plans"
                     ? "Lesson Plans"
+                    : tab === "assignments"
+                      ? "Subject Allocation"
+                    : tab === "duty"
+                      ? "Duty Rota"
                     : tab === "cover"
                       ? "Cover Planner"
                       : tab === "classrooms"
@@ -14481,7 +15579,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     </div>
                     <div>
                       <p className="font-black text-[#064E3B]">
-                        Staff Assignments
+                        Subject Allocation
                       </p>
                       <p className="text-xs font-bold text-[#064E3B]/60">
                         Map subjects and set period quotas
@@ -14525,13 +15623,581 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             </div>
           )}
 
+          {adminTab === "duty" && (
+            <div className="space-y-6">
+              {/* --- header --- */}
+              <div className="bg-white rounded-3xl p-6 border-2 border-emerald-100/60 shadow-xl">
+                <div className="flex justify-between items-center flex-wrap gap-3">
+                  <div>
+                    <h3 className="font-black text-lg text-[#064E3B] uppercase tracking-tight">
+                      Teacher&apos;s Duty Rota
+                    </h3>
+                    <p className="text-[11px] text-[#064E3B]/60 font-bold uppercase tracking-wider">
+                      Click any cell to assign. You&apos;ll see each
+                      teacher&apos;s week and current load before you commit.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={openMasterHtml}
+                      className="px-4 py-2 bg-white border-2 border-[#064E3B] text-[#064E3B] hover:bg-emerald-50 rounded-xl font-black uppercase text-[10px] tracking-wider flex items-center gap-1.5"
+                    >
+                      <Calendar size={12} /> All Timetables
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openDutyRotaHtml}
+                      className="px-4 py-2 bg-[#064E3B] hover:bg-emerald-700 text-white rounded-xl font-black uppercase text-[10px] tracking-wider flex items-center gap-1.5"
+                    >
+                      <FileCode size={12} /> Open Rota (HTML)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (
+                          confirm("Clear every duty assignment for the week?")
+                        ) {
+                          setDutyRota({});
+                          setHasUnsavedTimetableChanges(true);
+                        }
+                      }}
+                      className="px-4 py-2 bg-red-50 hover:bg-red-500 hover:text-white text-red-600 rounded-xl font-black uppercase text-[10px] tracking-wider"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* --- the rota grid --- */}
+              <div className="bg-white rounded-3xl p-4 border-2 border-gray-100 shadow-xl overflow-x-auto">
+                <table className="w-full border-collapse text-[11px] min-w-[1100px]">
+                  <thead>
+                    <tr>
+                      <th className="border border-gray-200 bg-[#064E3B] text-white p-2 text-[9px] font-black uppercase tracking-widest w-[90px]">
+                        Day
+                      </th>
+                      {DUTY_POSTS.map((p) => (
+                        <th
+                          key={p.id}
+                          className="border border-gray-200 bg-emerald-50 p-2 align-top"
+                          title={p.duties.join("\n• ")}
+                        >
+                          <div className="text-[8px] font-black uppercase tracking-widest text-emerald-600/70">
+                            {p.group}
+                          </div>
+                          <div className="text-[10px] font-black text-[#064E3B]">
+                            {p.time}
+                          </div>
+                          <div className="text-[9px] font-bold text-[#064E3B]/60 leading-tight mt-0.5">
+                            {p.location}
+                          </div>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ALL_DAYS.map((day) => (
+                      <tr key={day}>
+                        <th className="border border-gray-200 bg-emerald-50 text-[#064E3B] p-2 text-[9px] font-black uppercase tracking-widest text-left">
+                          {day}
+                        </th>
+                        {DUTY_POSTS.map((post) => {
+                          if (!post.days.includes(day))
+                            return (
+                              <td
+                                key={post.id}
+                                className="border border-gray-200 bg-gray-50 bg-[repeating-linear-gradient(45deg,#f1f5f9_0_5px,#f8fafc_5px_10px)]"
+                              />
+                            );
+
+                          const val = dutyRota[day]?.[post.id] || "";
+                          const t = teachers.find((x) => x.id === val);
+                          const name =
+                            val === SECURITY ? SECURITY : t?.name || "";
+                          const isOpen =
+                            dutyPicker?.day === day &&
+                            dutyPicker?.postId === post.id;
+                          const clash =
+                            t && lessonsAround(t.id, day, post).length > 0;
+
+                          return (
+                            <td
+                              key={post.id}
+                              onClick={() =>
+                                setDutyPicker(
+                                  isOpen ? null : { day, postId: post.id },
+                                )
+                              }
+                              className={cn(
+                                "border border-gray-200 p-1.5 text-center cursor-pointer transition-colors align-middle",
+                                isOpen
+                                  ? "bg-[#064E3B] text-white"
+                                  : name
+                                    ? clash
+                                      ? "bg-red-50 hover:bg-red-100"
+                                      : "bg-white hover:bg-emerald-50"
+                                    : "bg-amber-50/40 hover:bg-amber-100/60",
+                              )}
+                              title={
+                                clash
+                                  ? "This teacher is teaching during this duty window."
+                                  : undefined
+                              }
+                            >
+                              {name ? (
+                                <span
+                                  className={cn(
+                                    "font-black uppercase text-[10px] tracking-wide",
+                                    isOpen
+                                      ? "text-white"
+                                      : clash
+                                        ? "text-red-600"
+                                        : "text-[#064E3B]",
+                                  )}
+                                >
+                                  {clash && "⚠ "}
+                                  {name}
+                                </span>
+                              ) : (
+                                <span className="text-[9px] font-bold text-amber-600/50 uppercase">
+                                  + Assign
+                                </span>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* --- assignment picker: pick a teacher, see their week --- */}
+              {dutyPicker &&
+                (() => {
+                  const post = DUTY_POSTS.find(
+                    (p) => p.id === dutyPicker.postId,
+                  )!;
+                  const day = dutyPicker.day;
+                  const current = dutyRota[day]?.[post.id] || "";
+
+                  const assign = (who: string) => {
+                    setDutyRota({
+                      ...dutyRota,
+                      [day]: { ...(dutyRota[day] || {}), [post.id]: who },
+                    });
+                    setHasUnsavedTimetableChanges(true);
+                    setDutyPicker(null);
+                  };
+
+                  const candidates = teachers
+                    .filter((t) =>
+                      t.name
+                        .toLowerCase()
+                        .includes(dutySearch.trim().toLowerCase()),
+                    )
+                    .map((t) => ({
+                      t,
+                      duties: dutyCount(t.id),
+                      periods: workload.totals[t.id] || 0,
+                      busy: lessonsAround(t.id, day, post),
+                      clashes: dutyClash(t.id, day, post),
+                    }))
+                    // Fairest first: fewest duties, then lightest teaching load.
+                    .sort(
+                      (a, b) =>
+                        Number(a.busy.length > 0) - Number(b.busy.length > 0) ||
+                        a.duties - b.duties ||
+                        a.periods - b.periods,
+                    );
+
+                  // The full weekly timetable for one teacher, cells matched to
+                  // the master ruler by start time. Cells overlapping the duty
+                  // window are tinted so free slots are obvious at a glance.
+                  const ruler = getDayMasterColumns("Monday").filter(
+                    (c) => c.type !== "duty",
+                  );
+                  const [dFrom, dTo] = post.time.split("-");
+                  const renderWeekGrid = (teacherId: string) => {
+                    const mine = workload.week[teacherId] || {};
+                    return (
+                      <div className="mt-2 overflow-x-auto rounded-xl border border-gray-100">
+                        <table className="border-collapse text-[9px] w-full min-w-[720px]">
+                          <thead>
+                            <tr>
+                              <th className="border border-gray-100 bg-[#064E3B] text-white p-1 w-[64px]" />
+                              {ruler.map((c) => {
+                                const inDuty =
+                                  startOf(c.sub) >= dFrom &&
+                                  startOf(c.sub) < dTo;
+                                return (
+                                  <th
+                                    key={c.key}
+                                    className={cn(
+                                      "border border-gray-100 p-1",
+                                      inDuty
+                                        ? "bg-amber-100"
+                                        : c.type === "period"
+                                          ? "bg-emerald-50"
+                                          : "bg-gray-50",
+                                    )}
+                                  >
+                                    <div className="font-black text-[#064E3B] text-[10px]">
+                                      {c.label}
+                                    </div>
+                                    <div className="font-semibold text-[#064E3B]/50 text-[7px]">
+                                      {c.sub}
+                                    </div>
+                                  </th>
+                                );
+                              })}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {ALL_DAYS.map((d) => {
+                              const dayCols = getDayMasterColumns(d).filter(
+                                (c) => c.type !== "duty",
+                              );
+                              const byTime = Object.fromEntries(
+                                dayCols.map((c) => [startOf(c.sub), c]),
+                              );
+                              return (
+                                <tr
+                                  key={d}
+                                  className={d === day ? "bg-amber-50/40" : ""}
+                                >
+                                  <th className="border border-gray-100 bg-emerald-50 text-[#064E3B] p-1 text-left text-[8px] font-black uppercase">
+                                    {d.slice(0, 3)}
+                                  </th>
+                                  {ruler.map((rc) => {
+                                    const tm = startOf(rc.sub);
+                                    const col: any = byTime[tm];
+                                    if (!col)
+                                      return (
+                                        <td
+                                          key={rc.key}
+                                          className="border border-gray-100 bg-[repeating-linear-gradient(45deg,#f1f5f9_0_4px,#f8fafc_4px_8px)]"
+                                        />
+                                      );
+                                    const items = mine[d]?.[tm] || [];
+                                    const inDuty = tm >= dFrom && tm < dTo;
+                                    if (items.length)
+                                      return (
+                                        <td
+                                          key={rc.key}
+                                          className={cn(
+                                            "border border-gray-100 p-1 text-center leading-tight",
+                                            inDuty
+                                              ? "bg-red-100"
+                                              : "bg-white",
+                                          )}
+                                        >
+                                          {items.map((it, k) => (
+                                            <div key={k}>
+                                              <span className="font-black text-[#064E3B]">
+                                                {it.yg.replace("Year ", "Y")}
+                                              </span>{" "}
+                                              <span className="text-[#0f172a]/70">
+                                                {it.subject}
+                                              </span>
+                                            </div>
+                                          ))}
+                                        </td>
+                                      );
+                                    if (
+                                      col.type === "break" ||
+                                      col.type === "lunch"
+                                    )
+                                      return (
+                                        <td
+                                          key={rc.key}
+                                          className="border border-gray-100 bg-yellow-50 text-[7px] font-black text-yellow-700 text-center uppercase"
+                                        >
+                                          {col.label}
+                                        </td>
+                                      );
+                                    if (col.type === "cca")
+                                      return (
+                                        <td
+                                          key={rc.key}
+                                          className="border border-gray-100 bg-violet-50 text-[8px] font-black text-violet-700 text-center"
+                                        >
+                                          CCA
+                                        </td>
+                                      );
+                                    return (
+                                      <td
+                                        key={rc.key}
+                                        className={cn(
+                                          "border border-gray-100 text-center text-[8px] font-bold",
+                                          inDuty
+                                            ? "bg-emerald-100 text-emerald-700"
+                                            : "bg-white text-emerald-500/40",
+                                        )}
+                                      >
+                                        {inDuty ? "FREE" : "·"}
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  };
+
+                  return (
+                    <div className="bg-white rounded-3xl p-6 border-2 border-[#064E3B] shadow-2xl space-y-4">
+                      <div className="flex justify-between items-start flex-wrap gap-3 border-b-2 border-gray-100 pb-3">
+                        <div>
+                          <p className="text-[9px] font-black uppercase tracking-widest text-emerald-600">
+                            {post.group} · {day}
+                          </p>
+                          <h4 className="font-black text-base text-[#064E3B]">
+                            {post.location}{" "}
+                            <span className="text-[#064E3B]/50">
+                              {post.time}
+                            </span>
+                          </h4>
+                          <ul className="mt-2 space-y-0.5">
+                            {post.duties.map((d, i) => (
+                              <li
+                                key={i}
+                                className="text-[10px] font-bold text-[#064E3B]/60 flex gap-1.5"
+                              >
+                                <span className="text-emerald-500">•</span>
+                                {d}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div className="flex gap-2 items-center">
+                          <input
+                            value={dutySearch}
+                            onChange={(e) => setDutySearch(e.target.value)}
+                            placeholder="Search teacher…"
+                            className="px-3 py-2 rounded-xl border-2 border-gray-100 text-[11px] font-bold outline-none focus:border-emerald-400"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setDutyShowGrids((v) => !v)}
+                            className={cn(
+                              "px-3 py-2 rounded-xl font-black uppercase text-[10px] tracking-wider flex items-center gap-1.5 border-2",
+                              dutyShowGrids
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                : "bg-white text-[#064E3B]/60 border-gray-100",
+                            )}
+                            title="Show or hide each teacher's full weekly timetable"
+                          >
+                            <Calendar size={12} />
+                            {dutyShowGrids ? "Timetables On" : "Timetables Off"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => assign(SECURITY)}
+                            className="px-3 py-2 rounded-xl bg-slate-700 text-white font-black uppercase text-[10px] tracking-wider"
+                          >
+                            Security
+                          </button>
+                          {current && (
+                            <button
+                              type="button"
+                              onClick={() => assign("")}
+                              className="px-3 py-2 rounded-xl bg-red-50 text-red-600 font-black uppercase text-[10px] tracking-wider hover:bg-red-500 hover:text-white"
+                            >
+                              Unassign
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setDutyPicker(null)}
+                            className="p-2 rounded-xl bg-gray-100 text-gray-500 hover:bg-gray-200"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <p className="text-[10px] font-black uppercase tracking-widest text-[#064E3B]/40">
+                        Sorted by fairness — fewest duties and lightest teaching
+                        load first. Each teacher&apos;s week is shown so you can
+                        weigh the workload.
+                      </p>
+
+                      <div className={cn(
+                        "grid gap-3 max-h-[560px] overflow-y-auto custom-scrollbar p-1",
+                        dutyShowGrids ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2",
+                      )}>
+                        {candidates.map(
+                          ({ t, duties, periods, busy, clashes }) => {
+                            const mine = workload.week[t.id] || {};
+                            const blocked =
+                              busy.length > 0 || clashes.length > 0;
+                            return (
+                              <div
+                                key={t.id}
+                                className={cn(
+                                  "rounded-2xl border-2 p-3 transition-all",
+                                  current === t.id
+                                    ? "border-[#064E3B] bg-emerald-50/60"
+                                    : blocked
+                                      ? "border-red-100 bg-red-50/30"
+                                      : "border-gray-100 bg-white hover:border-emerald-300",
+                                )}
+                              >
+                                <div className="flex justify-between items-center gap-2 mb-2">
+                                  <div className="min-w-0">
+                                    <p className="font-black text-[12px] text-[#064E3B] uppercase truncate">
+                                      {t.name}
+                                    </p>
+                                    <p className="text-[9px] font-bold text-[#064E3B]/50 uppercase tracking-wider">
+                                      {periods} periods · {duties}{" "}
+                                      {duties === 1 ? "duty" : "duties"}
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    disabled={blocked}
+                                    onClick={() => assign(t.id)}
+                                    className={cn(
+                                      "px-4 py-1.5 rounded-lg font-black uppercase text-[9px] tracking-wider whitespace-nowrap shrink-0",
+                                      blocked
+                                        ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                                        : current === t.id
+                                          ? "bg-emerald-100 text-emerald-700"
+                                          : "bg-[#064E3B] text-white hover:bg-emerald-700",
+                                    )}
+                                  >
+                                    {current === t.id ? "Assigned" : "Assign"}
+                                  </button>
+                                </div>
+
+                                {blocked && (
+                                  <p className="text-[9px] font-black uppercase tracking-wider text-red-600 mb-1.5">
+                                    ⚠{" "}
+                                    {busy.length
+                                      ? `Teaching ${busy[0].subject} (${busy[0].yg.replace("Year ", "Y")}) during this window`
+                                      : `Already on duty at ${clashes[0].location}`}
+                                  </p>
+                                )}
+
+                                {/* compact per-day summary when the full grid is hidden */}
+                                {!dutyShowGrids && (
+                                <div className="grid grid-cols-5 gap-1">
+                                  {ALL_DAYS.map((d) => {
+                                    const n = Object.values(
+                                      mine[d] || {},
+                                    ).reduce((a, b) => a + b.length, 0);
+                                    const onDuty = DUTY_POSTS.filter(
+                                      (p) => dutyRota[d]?.[p.id] === t.id,
+                                    ).length;
+                                    return (
+                                      <div
+                                        key={d}
+                                        className={cn(
+                                          "rounded-lg p-1 text-center border",
+                                          d === day
+                                            ? "border-[#064E3B] bg-emerald-50"
+                                            : "border-gray-100 bg-gray-50/60",
+                                        )}
+                                        title={`${d}: ${n} periods, ${onDuty} duties`}
+                                      >
+                                        <p className="text-[8px] font-black uppercase text-[#064E3B]/40">
+                                          {d.slice(0, 3)}
+                                        </p>
+                                        <p className="text-[13px] font-black text-[#064E3B] leading-none">
+                                          {n}
+                                        </p>
+                                        {onDuty > 0 && (
+                                          <p className="text-[7px] font-black uppercase text-amber-600 leading-none mt-0.5">
+                                            {onDuty}D
+                                          </p>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                                )}
+
+                                {/* full weekly timetable, shown by default */}
+                                {dutyShowGrids && renderWeekGrid(t.id)}
+                              </div>
+                            );
+                          },
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+              {/* --- frequency table --- */}
+              <div className="bg-white rounded-3xl p-6 border-2 border-gray-100 shadow-xl">
+                <h4 className="font-black text-sm text-[#064E3B] uppercase tracking-tight mb-3">
+                  Duty Frequency
+                </h4>
+                <div className="overflow-x-auto">
+                  <table className="border-collapse text-[11px] w-full max-w-[560px]">
+                    <thead>
+                      <tr>
+                        {["No.", "Name", "Periods", "Frequency"].map((h) => (
+                          <th
+                            key={h}
+                            className="border border-gray-200 bg-emerald-50 text-[#064E3B] p-2 text-[9px] font-black uppercase tracking-widest text-left"
+                          >
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {teachers
+                        .map((t) => ({
+                          t,
+                          n: dutyCount(t.id),
+                          p: workload.totals[t.id] || 0,
+                        }))
+                        .sort((a, b) => b.n - a.n || a.t.name.localeCompare(b.t.name))
+                        .map((row, i) => (
+                          <tr key={row.t.id}>
+                            <td className="border border-gray-200 p-2 font-bold text-[#064E3B]/50">
+                              {i + 1}
+                            </td>
+                            <td className="border border-gray-200 p-2 font-black text-[#064E3B] uppercase">
+                              {row.t.name}
+                            </td>
+                            <td className="border border-gray-200 p-2 font-bold text-[#064E3B]/60">
+                              {row.p}
+                            </td>
+                            <td
+                              className={cn(
+                                "border border-gray-200 p-2 font-black text-center",
+                                row.n === 0
+                                  ? "text-gray-300"
+                                  : "text-[#064E3B]",
+                              )}
+                            >
+                              {row.n}
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
           {adminTab === "assignments" && (
             <div className="max-w-7xl mx-auto space-y-10 pb-20">
               {/* Header with Global Actions */}
               <div className="flex justify-between items-center">
                 <div>
                   <h3 className="text-3xl font-black text-[#064E3B]">
-                    Staff Assignments Dashboard
+                    Subject Allocation Dashboard
                   </h3>
                   <p className="text-[#064E3B]/60 font-bold mt-1">
                     Map subjects to teachers and define period quotas for
@@ -14570,6 +16236,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           { id: "ks2", label: "KS2 (Y3 - Y6)" },
                           { id: "ks3", label: "KS3 (Y7 - Y9)" },
                           { id: "ks4", label: "KS4 (Y10 - Y11)" },
+                          { id: "cambridgePlus", label: "🎯 Cambridge Plus" },
                         ] as const).map((seg) => (
                           <button
                             key={seg.id}
@@ -14631,98 +16298,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 {(() => {
                   const filteredYearGroups =
                     keyStageYearGroups[activeMappingSegment];
-                  // KS1/KS2 are primary years, KS3/KS4 are secondary years.
-                  const isPrimarySegment =
-                    activeMappingSegment === "ks1" ||
-                    activeMappingSegment === "ks2";
-                  const filteredSubjects = subjects.filter((sub) => {
-                    const s = sub.toUpperCase().trim();
-                    const primaryAllowed = [
-                      "ASSEMBLY/ HOMEROOM",
-                      "SILENT READING",
-                      "ENGLISH",
-                      "MATHEMATICS",
-                      "SCIENCE",
-                      "MANDARIN",
-                      "MALAY",
-                      "GLOBAL PERSPECTIVES",
-                      "PHYSICAL EDUCATION",
-                      "DIGITAL LITERACY",
-                      "MUSIC",
-                      "ART & DESIGN",
-                      "WELLBEING",
-                      "LIBRARY",
-                      "CCA",
-                    ].map((x) => x.toUpperCase().trim());
-
-                    const secondaryAllowed = [
-                      "ASSEMBLY/ HOMEROOM",
-                      "ASSEMBLY/ HOMERROM",
-                      "SILENT READING",
-                      "ENGLISH",
-                      "MATHEMATICS",
-                      "SCIENCE",
-                      "CHINESE (SECOND/FOREIGN)",
-                      "CHINESE (SECOND & FOREIGN)",
-                      "MALAY (FOREIGN)",
-                      "GLOBAL PERSPECTIVES",
-                      "PHYSICAL EDUCATION",
-                      "ICT",
-                      "MUSIC",
-                      "ART & DESIGN",
-                      "WELLBEING",
-                      "HISTORY",
-                      "SEJARAH / ENRICHMENT",
-                      "AGAMA",
-                      "CCA",
-                      "Silent Reading",
-                      "Mathematics",
-                      "Physical Education",
-                      "Biology",
-                      "First Language English",
-                      "English as a Second Language",
-                      "Chinese (First)",
-                      "Chinese (Second & Foreign)",
-                      "Malay (Foreign)",
-                      "English Enrichment",
-                      "Chemistry",
-                      "Business Studies",
-                      "Physics",
-                      "Additional Mathematics",
-                      "Accounting",
-                    ].map((x) => x.toUpperCase().trim());
-
-                    const isPrimaryRef = primaryAllowed.includes(s);
-                    const isSecondaryRef = secondaryAllowed.includes(s);
-
-                    // If it is a completely custom subject not in our reference templates, show in both
-                    if (!isPrimaryRef && !isSecondaryRef) {
-                      return true;
-                    }
-
-                    if (isPrimarySegment) {
-                      return isPrimaryRef;
-                    } else {
-                      return isSecondaryRef;
-                    }
-                  });
-
-                  // Ensure assembly/homeroom or assembly/homerrom is sorted to the front if present
-                  filteredSubjects.sort((a, b) => {
-                    const cleanA = a.toUpperCase().trim();
-                    const cleanB = b.toUpperCase().trim();
-                    const isA_HR =
-                      cleanA.includes("HOMEROOM") ||
-                      cleanA.includes("HOMERROM") ||
-                      cleanA.includes("ASSEMBLY");
-                    const isB_HR =
-                      cleanB.includes("HOMEROOM") ||
-                      cleanB.includes("HOMERROM") ||
-                      cleanB.includes("ASSEMBLY");
-                    if (isA_HR && !isB_HR) return -1;
-                    if (!isA_HR && isB_HR) return 1;
-                    return 0;
-                  });
+                  // Subjects for this segment come straight from the school's
+                  // yearly subject mapping (differentiated per Key Stage / programme).
+                  const filteredSubjects =
+                    segmentSubjects[activeMappingSegment] || [];
 
                   return (
                     <div className="overflow-auto max-h-[650px] border border-emerald-50 rounded-2xl relative custom-scrollbar">
@@ -15672,8 +17251,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     </h4>
 
                     <div className="space-y-4 max-h-[350px] overflow-y-auto pr-2 custom-scrollbar">
-                      {yearGroups.map((yg) => {
-                        const currentRoom = classroomClassMappings[yg] || "5-1";
+                      {ROOM_ALLOC_CLASSES.map((yg) => {
+                        const currentRoom =
+                          classroomClassMappings[yg] ||
+                          (yg === "Cambridge Plus" ? "Cambridge Plus 1" : "5-1");
                         return (
                           <div
                             key={yg}
@@ -15694,20 +17275,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                               }}
                               className="text-xs font-mono font-black text-[#064E3B] p-2 bg-white rounded-lg border-2 border-transparent focus:border-[#FACC15] outline-none"
                             >
-                              {[
-                                "1-1",
-                                "1-2",
-                                "1-3",
-                                "1-5",
-                                "2-1",
-                                "2-2",
-                                "2-3",
-                                "3-1",
-                                "5-1",
-                                "5-3",
-                              ].map((room) => (
+                              {CLASSROOM_OPTIONS.map((room) => (
                                 <option key={room} value={room}>
-                                  Room {room}
+                                  {roomLabel(room)}
                                 </option>
                               ))}
                             </select>
@@ -15733,7 +17303,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         { subj: "MUSIC", defaultRoom: "Music Room 1" },
                         { subj: "PHYSICAL EDUCATION", defaultRoom: "Hall" },
                         { subj: "LIBRARY", defaultRoom: "Library" },
-                        { subj: "SILENT READING", defaultRoom: "Library" },
+                        { subj: "DEAR PROGRAM", defaultRoom: "Library" },
                         { subj: "BREAKFAST", defaultRoom: "Canteen" },
                         { subj: "LUNCH", defaultRoom: "Canteen" },
                       ].map(({ subj, defaultRoom }) => {
@@ -15759,27 +17329,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                               }}
                               className="text-xs font-black text-amber-800 p-2 bg-white rounded-lg border-2 border-transparent focus:border-[#FACC15] outline-none"
                             >
-                              {[
-                                "Science Lab",
-                                "Art Room 2-4",
-                                "Music Room 1",
-                                "Music Room 2",
-                                "Library",
-                                "Hall",
-                                "Canteen",
-                                "1-1",
-                                "1-2",
-                                "1-3",
-                                "1-5",
-                                "2-1",
-                                "2-2",
-                                "2-3",
-                                "3-1",
-                                "5-1",
-                                "5-3",
-                              ].map((room) => (
+                              {VENUE_OPTIONS.map((room) => (
                                 <option key={room} value={room}>
-                                  {room.includes("-") ? `Room ${room}` : room}
+                                  {roomLabel(room)}
                                 </option>
                               ))}
                             </select>
@@ -17767,7 +19319,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       onClick={() => setAdminTab("assignments")}
                       className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
                     >
-                      <UserPlus size={12} /> Staff Assignments
+                      <UserPlus size={12} /> Subject Allocation
                     </button>
 
                     <button
@@ -17881,6 +19433,223 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       Reset Grid
                     </button>
                   </div>
+                </div>
+              </div>
+
+              {/* Locked Periods — reserve a period for a subject before generating */}
+              <div className="bg-white rounded-3xl p-6 border-2 border-emerald-100/60 shadow-xl space-y-4">
+                <div className="flex justify-between items-center border-b border-gray-100 pb-3 flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-600">
+                      <Lock size={16} />
+                    </div>
+                    <div>
+                      <h4 className="font-black text-sm text-[#064E3B] uppercase tracking-tight">
+                        Locked Periods
+                      </h4>
+                      <p className="text-[10px] text-[#064E3B]/60 font-bold uppercase tracking-wider">
+                        Reserve a period for a subject. It is placed before
+                        Auto-Generate runs and nothing can be scheduled over it.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-black uppercase px-3 py-1 rounded-full flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    {lockedBlocks.length} Locked
+                  </div>
+                </div>
+
+                {/* --- add a new block --- */}
+                <div className="flex flex-wrap items-end gap-2 bg-emerald-50/40 p-3 rounded-2xl border border-emerald-100">
+                  {[
+                    {
+                      k: "target",
+                      label: "Applies to",
+                      opts: [
+                        "ALL",
+                        "KS1",
+                        "KS2",
+                        "KS3",
+                        "KS4",
+                        ...yearGroups,
+                      ],
+                    },
+                    {
+                      k: "day",
+                      label: "Day",
+                      opts: [
+                        "Monday",
+                        "Tuesday",
+                        "Wednesday",
+                        "Thursday",
+                        "Friday",
+                      ],
+                    },
+                  ].map((f) => (
+                    <div key={f.k} className="flex flex-col gap-1">
+                      <label className="text-[9px] font-black uppercase tracking-wider text-[#064E3B]/50">
+                        {f.label}
+                      </label>
+                      <select
+                        value={(newBlock as any)[f.k]}
+                        onChange={(e) =>
+                          setNewBlock({ ...newBlock, [f.k]: e.target.value })
+                        }
+                        className="px-3 py-2 rounded-xl border-2 border-emerald-100 text-[11px] font-bold bg-white focus:border-emerald-400 outline-none"
+                      >
+                        {f.opts.map((o) => (
+                          <option key={o} value={o}>
+                            {o}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[9px] font-black uppercase tracking-wider text-[#064E3B]/50">
+                      Period
+                    </label>
+                    <select
+                      value={newBlock.period}
+                      onChange={(e) =>
+                        setNewBlock({
+                          ...newBlock,
+                          period: parseInt(e.target.value, 10),
+                        })
+                      }
+                      className="px-3 py-2 rounded-xl border-2 border-emerald-100 text-[11px] font-bold bg-white focus:border-emerald-400 outline-none"
+                    >
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((p) => (
+                        <option key={p} value={p}>
+                          P{p}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
+                    <label className="text-[9px] font-black uppercase tracking-wider text-[#064E3B]/50">
+                      Subject
+                    </label>
+                    <select
+                      value={newBlock.subject}
+                      onChange={(e) =>
+                        setNewBlock({ ...newBlock, subject: e.target.value })
+                      }
+                      className="px-3 py-2 rounded-xl border-2 border-emerald-100 text-[11px] font-bold bg-white focus:border-emerald-400 outline-none w-full"
+                    >
+                      {subjects.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setNewBlock({ ...newBlock, double: !newBlock.double })
+                    }
+                    className={cn(
+                      "px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 transition-all",
+                      newBlock.double
+                        ? "bg-emerald-500 text-white border-emerald-500"
+                        : "bg-white text-[#064E3B]/50 border-emerald-100",
+                    )}
+                    title="Reserve this period and the one next to it"
+                  >
+                    Double
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const clash = lockedBlocks.find(
+                        (b) =>
+                          b.day === newBlock.day &&
+                          b.period === newBlock.period &&
+                          (b.target === newBlock.target ||
+                            b.target === "ALL" ||
+                            newBlock.target === "ALL"),
+                      );
+                      if (clash) {
+                        alert(
+                          `That period is already locked for ${clash.subject} (${clash.target}, ${clash.day} P${clash.period}). Remove it first.`,
+                        );
+                        return;
+                      }
+                      setLockedBlocks([
+                        ...lockedBlocks,
+                        { ...newBlock, id: `b-${Date.now()}` },
+                      ]);
+                      setHasUnsavedTimetableChanges(true);
+                    }}
+                    className="px-4 py-2 bg-[#064E3B] hover:bg-emerald-700 text-white rounded-xl font-black uppercase text-[10px] tracking-wider transition-colors flex items-center gap-1.5"
+                  >
+                    <Plus size={12} /> Lock Period
+                  </button>
+                </div>
+
+                {/* --- existing blocks --- */}
+                <div className="flex flex-wrap gap-2 max-h-[160px] overflow-y-auto p-1 custom-scrollbar">
+                  {lockedBlocks.length === 0 && (
+                    <p className="text-[11px] font-bold text-[#064E3B]/40 italic px-2 py-3">
+                      No locked periods. Every period is available to
+                      Auto-Generate.
+                    </p>
+                  )}
+                  {[...lockedBlocks]
+                    .sort(
+                      (a, b) =>
+                        a.target.localeCompare(b.target) || a.period - b.period,
+                    )
+                    .map((b) => (
+                      <div
+                        key={b.id}
+                        className="px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 bg-emerald-50 border-emerald-200 text-emerald-800 flex items-center gap-2"
+                      >
+                        <Lock size={11} />
+                        <span className="flex flex-col leading-tight">
+                          <span>{b.subject}</span>
+                          <span className="text-[9px] font-bold text-emerald-600/70 normal-case tracking-normal">
+                            {b.target} · {b.day.slice(0, 3)} · P{b.period}
+                            {b.double ? " (double)" : ""}
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLockedBlocks(
+                              lockedBlocks.filter((x) => x.id !== b.id),
+                            );
+                            setHasUnsavedTimetableChanges(true);
+                          }}
+                          className="text-emerald-400 hover:text-red-500 transition-colors"
+                          title="Remove this locked period"
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ))}
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <p className="text-[10px] font-bold text-[#064E3B]/40">
+                    Period numbers follow the class&apos;s own ruler — primary
+                    has 8 periods a day, secondary 9.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLockedBlocks(DEFAULT_LOCKED_BLOCKS);
+                      setHasUnsavedTimetableChanges(true);
+                    }}
+                    className="px-3 py-1.5 bg-gray-50 hover:bg-gray-200 text-gray-600 rounded-xl font-black uppercase text-[9px] tracking-wider transition-colors whitespace-nowrap"
+                  >
+                    Reset to School Defaults
+                  </button>
                 </div>
               </div>
 
@@ -18145,7 +19914,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                           ) {
                                             const homeroomTeacherId =
                                               staffAssignments[
-                                                `${schedulerYearGroup}-ASSEMBLY/ HOMEROOM`
+                                                `${schedulerYearGroup}-HOMEROOM`
                                               ];
                                             const isSelectedHomeroom =
                                               homeroomTeacherId ===
@@ -30677,20 +32446,47 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         </div>
       )}
 
-      {/* ===== Zera Assistant — portaled to <body> so its fixed z-index isn't
+      {/* ===== ZeraBot — portaled to <body> so its fixed z-index isn't
           trapped by an ancestor's stacking context (transform/isolate), which
           made the worksheet bleed through the panel. ===== */}
       {createPortal(
         <>
       {!chatOpen && (
-        <button
-          onClick={() => setChatOpen(true)}
-          title="Ask Zera Assistant"
+        <div
           style={{ zIndex: 1000 }}
-          className="fixed bottom-5 right-5 w-14 h-14 rounded-full bg-gradient-to-br from-[#059669] to-[#047857] text-white shadow-2xl shadow-[#059669]/40 flex items-center justify-center hover:scale-105 active:scale-95 transition-all"
+          className="fixed bottom-5 right-5 flex items-center gap-3"
         >
-          <Sparkles size={24} />
-        </button>
+          {/* Hint bubble so users know the bot is clickable for help */}
+          <button
+            onClick={() => setChatOpen(true)}
+            className="hidden sm:flex items-center gap-1.5 bg-white text-[#064E3B] text-xs font-black px-3 py-2 rounded-full shadow-lg border-2 border-[#D1FAE5] animate-bounce hover:border-[#059669] transition-all cursor-pointer"
+          >
+            Need help? Ask ZeraBot 👋
+          </button>
+          {/* Launcher with ripple waves radiating outward */}
+          <div className="relative">
+            <span className="absolute inset-0 rounded-full border-2 border-[#059669] acorn-wave" />
+            <span
+              className="absolute inset-0 rounded-full border-2 border-[#059669] acorn-wave"
+              style={{ animationDelay: "0.8s" }}
+            />
+            <span
+              className="absolute inset-0 rounded-full border-2 border-[#059669] acorn-wave"
+              style={{ animationDelay: "1.6s" }}
+            />
+            <button
+              onClick={() => setChatOpen(true)}
+              title="Ask ZeraBot"
+              className="relative w-14 h-14 rounded-full bg-gradient-to-br from-[#059669] to-[#047857] shadow-2xl shadow-[#059669]/40 flex items-center justify-center hover:scale-105 active:scale-95 transition-all p-1.5"
+            >
+              <img
+                src={ZERA_ACORN_B64}
+                alt="ZeraBot"
+                className="w-[82%] h-[82%] object-contain acorn-3d"
+              />
+            </button>
+          </div>
+        </div>
       )}
       {chatOpen && (
         <div
@@ -30699,12 +32495,16 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         >
           <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-[#059669] to-[#047857] text-white">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
-                <Sparkles size={16} />
+              <div className="w-9 h-9 rounded-full acorn-pedestal flex items-center justify-center">
+                <img
+                  src={ZERA_ACORN_B64}
+                  alt="ZeraBot"
+                  className="w-[80%] h-[80%] object-contain acorn-3d"
+                />
               </div>
               <div>
                 <div className="font-black text-sm leading-tight">
-                  Zera Assistant
+                  ZeraBot
                 </div>
                 <div className="text-[10px] opacity-80 font-bold">
                   Ask me anything
@@ -30802,27 +32602,27 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           >
             {chatMessages.length === 0 && !chatLoading && (
               <div className="h-full flex flex-col items-center justify-center text-center gap-3 px-2">
-                <div className="w-14 h-14 rounded-2xl bg-[#D1FAE5] text-[#059669] flex items-center justify-center">
-                  <Sparkles size={28} />
+                <div className="relative w-24 h-24 flex items-center justify-center">
+                  <span className="absolute inset-0 rounded-full border-2 border-[#059669]/60 acorn-wave" />
+                  <span
+                    className="absolute inset-0 rounded-full border-2 border-[#059669]/60 acorn-wave"
+                    style={{ animationDelay: "0.8s" }}
+                  />
+                  <span
+                    className="absolute inset-0 rounded-full border-2 border-[#059669]/60 acorn-wave"
+                    style={{ animationDelay: "1.6s" }}
+                  />
+                  <div className="relative w-full h-full rounded-full acorn-pedestal flex items-center justify-center">
+                    <img
+                      src={ZERA_ACORN_B64}
+                      alt="ZeraBot"
+                      className="w-[78%] h-[78%] object-contain acorn-3d acorn-float"
+                    />
+                  </div>
                 </div>
                 <p className="text-sm font-black text-[#064E3B]">
                   How can I help you today?
                 </p>
-                <div className="flex flex-col gap-2 w-full mt-1">
-                  {[
-                    "Make a poster about the water cycle",
-                    "Explain photosynthesis for Year 4",
-                    "Write a rubric for a persuasive essay",
-                  ].map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => setChatInput(s)}
-                      className="text-left text-xs font-bold text-[#064E3B] bg-white border-2 border-[#D1FAE5] rounded-xl px-3 py-2 hover:border-[#059669] transition-all"
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
               </div>
             )}
             {chatMessages.map((m, i) => (

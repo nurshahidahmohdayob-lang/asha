@@ -11,3 +11,33 @@
   --font-chewy: "Chewy", cursive;
   --font-pacifico: "Pacifico", cursive;
 }
+
+/* ZeraBot acorn mascot — give the flat illustration a 3D, lifted feel. */
+@keyframes acorn-float {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50%      { transform: translateY(-6px) rotate(2deg); }
+}
+.acorn-float { animation: acorn-float 3.2s ease-in-out infinite; }
+.acorn-3d {
+  filter:
+    drop-shadow(0 7px 5px rgba(60, 40, 15, 0.35))
+    drop-shadow(0 2px 2px rgba(0, 0, 0, 0.25));
+}
+/* Glossy raised sphere the acorn sits on. */
+.acorn-pedestal {
+  background: radial-gradient(circle at 50% 30%, #ffffff 0%, #d1fae5 46%, #86efac 100%);
+  box-shadow:
+    0 14px 30px -6px rgba(5, 150, 105, 0.5),
+    inset 0 2px 6px rgba(255, 255, 255, 0.75),
+    inset 0 -9px 15px rgba(5, 120, 90, 0.28);
+}
+
+/* Ripple waves radiating out from the ZeraBot mascot. */
+@keyframes acorn-wave {
+  0%   { transform: scale(1);    opacity: 0.55; }
+  70%  { opacity: 0; }
+  100% { transform: scale(2.2);  opacity: 0; }
+}
+.acorn-wave {
+  animation: acorn-wave 2.4s ease-out infinite;
+}
