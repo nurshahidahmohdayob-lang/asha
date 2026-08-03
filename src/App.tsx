@@ -15436,12 +15436,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     return (
       <div className="flex-1 flex flex-col h-screen bg-[#F0FDF4] overflow-hidden">
         {/* Admin Nav */}
-        <header className="h-20 bg-white border-b-2 border-[#D1FAE5] px-12 flex items-center justify-between shadow-sm z-10 shrink-0">
-          <div className="flex items-center gap-8">
-            <h2 className="text-2xl font-black text-[#064E3B]">
+        <header className="h-20 bg-white border-b-2 border-[#D1FAE5] px-4 lg:px-8 flex items-center gap-4 shadow-sm z-10 shrink-0">
+          <div className="flex items-center gap-4 xl:gap-6 min-w-0 flex-1">
+            <h2 className="text-lg xl:text-2xl font-black text-[#064E3B] shrink-0 hidden sm:block">
               Admin Dashboard
             </h2>
-            <nav className="flex gap-4">
+            <nav className="flex gap-1.5 overflow-x-auto custom-scrollbar min-w-0 py-1">
               {[
                 "overview",
                 "timetable",
@@ -15458,7 +15458,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   key={tab}
                   onClick={() => setAdminTab(tab as any)}
                   className={cn(
-                    "px-4 py-2 rounded-xl font-bold capitalize transition-all",
+                    "px-3 py-2 rounded-xl font-bold capitalize transition-all whitespace-nowrap shrink-0 text-sm",
                     adminTab === tab
                       ? "bg-[#064E3B] text-white"
                       : "text-[#064E3B]/60 hover:bg-[#D1FAE5]",
@@ -15481,8 +15481,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               ))}
             </nav>
           </div>
-          <div className="flex items-center gap-6">
-            <div className="hidden md:flex items-center gap-3 bg-[#F0FDF4] px-4 py-2 rounded-xl border border-[#D1FAE5]">
+          <div className="flex items-center gap-2 xl:gap-3 shrink-0">
+            <div className="hidden 2xl:flex items-center gap-3 bg-[#F0FDF4] px-4 py-2 rounded-xl border border-[#D1FAE5]">
               <div className="w-8 h-8 bg-[#064E3B] rounded-full flex items-center justify-center text-white font-black text-xs">
                 {teacherName[0]}
               </div>
@@ -15499,20 +15499,24 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               userRoles.includes("admin")) && (
               <button
                 onClick={() => setCurrentView("educator-suite")}
-                className="flex items-center gap-2 px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-bold border-2 border-[#EAB308] hover:shadow-md transition-all shadow-sm"
+                title="Go to Educator Studio"
+                className="flex items-center gap-2 px-3 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-bold border-2 border-[#EAB308] hover:shadow-md transition-all shadow-sm whitespace-nowrap shrink-0"
               >
-                <BookOpen size={18} /> Educator Suite
+                <BookOpen size={18} className="shrink-0" />
+                <span className="hidden lg:inline">Educator Studio</span>
               </button>
             )}
             <button
               onClick={() => setCurrentView("home")}
-              className="flex items-center gap-2 px-4 py-2 bg-white text-[#064E3B] rounded-xl font-bold border-2 border-[#D1FAE5] hover:bg-[#F0FDF4] transition-all shadow-sm"
+              title="Home"
+              className="flex items-center gap-2 px-3 py-2 bg-white text-[#064E3B] rounded-xl font-bold border-2 border-[#D1FAE5] hover:bg-[#F0FDF4] transition-all shadow-sm shrink-0"
             >
-              <Home size={18} /> Home
+              <Home size={18} className="shrink-0" />
+              <span className="hidden lg:inline">Home</span>
             </button>
             <button
               onClick={handleLogout}
-              className="p-2.5 bg-red-50 text-red-600 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-100 shadow-sm"
+              className="p-2.5 bg-red-50 text-red-600 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-100 shadow-sm shrink-0"
               title="Logout"
             >
               <LogOut size={20} />
