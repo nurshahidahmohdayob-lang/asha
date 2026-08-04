@@ -15446,39 +15446,38 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 "overview",
                 "timetable",
                 "teachers",
-                "assignments",
-                "duty",
-                "classrooms",
                 "plans",
                 "cover",
                 "members",
                 "sso",
-              ].map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => setAdminTab(tab as any)}
-                  className={cn(
-                    "px-3 py-2 rounded-xl font-bold capitalize transition-all whitespace-nowrap shrink-0 text-sm",
-                    adminTab === tab
-                      ? "bg-[#064E3B] text-white"
-                      : "text-[#064E3B]/60 hover:bg-[#D1FAE5]",
-                  )}
-                >
-                  {tab === "plans"
-                    ? "Lesson Plans"
-                    : tab === "assignments"
-                      ? "Subject Allocation"
-                    : tab === "duty"
-                      ? "Duty Rota"
-                    : tab === "cover"
-                      ? "Cover Planner"
-                      : tab === "classrooms"
-                        ? "Classroom Allocation"
+              ].map((tab) => {
+                // Subject Allocation, Duty Rota and Classroom Allocation now
+                // live inside the Timetable tab, so keep it highlighted for them.
+                const active =
+                  adminTab === tab ||
+                  (tab === "timetable" &&
+                    ["assignments", "duty", "classrooms"].includes(adminTab));
+                return (
+                  <button
+                    key={tab}
+                    onClick={() => setAdminTab(tab as any)}
+                    className={cn(
+                      "px-3 py-2 rounded-xl font-bold capitalize transition-all whitespace-nowrap shrink-0 text-sm",
+                      active
+                        ? "bg-[#064E3B] text-white"
+                        : "text-[#064E3B]/60 hover:bg-[#D1FAE5]",
+                    )}
+                  >
+                    {tab === "plans"
+                      ? "Lesson Plans"
+                      : tab === "cover"
+                        ? "Cover Planner"
                         : tab === "sso"
                           ? "Connected Systems (SSO)"
                           : tab}
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </nav>
           </div>
           <div className="flex items-center gap-2 xl:gap-3 shrink-0">
@@ -15525,6 +15524,36 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         </header>
 
         <main className="flex-1 overflow-y-auto p-12 custom-scrollbar">
+          {/* Timetable group sub-tabs: the scheduler plus everything that feeds it. */}
+          {["timetable", "assignments", "duty", "classrooms"].includes(
+            adminTab,
+          ) && (
+            <div className="max-w-6xl mx-auto mb-8 flex flex-wrap gap-2 border-b-2 border-[#D1FAE5] pb-4">
+              {[
+                { id: "timetable", label: "Timetable", icon: Calendar },
+                { id: "assignments", label: "Subject Allocation", icon: BookOpen },
+                { id: "duty", label: "Duty Rota", icon: Lock },
+                { id: "classrooms", label: "Classroom Allocation", icon: LayoutGrid },
+              ].map((s) => {
+                const Icon = s.icon;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setAdminTab(s.id as any)}
+                    className={cn(
+                      "flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm transition-all whitespace-nowrap border-2",
+                      adminTab === s.id
+                        ? "bg-[#064E3B] text-white border-[#064E3B]"
+                        : "bg-white text-[#064E3B]/70 border-[#D1FAE5] hover:border-[#059669]",
+                    )}
+                  >
+                    <Icon size={16} className="shrink-0" />
+                    {s.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {adminTab === "overview" && (
             <div className="max-w-6xl mx-auto space-y-8 pb-20">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
