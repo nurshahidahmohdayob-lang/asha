@@ -3460,6 +3460,7 @@ const CAMBRIDGE_SUBJECTS = [
       "English as a Second Language (0057)",
       "Global Perspectives (0838)",
       "Humanities (0065)",
+      "Life Competencies",
       "Mathematics (0096)",
       "Modern Foreign Language (0064)",
       "Music (0068)",
@@ -3479,6 +3480,7 @@ const CAMBRIDGE_SUBJECTS = [
       "English as a Second Language (0876)",
       "Global Perspectives (1129)",
       "Humanities (0896)",
+      "Life Competencies",
       "Mathematics (0862)",
       "Modern Foreign Language (0897)",
       "Music (0078)",
@@ -3508,6 +3510,7 @@ const CAMBRIDGE_SUBJECTS = [
       "Geography (0460)",
       "History (0470)",
       "Malay (Foreign Language) (0546)",
+      "Life Competencies",
     ],
   },
 ];

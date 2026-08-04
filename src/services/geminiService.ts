@@ -204,6 +204,13 @@ STRAND INITIALS BY SUBJECT:
 Cambridge Primary: Art & Design (0067), Computing (0059), Digital Literacy (0072), English (0058), English as a Second Language (0057), Global Perspectives (0838), Humanities (0065), Mathematics (0096), Modern Foreign Language (0064), Music (0068), Physical Education (0069), Science (0097), Wellbeing (0034).
 Cambridge Lower Secondary: Art & Design (0073), Computing (0860), Digital Literacy (0082), English (0861), English as a Second Language (0876), Global Perspectives (1129), Humanities (0896), Mathematics (0862), Modern Foreign Language (0897), Music (0078), Physical Education (0081), Science (0893), Wellbeing (0859).
 Cambridge IGCSE / Upper Secondary: Physics (0625), Biology (0610), Chemistry (0620), Mathematics (0580), etc.
+
+CRITICAL — DO NOT INVENT LEARNING OBJECTIVE CODES:
+- The lists above give ONLY subject codes, strand initials, and the code FORMAT. They do NOT contain the actual objective numbers (the ".01", ".02" part) or what each code means.
+- Therefore you must NOT guess, fabricate, or approximate a specific LO code such as "3Ps.01". Inventing a plausible-looking code that maps to the wrong topic is a serious error.
+- Only cite a specific LO code when it comes directly from an uploaded Scheme of Work / framework document, or when you are genuinely certain it is the exact official Cambridge code for that precise subject, stage and objective.
+- If you are not certain of the exact official code, DO NOT attach one. Write the learning objective in clear plain language WITHOUT any code. A correct plain-language objective with no code is REQUIRED over an objective with an incorrect code.
+- When you do cite a code, use the exact strand capitalisation shown above (e.g. "Ps", "Rf", "TC" — never "PS"). Make sure the strand matches the subject (a Science code on a Wellbeing topic is invalid).
 `;
 
 export async function generateSlides(lessonInput: string, options: EduOptions): Promise<{ slides: SlideContent[], metadata: { description: string, methodology: string } }> {
@@ -1585,7 +1592,7 @@ export async function generateSessionPlan(topic: string, subtopics: string, week
         - "introduction": string (detailed overview)
         - "activities": string (specific activities)
         - "assessment": string (assessment method)
-        - "resources": string (Include relevant Cambridge Learning Standard codes)
+        - "resources": string (teaching materials and references; include a Cambridge Learning Standard code ONLY if it is from an uploaded scheme of work or you are certain it is the exact official code — never fabricate one)
     `;
     contents.push(mainPrompt);
 
@@ -1647,6 +1654,9 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
       contents.push({ inlineData: options.fileContext });
     }
     const weekCount = options.topics?.length || 6;
+    // Cambridge Life Competencies is a cross-curricular FRAMEWORK, not a coded
+    // syllabus, so its objectives must never carry Stage+Strand+Number codes.
+    const isLifeCompetencies = /life\s*competenc/i.test(options.subject || "");
     const mainPrompt = `As an expert Cambridge Educator, create a professional, detailed ${weekCount}-WEEK Lesson Plan for a ${options.yearGroup} class.
       ${options.fileContext ? `
       UPLOADED CURRICULUM DOCUMENTS (HIGHEST PRIORITY):
@@ -1658,9 +1668,15 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
       STANDARDS & FRAMEWORK:
       - Use the provided subject "${options.subject}" exactly as given. Do not substitute it with a similar subject (e.g. do not change Digital Literacy to Computer Science).
       - Base the content strictly on the Cambridge International Curriculum (CAIE/Cambridge Primary/Lower Secondary).
+      ${isLifeCompetencies ? `
+      - IMPORTANT: "Life Competencies" is the Cambridge Life Competencies FRAMEWORK, NOT a coded subject/syllabus. It has NO Stage+Strand+Number objective codes.
+      - Do NOT output any code (no "3TC.01"-style codes, no "resources" codes) anywhere in this plan.
+      - Write each "learningObjective" in plain language only. For "strand", use one of the six Cambridge Life Competencies areas: Creative Thinking, Critical Thinking, Learning to Learn and Metacognition, Communication, Collaboration, Social Responsibilities.
+      ` : `
       - Align objectives with official Cambridge Framework Learning Objectives using the Stage+Strand+Number format (e.g., 3TC.01, 3Rf.04).
-      - Incorporate methodology consistent with Cambridge Schemes of Work (SoW).
       - Reference relevant subject codes and strand initials from the following list: ${CAMBRIDGE_CURRICULUM_INFO}
+      `}
+      - Incorporate methodology consistent with Cambridge Schemes of Work (SoW).
       - Follow the official framework, scheme of work, and textbook/reference materials.
 
       ${weekCount}-WEEK TERM OVERVIEW:
@@ -1695,7 +1711,7 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
         - "introduction": string (detailed overview of what this topic is about)
         - "activities": string (specific activities that the teacher can do for this topic. Be very detailed and write complete sentences.)
         - "assessment": string (what worksheet, quiz, exam or activity for this topic. Be very detailed and write complete sentences.)
-        - "resources": string (Include relevant Cambridge Learning Standard codes)
+        - "resources": string (teaching materials and references; include a Cambridge Learning Standard code ONLY if it is from an uploaded scheme of work or you are certain it is the exact official code — never fabricate one)
     `;
     contents.push(mainPrompt);
 
