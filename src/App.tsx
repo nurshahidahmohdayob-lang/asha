@@ -15448,15 +15448,16 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 "teachers",
                 "plans",
                 "cover",
-                "members",
                 "sso",
               ].map((tab) => {
                 // Subject Allocation, Duty Rota and Classroom Allocation now
-                // live inside the Timetable tab, so keep it highlighted for them.
+                // live inside the Timetable tab; Registered Members lives inside
+                // the Teachers tab. Keep the parent highlighted for its children.
                 const active =
                   adminTab === tab ||
                   (tab === "timetable" &&
-                    ["assignments", "duty", "classrooms"].includes(adminTab));
+                    ["assignments", "duty", "classrooms"].includes(adminTab)) ||
+                  (tab === "teachers" && adminTab === "members");
                 return (
                   <button
                     key={tab}
@@ -15534,6 +15535,32 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 { id: "assignments", label: "Subject Allocation", icon: BookOpen },
                 { id: "duty", label: "Duty Rota", icon: Lock },
                 { id: "classrooms", label: "Classroom Allocation", icon: LayoutGrid },
+              ].map((s) => {
+                const Icon = s.icon;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setAdminTab(s.id as any)}
+                    className={cn(
+                      "flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm transition-all whitespace-nowrap border-2",
+                      adminTab === s.id
+                        ? "bg-[#064E3B] text-white border-[#064E3B]"
+                        : "bg-white text-[#064E3B]/70 border-[#D1FAE5] hover:border-[#059669]",
+                    )}
+                  >
+                    <Icon size={16} className="shrink-0" />
+                    {s.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {/* Teachers group sub-tabs: the staff roster and the app accounts. */}
+          {["teachers", "members"].includes(adminTab) && (
+            <div className="max-w-6xl mx-auto mb-8 flex flex-wrap gap-2 border-b-2 border-[#D1FAE5] pb-4">
+              {[
+                { id: "teachers", label: "Teacher Directory", icon: Users },
+                { id: "members", label: "Registered Members", icon: UserCheck },
               ].map((s) => {
                 const Icon = s.icon;
                 return (
