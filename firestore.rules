@@ -37,6 +37,14 @@ service cloud.firestore {
       );
     }
 
+    // Head of Department / Coordinator review lesson plan submissions.
+    function isReviewer() {
+      return isAdmin() || (
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('roles', []).hasAny(['hod', 'coordinator'])
+      );
+    }
+
     // --- Entities ---
 
     function isValidUser(data) {
@@ -99,10 +107,12 @@ service cloud.firestore {
     }
 
     match /submitted_plans/{planId} {
-      allow get: if isAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
-      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow get: if isReviewer() || (isSignedIn() && existing().userId == request.auth.uid);
+      allow list: if isReviewer() || (isSignedIn() && resource.data.userId == request.auth.uid);
       allow create: if isSignedIn();
-      allow update: if isAdmin();
+      // Reviewers move a plan through the approval flow; the teacher who owns
+      // it updates their own submission when they fix and resubmit.
+      allow update: if isReviewer() || (isSignedIn() && existing().userId == request.auth.uid);
       allow delete: if isAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
     }
 

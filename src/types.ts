@@ -149,6 +149,8 @@ export interface WeeklyPlan {
   week: number;
   unit: string;
   topic: string;
+  /** A narrower slice of the week's topic. */
+  subTopic?: string;
   learningObjective: string;
   strand: string;
   introduction: string;
@@ -168,6 +170,16 @@ export interface LessonPlan {
   checkedBy: string;
   overallTopic: string;
   weeklyBreakdown: WeeklyPlan[];
+  // Document-view summary + framework sections (optional so older saved plans
+  // still render). Bullet-list fields are stored as newline-separated strings.
+  subTopic?: string;
+  strandSummary?: string;
+  learningObjectiveSummary?: string;
+  successCriteria?: string;
+  essentialQuestions?: string;
+  keyCompetencies?: string;
+  portfolioEvidence?: string;
+  reflection?: string;
 }
 
 export interface HandoutMetadata {

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import {
   LayoutDashboard,
@@ -87,6 +87,7 @@ import {
   UserPlus,
   LogOut,
   Mail,
+  Save,
   Lock,
   Unlock,
   RefreshCw,
@@ -96,6 +97,8 @@ import {
   Volume2,
   Gamepad2,
   Play,
+  PanelLeft,
+  MessageSquare,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { motion, AnimatePresence } from "motion/react";
@@ -3199,19 +3202,31 @@ const WeekSelector = ({
   value,
   onChange,
   label = "Submit for Week",
+  className,
+  selectClassName,
 }: {
   value: number;
   onChange: (v: number) => void;
   label?: string;
+  className?: string;
+  selectClassName?: string;
 }) => (
-  <div className="flex items-center gap-2 bg-white/50 px-3 py-1.5 rounded-xl border-2 border-[#D1FAE5]">
+  <div
+    className={cn(
+      "flex items-center gap-2 bg-white/50 px-3 py-1.5 rounded-xl border-2 border-[#D1FAE5]",
+      className,
+    )}
+  >
     <span className="text-[10px] font-black uppercase text-[#064E3B]/60 tracking-wider whitespace-nowrap">
       {label}:
     </span>
     <select
       value={value}
       onChange={(e) => onChange(parseInt(e.target.value))}
-      className="bg-transparent text-xs font-black text-[#064E3B] outline-none cursor-pointer"
+      className={cn(
+        "bg-transparent text-xs font-black text-[#064E3B] outline-none cursor-pointer",
+        selectClassName,
+      )}
     >
       {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((num) => (
         <option key={num} value={num}>
@@ -3225,6 +3240,634 @@ const WeekSelector = ({
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+// A collapsible block in the Lesson Settings pane. Declared at module level so
+// it keeps its identity between renders and inputs inside never lose focus.
+const LpSection = ({
+  title,
+  hint,
+  icon: Icon,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  icon: any;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) => (
+  <div className="border-2 border-[#D1FAE5] rounded-2xl overflow-hidden bg-white">
+    <button
+      onClick={onToggle}
+      className="w-full flex items-center justify-between gap-2 px-4 py-3 bg-[#F0FDF4]/60 hover:bg-[#F0FDF4] transition-colors text-left"
+    >
+      <span className="min-w-0">
+        <span className="flex items-center gap-2 text-[11px] font-black uppercase tracking-widest text-[#064E3B]">
+          <Icon size={14} className="shrink-0" />
+          {title}
+        </span>
+        {hint && !open && (
+          <span className="block text-[10px] font-bold text-[#064E3B]/40 mt-0.5 truncate">
+            {hint}
+          </span>
+        )}
+      </span>
+      <ChevronRight
+        size={16}
+        className={cn(
+          "shrink-0 text-[#064E3B]/50 transition-transform",
+          open && "rotate-90",
+        )}
+      />
+    </button>
+    {open && <div className="p-4 space-y-4">{children}</div>}
+  </div>
+);
+
+// ---------------------------------------------------------------------------
+// Lesson plan approval workflow.
+//   teacher submits → Head of Department → Coordinator → back to the teacher.
+// At either review step the plan can be sent back with feedback (an overall
+// note plus a note against any week), which returns it to the teacher to fix
+// and resubmit to the Head of Department.
+// ---------------------------------------------------------------------------
+type ReviewStage =
+  | "pending_hod"
+  | "pending_coordinator"
+  | "changes_requested"
+  | "approved";
+
+const REVIEW_STAGES: Record<
+  ReviewStage,
+  { label: string; short: string; chip: string }
+> = {
+  pending_hod: {
+    label: "Awaiting Head of Department",
+    short: "With HOD",
+    chip: "bg-amber-50 text-amber-700 border-amber-200",
+  },
+  pending_coordinator: {
+    label: "Awaiting Coordinator",
+    short: "With Coordinator",
+    chip: "bg-blue-50 text-blue-700 border-blue-200",
+  },
+  changes_requested: {
+    label: "Changes Requested",
+    short: "Needs Fixing",
+    chip: "bg-red-50 text-red-600 border-red-200",
+  },
+  approved: {
+    label: "Approved — ready to use",
+    short: "Approved",
+    chip: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  },
+};
+
+// Stamps shown on submissions — "11 Aug 2026, 3:04 pm".
+const formatStamp = (ts?: number | string): string => {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+};
+
+// "Untitled Lesson Plan" / "New Lesson Plan" are placeholders, not real titles.
+const isPlaceholderTitle = (t?: string): boolean =>
+  !t ||
+  !t.trim() ||
+  /^untitled/i.test(t.trim()) ||
+  /^new lesson plan$/i.test(t.trim());
+
+// A submission title a Head of Department can read at a glance: which subject,
+// which year group and which week — e.g. "Life Competencies • Year 1 • Week 2".
+// The teacher's name is already stored alongside it on the submission.
+const buildSubmissionTitle = (c: any, weekId?: number): string => {
+  const lp = c?.lessonPlan;
+  const subject = lp?.subject || c?.subject || "";
+  const yearGroup = lp?.class || c?.gradeLevel || c?.metadata?.yearGroup || "";
+  const topic = !isPlaceholderTitle(lp?.overallTopic)
+    ? lp?.overallTopic
+    : !isPlaceholderTitle(c?.lessonTitle)
+      ? c?.lessonTitle
+      : "";
+  const head = [subject || "Lesson Plan", yearGroup, weekId ? `Week ${weekId}` : ""]
+    .filter(Boolean)
+    .join(" • ");
+  return topic ? `${head} — ${topic}` : head;
+};
+
+// Anything submitted before the workflow existed starts with the HOD.
+const getReviewStage = (plan: any): ReviewStage =>
+  plan?.reviewStage === "pending_coordinator" ||
+  plan?.reviewStage === "changes_requested" ||
+  plan?.reviewStage === "approved"
+    ? plan.reviewStage
+    : "pending_hod";
+
+// A standalone, printable page of a lesson plan — this is what gets published
+// so the teacher can email a link instead of pasting the whole plan into the
+// body of a message.
+const buildLessonPlanShareHTML = (lp: any, title: string): string => {
+  const esc = (v: any) =>
+    (v ?? "")
+      .toString()
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  const lines = (v: any): string[] =>
+    Array.isArray(v)
+      ? v.map((x) => (x ?? "").toString().trim()).filter(Boolean)
+      : ((v as string) || "")
+          .split("\n")
+          .map((x) => x.trim())
+          .filter(Boolean);
+
+  const detail = (label: string, value: any) =>
+    `<tr><th>${esc(label)}</th><td>${esc(value || "—")}</td></tr>`;
+
+  const listBlock = (label: string, value: any) => {
+    const items = lines(value);
+    if (!items.length) return "";
+    return `<section><h2>${esc(label)}</h2><ul>${items
+      .map((i) => `<li>${esc(i)}</li>`)
+      .join("")}</ul></section>`;
+  };
+
+  const weekRow = (label: string, value: any) =>
+    value ? `<tr><th>${esc(label)}</th><td>${esc(value)}</td></tr>` : "";
+
+  const weeks = (lp?.weeklyBreakdown || [])
+    .map(
+      (w: any, i: number) => `
+      <section class="week">
+        <h2>Week ${esc(w?.week ?? i + 1)}${w?.unit ? ` — ${esc(w.unit)}` : ""}</h2>
+        <table>
+          ${weekRow("Topic", w?.topic)}
+          ${weekRow("Learning Objective", w?.learningObjective)}
+          ${weekRow("Strand", w?.strand)}
+          ${weekRow("Introduction", w?.introduction)}
+          ${weekRow("Activities", w?.activities)}
+          ${weekRow("Assessment", w?.assessment)}
+          ${weekRow("Resources", w?.resources)}
+        </table>
+      </section>`,
+    )
+    .join("");
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)}</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;padding:28px 18px;background:#F0FDF4;color:#111827;
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.5}
+  .sheet{max-width:900px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;
+         box-shadow:0 18px 40px rgba(6,78,59,.12)}
+  header{background:#064E3B;color:#fff;padding:26px 32px}
+  header h1{margin:0;font-size:24px;letter-spacing:-.4px}
+  header p{margin:6px 0 0;color:#FACC15;font-size:12px;font-weight:700;
+           text-transform:uppercase;letter-spacing:.18em}
+  main{padding:28px 32px}
+  section{margin-bottom:28px}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.18em;color:#064E3B;
+     margin:0 0 10px;padding-bottom:6px;border-bottom:2px solid #D1FAE5}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{border:1px solid #E5E7EB;padding:9px 12px;text-align:left;vertical-align:top}
+  th{background:#F0FDF4;color:#064E3B;font-weight:700;width:26%;white-space:nowrap}
+  ul{margin:0;padding-left:20px;font-size:13px}
+  li{margin-bottom:4px}
+  footer{padding:16px 32px 26px;color:#6B7280;font-size:11px;text-align:center}
+  @media print{body{background:#fff;padding:0}.sheet{box-shadow:none}
+    .week{page-break-inside:avoid}}
+</style>
+</head>
+<body>
+  <div class="sheet">
+    <header>
+      <h1>${esc(lp?.overallTopic || title || "Lesson Plan")}</h1>
+      <p>${esc(lp?.subject || "")}${lp?.class ? ` • ${esc(lp.class)}` : ""}</p>
+    </header>
+    <main>
+      <section>
+        <h2>Details</h2>
+        <table>
+          ${detail("Term", lp?.term)}
+          ${detail("Subject", lp?.subject)}
+          ${detail("Academic Year", lp?.academicYear)}
+          ${detail("Class / Year Group", lp?.class)}
+          ${detail("Duration", lp?.duration)}
+          ${detail("Date", lp?.date)}
+          ${detail("Prepared By", lp?.preparedBy)}
+          ${detail("Checked By", lp?.checkedBy)}
+        </table>
+      </section>
+      ${listBlock("Learning Objectives", lp?.learningObjectiveSummary)}
+      ${listBlock("Success Criteria", lp?.successCriteria)}
+      ${listBlock("Essential Questions", lp?.essentialQuestions)}
+      ${listBlock("Key Competencies", lp?.keyCompetencies)}
+      ${listBlock("Portfolio Evidence", lp?.portfolioEvidence)}
+      ${weeks}
+    </main>
+    <footer>Shared from Zera Education Suite</footer>
+  </div>
+</body>
+</html>`;
+};
+
+// ---------------------------------------------------------------------------
+// The school's official teacher ↔ subject mapping (Year 1 – Year 11).
+// Keys are the staffroom short names used on the timetable sheet; a name is
+// resolved against the teacher directory and created if it isn't there yet.
+// "A/B" means the subject is shared between two teachers.
+// ---------------------------------------------------------------------------
+
+// Short name → directory id. The first block keeps the ids teachers already
+// have; the second block is the staff who were missing from the directory.
+const OFFICIAL_TEACHER_IDS: Record<string, string> = {
+  KANI: "c-1",
+  NURLIANA: "t-1",
+  KONG: "t-2",
+  KATHY: "t-3",
+  AUNI: "t-4",
+  SHAHIDAH: "t-6",
+  ISAAC: "t-7",
+  FARHAH: "t-9",
+  FARAHALYA: "t-10",
+  PERVINA: "t-11",
+  ROSHINI: "t-12",
+  WAFI: "t-13",
+  HAZIQ: "t-20",
+  TALITHA: "t-21",
+  HADIFAH: "t-22",
+  FAUZIAH: "t-23",
+  HANIS: "t-24",
+  LALITHA: "t-25",
+  NANTHINI: "t-26",
+  STELLA: "t-27",
+  "ZI XIN": "t-28",
+  EJANE: "t-29",
+  IERA: "t-30",
+  AARTHI: "t-31",
+  SHIRYN: "t-32",
+  CAROL: "t-33",
+};
+
+// Staff who were not in the directory yet, added with the sheet's names.
+const OFFICIAL_NEW_TEACHERS = [
+  { id: "t-20", name: "HAZIQ" },
+  { id: "t-21", name: "TALITHA" },
+  { id: "t-22", name: "HADIFAH" },
+  { id: "t-23", name: "FAUZIAH" },
+  { id: "t-24", name: "HANIS" },
+  { id: "t-25", name: "LALITHA" },
+  { id: "t-26", name: "NANTHINI" },
+  { id: "t-27", name: "STELLA" },
+  { id: "t-28", name: "ZI XIN" },
+  { id: "t-29", name: "EJANE" },
+  // Cambridge Plus / intervention staff
+  { id: "t-30", name: "IERA" },
+  { id: "t-31", name: "AARTHI" },
+  { id: "t-32", name: "SHIRYN" },
+  { id: "t-33", name: "CAROL" },
+].map((t) => ({
+  ...t,
+  role: "Teacher",
+  subjects: [] as string[],
+  maxPeriods: 28,
+}));
+
+const OFFICIAL_SUBJECT_TEACHERS: Record<string, Record<string, string>> = {
+  "Year 1": {
+    Assembly: "HAZIQ",
+    "Silent Reading/Islamic Studies": "HAZIQ",
+    Wellbeing: "HAZIQ",
+    English: "TALITHA",
+    Mathematics: "FAUZIAH",
+    Science: "HAZIQ",
+    Chinese: "KONG",
+    Malay: "HADIFAH",
+    Library: "SHAHIDAH",
+    "Art & Design": "HAZIQ",
+    Music: "ISAAC",
+    "Physical Education": "HANIS",
+    Computing: "FAUZIAH",
+    "Life Competencies": "SHAHIDAH",
+    CCA: "",
+  },
+  "Year 2": {
+    Assembly: "KANI",
+    "Silent Reading/Islamic Studies": "KANI",
+    Wellbeing: "KANI",
+    English: "KANI",
+    Mathematics: "NURLIANA",
+    Science: "KANI",
+    Chinese: "KONG",
+    Malay: "HADIFAH",
+    Library: "SHAHIDAH",
+    "Art & Design": "HAZIQ",
+    Music: "ISAAC",
+    "Physical Education": "HANIS",
+    Computing: "FAUZIAH",
+    "Life Competencies": "SHAHIDAH",
+    CCA: "",
+  },
+  "Year 3": {
+    Assembly: "TALITHA",
+    "Silent Reading/Islamic Studies": "TALITHA",
+    Wellbeing: "NURLIANA",
+    English: "TALITHA",
+    Mathematics: "NURLIANA",
+    Science: "KANI",
+    Chinese: "KONG",
+    Malay: "HADIFAH",
+    Library: "SHAHIDAH",
+    "Art & Design": "HAZIQ",
+    Music: "ISAAC",
+    "Physical Education": "HANIS",
+    Computing: "FAUZIAH",
+    "Life Competencies": "SHAHIDAH",
+    CCA: "",
+  },
+  "Year 4": {
+    Assembly: "NURLIANA",
+    "Silent Reading/Islamic Studies": "NURLIANA",
+    Wellbeing: "NURLIANA",
+    English: "TALITHA",
+    Mathematics: "NURLIANA",
+    Science: "FARHAH",
+    Chinese: "KONG",
+    Malay: "HADIFAH",
+    Library: "SHAHIDAH",
+    "Art & Design": "HAZIQ",
+    Music: "ISAAC",
+    "Physical Education": "HANIS",
+    Computing: "FAUZIAH",
+    "Life Competencies": "SHAHIDAH",
+    CCA: "",
+  },
+  "Year 5": {
+    Assembly: "FARAHALYA",
+    "Silent Reading/Islamic Studies": "FARAHALYA",
+    Wellbeing: "FARAHALYA",
+    English: "KANI",
+    Mathematics: "FARAHALYA",
+    Science: "KANI",
+    Chinese: "KATHY",
+    Malay: "HADIFAH",
+    Library: "SHAHIDAH",
+    "Art & Design": "HAZIQ",
+    Music: "ISAAC",
+    "Physical Education": "HANIS",
+    Computing: "FAUZIAH",
+    "Life Competencies": "SHAHIDAH",
+    CCA: "",
+  },
+  "Year 6": {
+    Assembly: "HADIFAH",
+    "Silent Reading/Islamic Studies": "HADIFAH/AUNI",
+    Wellbeing: "HADIFAH",
+    English: "TALITHA",
+    Mathematics: "NURLIANA",
+    Science: "FARHAH",
+    Chinese: "KATHY",
+    Malay: "HADIFAH",
+    Library: "SHAHIDAH",
+    "Art & Design": "HAZIQ",
+    Music: "ISAAC",
+    "Physical Education": "HANIS",
+    Computing: "FAUZIAH",
+    "Life Competencies": "SHAHIDAH",
+    CCA: "",
+  },
+  "Year 7": {
+    Assembly: "PERVINA",
+    "Silent Reading/Islamic Studies": "PERVINA",
+    Wellbeing: "PERVINA",
+    "English First": "",
+    "English Second": "PERVINA",
+    Mathematics: "FARAHALYA",
+    Science: "FARHAH",
+    "Chinese (Foundation)": "KONG",
+    "Chinese (Intermediate)": "KATHY",
+    Malay: "HADIFAH",
+    "Art & Design": "HAZIQ",
+    Music: "ISAAC",
+    "Physical Education": "HANIS",
+    History: "AUNI",
+    Sejarah: "AUNI",
+    "Malaysian Studies": "",
+    Computing: "FAUZIAH",
+    "Global Perspectives": "AUNI",
+    CCA: "",
+  },
+  "Year 8": {
+    Assembly: "HANIS",
+    "Silent Reading/Islamic Studies": "HANIS",
+    Wellbeing: "HANIS",
+    "English First": "NANTHINI",
+    "English Second": "PERVINA",
+    Mathematics: "FARAHALYA",
+    Science: "FARHAH",
+    "Chinese (Foundation)": "KONG",
+    "Chinese (Intermediate)": "KATHY",
+    Malay: "HADIFAH",
+    "Art & Design": "HAZIQ",
+    Music: "ISAAC",
+    "Physical Education": "HANIS",
+    History: "AUNI",
+    Sejarah: "AUNI",
+    "Malaysian Studies": "WAFI",
+    Computing: "FAUZIAH",
+    "Global Perspectives": "AUNI",
+    CCA: "",
+  },
+  "Year 9": {
+    Assembly: "LALITHA",
+    "Silent Reading/Islamic Studies": "LALITHA",
+    Wellbeing: "LALITHA",
+    "English First": "NANTHINI",
+    "English Second": "PERVINA",
+    Mathematics: "LALITHA",
+    Science: "FARHAH",
+    "Chinese (Foundation)": "KONG",
+    "Chinese (Intermediate)": "KATHY",
+    Malay: "HADIFAH",
+    "Art & Design": "HAZIQ",
+    Music: "EJANE",
+    "Physical Education": "HANIS",
+    History: "AUNI",
+    Sejarah: "AUNI",
+    "Malaysian Studies": "WAFI",
+    Computing: "FAUZIAH",
+    "Global Perspectives": "AUNI",
+    CCA: "",
+  },
+  "Year 10": {
+    Assembly: "NANTHINI",
+    "Physical Education": "HANIS",
+    "English (First Language)": "",
+    "English (Second Language)": "NANTHINI",
+    "Mathematics (Core)": "",
+    "Mathematics (Extended)": "ROSHINI",
+    "Chinese (First Language)": "",
+    "Chinese (Second Language)": "KATHY",
+    "Chinese (Foreign Language)": "KONG",
+    "Malay (Foreign Language)": "ZI XIN",
+    CCA: "",
+    Biology: "STELLA",
+    Chemistry: "STELLA",
+    Physics: "",
+    "Additional Mathematics": "ROSHINI",
+    "Combined Science": "FARHAH",
+    Accounting: "LALITHA",
+    "Business Studies": "LALITHA",
+    "Art & Design": "WAFI",
+    Music: "EJANE",
+    "Global Perspectives / Enrichment": "",
+    "Travel & Tourism": "AUNI",
+  },
+  "Year 11": {
+    Assembly: "ROSHINI",
+    "Physical Education": "HANIS",
+    "English (First Language)": "PERVINA",
+    "English (Second Language)": "NANTHINI",
+    "Mathematics (Core)": "FARAHALYA",
+    "Mathematics (Extended)": "ROSHINI",
+    "Chinese (First Language)": "KATHY",
+    "Chinese (Second Language)": "KONG",
+    "Chinese (Foreign Language)": "KONG",
+    "Malay (Foreign Language)": "ZI XIN",
+    CCA: "",
+    Biology: "STELLA",
+    Chemistry: "STELLA",
+    Physics: "ROSHINI",
+    "Additional Mathematics": "ROSHINI",
+    "Combined Science": "",
+    Accounting: "LALITHA",
+    "Business Studies": "LALITHA",
+    "Art & Design": "WAFI",
+    Music: "",
+    "Global Perspectives / Enrichment": "AUNI/KATHY",
+    "Travel & Tourism": "",
+  },
+};
+
+// Names arrive spelled every which way — "shahidah.a", "NUR SHAHIDAH",
+// "Ms Shahidah". Compare on meaningful word chunks instead of substrings so
+// those all resolve to the same person, while "NUR" alone never matches.
+const nameTokens = (name: string): string[] =>
+  (name || "")
+    .toLowerCase()
+    .split(/[^a-z]+/i)
+    .filter((t) => t.length >= 4);
+
+const sameTeacherName = (a?: string, b?: string): boolean => {
+  const ta = nameTokens(a || "");
+  const tb = nameTokens(b || "");
+  if (!ta.length || !tb.length) return false;
+  return ta.some((t) => tb.includes(t));
+};
+
+const normalizeTeacherName = (name: string): string =>
+  (name || "").toUpperCase().replace(/[^A-Z]/g, "");
+
+// `${yearGroup}-${subject}` → comma separated teacher ids, built from the sheet.
+const buildOfficialAssignments = (
+  resolveId: (shortName: string) => string,
+): Record<string, string> => {
+  const out: Record<string, string> = {};
+  Object.entries(OFFICIAL_SUBJECT_TEACHERS).forEach(([yearGroup, subjectMap]) =>
+    Object.entries(subjectMap).forEach(([subject, names]) => {
+      const ids = (names || "")
+        .split(/[/&]/)
+        .map((n) => n.trim())
+        .filter(Boolean)
+        .map(resolveId)
+        .filter(Boolean);
+      out[`${yearGroup}-${subject}`] = ids.join(",");
+    }),
+  );
+  return out;
+};
+
+// Admin Dashboard navigation. Subject Allocation, Duty Rota and Classroom
+// Allocation belong to Timetable; Registered Members belongs to Teachers —
+// they are nested under their parent in the side pane.
+const ADMIN_NAV: {
+  id: string;
+  label: string;
+  icon: any;
+  children?: { id: string; label: string; icon: any }[];
+// The sections in daily use sit at the top; anything locked sits below them.
+}[] = [
+  { id: "overview", label: "Overview", icon: LayoutGrid },
+  {
+    id: "teachers",
+    label: "Teachers",
+    icon: Users,
+    children: [
+      { id: "teachers", label: "Teacher Directory", icon: Users },
+      { id: "members", label: "Registered Members", icon: UserCheck },
+    ],
+  },
+  { id: "plans", label: "Lesson Plans", icon: FileText },
+  {
+    id: "timetable",
+    label: "Timetable",
+    icon: Calendar,
+    children: [
+      { id: "timetable", label: "Timetable", icon: Calendar },
+      { id: "assignments", label: "Subject Allocation", icon: BookOpen },
+      { id: "duty", label: "Duty Rota", icon: Lock },
+      { id: "classrooms", label: "Classroom Allocation", icon: LayoutGrid },
+    ],
+  },
+  { id: "cover", label: "Cover Planner", icon: RefreshCw },
+  { id: "sso", label: "Connected Systems (SSO)", icon: Globe },
+];
+
+// Admin sections that are switched off.
+//  - LOCKED  : still listed, shown with a padlock, cannot be opened.
+//  - HIDDEN  : removed from the menu entirely.
+// The screens themselves are untouched — empty these lists to turn a section
+// back on.
+const ADMIN_LOCKED_TABS = [
+  "timetable",
+  "assignments",
+  "duty",
+  "classrooms",
+  "cover",
+];
+const ADMIN_HIDDEN_TABS = ["sso"];
+const isAdminTabBlocked = (tab: string): boolean =>
+  ADMIN_LOCKED_TABS.includes(tab) || ADMIN_HIDDEN_TABS.includes(tab);
+
+// Is this nav item the one the current tab sits under?
+const isAdminNavActive = (itemId: string, tab: string): boolean =>
+  itemId === tab ||
+  (itemId === "timetable" &&
+    ["assignments", "duty", "classrooms"].includes(tab)) ||
+  (itemId === "teachers" && tab === "members");
+
+const adminNavLabel = (tab: string): string => {
+  for (const item of ADMIN_NAV) {
+    const child = item.children?.find((c) => c.id === tab);
+    if (child) return child.label;
+    if (item.id === tab) return item.label;
+  }
+  return "";
+};
 
 const getWeekFromDate = (dateStr: string): number | null => {
   if (!dateStr) return null;
@@ -4302,6 +4945,20 @@ export default function App() {
   const [isFetchingProjects, setIsFetchingProjects] = useState(false);
   const [isFetchingFolders, setIsFetchingFolders] = useState(false);
   const [submittedProjects, setSubmittedProjects] = useState<any[]>([]);
+  // Approval workflow: which stage the admin list is filtered to, the plan
+  // currently being sent back with feedback, and the submission a teacher is
+  // revising after it came back to them.
+  const [reviewFilter, setReviewFilter] = useState<"all" | ReviewStage>("all");
+  // Teachers this reviewer supervises. Kept per device because the users
+  // collection rules pin the document to exactly five fields.
+  const [supervisedTeachers, setSupervisedTeachers] = useState<string[]>([]);
+  const [onlyMyTeachers, setOnlyMyTeachers] = useState(false);
+  const [supervisePickerOpen, setSupervisePickerOpen] = useState(false);
+  const [feedbackPlan, setFeedbackPlan] = useState<any>(null);
+  const [feedbackNote, setFeedbackNote] = useState("");
+  const [feedbackWeeks, setFeedbackWeeks] = useState<Record<string, string>>({});
+  const [isSavingReview, setIsSavingReview] = useState(false);
+  const [revisionTargetId, setRevisionTargetId] = useState<string | null>(null);
   const [submittedFolders, setSubmittedFolders] = useState<any[]>([]);
   const [currentSubmittedFolderId, setCurrentSubmittedFolderId] = useState<
     string | null
@@ -4972,6 +5629,80 @@ export default function App() {
     }
   };
 
+  // Re-apply the school's official subject sheet: make sure every teacher on it
+  // exists in the directory, then rewrite year group ↔ subject assignments to
+  // match it exactly. Existing teachers are matched on name, never duplicated.
+  const applyOfficialSubjectMapping = async () => {
+    if (
+      !window.confirm(
+        "Replace every year group's teacher/subject assignment with the official subject sheet? Teachers missing from the directory will be added.",
+      )
+    )
+      return;
+
+    const nextTeachers = [...teachers];
+    const idCache: Record<string, string> = {};
+
+    const resolveId = (shortName: string): string => {
+      const key = shortName.toUpperCase();
+      if (idCache[key]) return idCache[key];
+      const norm = normalizeTeacherName(shortName);
+
+      // Someone already in the directory whose name contains the short name.
+      const existing =
+        nextTeachers.find((t) => normalizeTeacherName(t.name) === norm) ||
+        nextTeachers.find((t) => normalizeTeacherName(t.name).includes(norm));
+      if (existing) {
+        idCache[key] = existing.id;
+        return existing.id;
+      }
+
+      // Otherwise add them, keeping the id the sheet expects where we have one.
+      const id = OFFICIAL_TEACHER_IDS[key] || `t-${norm.toLowerCase()}`;
+      nextTeachers.push({
+        id,
+        name: shortName,
+        role: "Teacher",
+        subjects: [],
+        maxPeriods: 28,
+      });
+      idCache[key] = id;
+      return id;
+    };
+
+    const nextAssignments = buildOfficialAssignments(resolveId);
+
+    // Keep the directory's own subject list in step with what was just mapped.
+    const subjectsByTeacher: Record<string, string[]> = {};
+    Object.entries(nextAssignments).forEach(([key, ids]) => {
+      if (!ids) return;
+      const subject = key.slice(key.indexOf("-") + 1);
+      ids
+        .split(",")
+        .filter(Boolean)
+        .forEach((id) => {
+          if (!subjectsByTeacher[id]) subjectsByTeacher[id] = [];
+          if (!subjectsByTeacher[id].includes(subject))
+            subjectsByTeacher[id].push(subject);
+        });
+    });
+    const teachersWithSubjects = nextTeachers.map((t) => ({
+      ...t,
+      subjects: (subjectsByTeacher[t.id] || []).sort(),
+    }));
+
+    setTeachers(teachersWithSubjects);
+    setStaffAssignments(nextAssignments);
+    setHasUnsavedTimetableChanges(true);
+    await saveTimetableDataToFirestore(teachersWithSubjects, nextAssignments);
+    const added = nextTeachers.length - teachers.length;
+    alert(
+      `Official subject mapping applied to Year 1–Year 11.${
+        added > 0 ? ` ${added} teacher(s) added to the directory.` : ""
+      }`,
+    );
+  };
+
   const handleManualCloudSave = async () => {
     setIsSavingCloud(true);
     setSaveCloudSuccess(false);
@@ -5288,6 +6019,22 @@ export default function App() {
   // The Cloudflare Pages host that stores & serves published pages. Short,
   // reliable, and no long account name — links are e.g. zera-4ag.pages.dev/cat.
   const WORKSHEET_HOST_DEFAULT = "https://zera-4ag.pages.dev";
+
+  // Upload a page to the share host and hand back its public link.
+  const uploadSharedHtml = async (
+    html: string,
+    code: string = "",
+  ): Promise<string> => {
+    const res = await fetch(`${WORKSHEET_HOST_DEFAULT}/upload`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ html: ensurePrintableA4(html), code }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.url)
+      throw new Error(data?.error || `Publish failed (HTTP ${res.status})`);
+    return data.url as string;
+  };
 
   const publishHtml = async (html: string, presetCode?: string) => {
     // When a preset code is supplied (e.g. from the HTML Host tool) skip the
@@ -5720,6 +6467,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const [lpWeeklyTopics, setLpWeeklyTopics] = useState<string[]>(
     Array(1).fill(""),
   );
+  // A narrower slice of each week's topic, suggestible like unit/topic.
+  const [lpSubtopics, setLpSubtopics] = useState<string[]>(Array(1).fill(""));
   const [lpActivities, setLpActivities] = useState<string[]>(Array(1).fill(""));
   const [lpWeekLabels, setLpWeekLabels] = useState<string[]>(
     Array.from({ length: 1 }, (_, i) => `Week ${i + 1}`),
@@ -6745,38 +7494,48 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     }
   };
 
-  const sendLessonPlanEmail = () => {
+  // Publish the plan as its own page and email the link, rather than pasting
+  // the whole plan into the message body.
+  const sendLessonPlanEmail = async () => {
     if (!content?.lessonPlan) return;
     const lp = content.lessonPlan;
-    const subjectLine = encodeURIComponent(`Lesson Plan: ${lp.overallTopic}`);
+    const title =
+      lp.overallTopic || content.lessonTitle || "Lesson Plan";
 
-    let body = `LESSON PLAN: ${lp.overallTopic}\n`;
-    body += `==========================================\n\n`;
-    body += `Term: ${lp.term || "N/A"}\n`;
-    body += `Subject: ${lp.subject || "N/A"}\n`;
-    body += `Academic Year: ${lp.academicYear || "N/A"}\n`;
-    body += `Class/Grade: ${lp.class || "N/A"}\n`;
-    body += `Duration: ${lp.duration || "N/A"}\n`;
-    body += `Prepared By: ${lp.preparedBy || "N/A"}\n\n`;
+    setIsSharingLessonPlan(true);
+    try {
+      const url = await uploadSharedHtml(buildLessonPlanShareHTML(lp, title));
+      setLessonPlanShareUrl(url);
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch {
+        /* clipboard unavailable — the link is still in the email */
+      }
 
-    body += `WEEKLY DETAILS\n`;
-    body += `------------------------------------------\n`;
+      const subjectLine = encodeURIComponent(`Lesson Plan: ${title}`);
+      const body = [
+        `Here is the lesson plan "${title}":`,
+        ``,
+        url,
+        ``,
+        `Subject: ${lp.subject || "—"}`,
+        `Class / Year Group: ${lp.class || "—"}`,
+        `Term: ${lp.term || "—"}`,
+        `Prepared by: ${lp.preparedBy || teacherName}`,
+        ``,
+        `The link opens in any browser and can be printed straight from the page.`,
+        ``,
+        `Shared from Zera Education Suite`,
+      ].join("\n");
 
-    lp.weeklyBreakdown.forEach((w, idx) => {
-      body += `WEEK ${w.week} (${w.unit})\n`;
-      body += `Topic: ${w.topic}\n`;
-      body += `Learning Objective: ${w.learningObjective}\n`;
-      body += `Strand: ${w.strand}\n`;
-      body += `Introduction: ${w.introduction}\n`;
-      body += `Activities: ${w.activities}\n`;
-      body += `Assessment: ${w.assessment}\n`;
-      body += `Resources: ${w.resources}\n`;
-      body += `------------------------------------------\n`;
-    });
-
-    body += `\nGenerated via EduMagic AI`;
-
-    window.location.href = `mailto:?subject=${subjectLine}&body=${encodeURIComponent(body)}`;
+      window.location.href = `mailto:?subject=${subjectLine}&body=${encodeURIComponent(body)}`;
+    } catch (e: any) {
+      alert(
+        `Couldn't create the shareable link: ${e?.message || e}\n\nMake sure you're online and try again.`,
+      );
+    } finally {
+      setIsSharingLessonPlan(false);
+    }
   };
 
   const renderAuth = () => (
@@ -7135,51 +7894,30 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           questionTypes: [],
         },
         unit,
-        topic,
+        // Steer the week with the narrower subtopic when one is given.
+        [topic, lpSubtopics[index]?.trim()].filter(Boolean).join(" — "),
       );
 
       if (weekData) {
-        setContent((prev) => {
-          // Initialize base content if it's null
-          const base = prev || {
-            lessonTitle: lessonInput || topic || "Untitled Lesson",
-            subject: subject,
-            gradeLevel: yearGroup,
-            slides: [],
-            slidesMetadata: { description: "", methodology: "" },
-            worksheet: {
-              title: "",
-              description: "",
-              methodology: "",
-              sections: [],
-            },
-            readingProgram: {
-              title: "",
-              description: "",
-              gradeLevel: "",
-              focusArea: "",
-              duration: "",
-              weeklyGoals: [],
-              recommendedBooks: [],
-              milestones: [],
-            },
-            metadata: { yearGroup, lexileLevel, subject },
-          };
-
-          const lessonPlan = base.lessonPlan || {
-            overallTopic: base.lessonTitle,
-            subject: base.subject,
+        if (lpSubtopics[index]?.trim() && !weekData.subTopic)
+          weekData.subTopic = lpSubtopics[index].trim();
+        // Add this week to the side SUGGESTIONS instead of filling the plan
+        // directly — the teacher copies it into their blank template.
+        setLessonPlanSuggestion((prev) => {
+          const base: NonNullable<EduContent["lessonPlan"]> = prev || {
             term: lpTerm,
+            subject: content?.lessonPlan?.subject || lpSubject || subject,
             duration: lpDuration,
             date: lpDate,
             academicYear: lpAcademicYear,
             class: lpClass,
             preparedBy: lpPreparedBy,
             checkedBy: lpCheckedBy,
+            overallTopic: "",
             weeklyBreakdown: [],
           };
 
-          const newBreakdown = [...lessonPlan.weeklyBreakdown];
+          const newBreakdown = [...(base.weeklyBreakdown || [])];
           const existingIdx = newBreakdown.findIndex((w) => w.week === weekNum);
 
           if (existingIdx >= 0) {
@@ -7189,21 +7927,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             newBreakdown.sort((a, b) => a.week - b.week);
           }
 
-          return {
-            ...base,
-            lessonPlan: {
-              ...lessonPlan,
-              weeklyBreakdown: newBreakdown,
-            },
-          };
+          return { ...base, weeklyBreakdown: newBreakdown };
         });
         setWorkspaceMode("lesson-plan");
         setCurrentView("lesson-plan");
-
-        // Scroll to the lesson plan ref
-        setTimeout(() => {
-          lessonPlanRef.current?.scrollIntoView({ behavior: "smooth" });
-        }, 100);
       }
     } catch (err: any) {
       handleEduError(err, "Generate weekly plan");
@@ -7214,7 +7941,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   };
 
   const handleSuggestInput = async (
-    type: "unit" | "topic" | "activity",
+    type: "unit" | "topic" | "subtopic" | "activity",
     index: number,
   ) => {
     setIsSuggesting(`${type}-${index}` as any);
@@ -7242,6 +7969,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         const newTopics = [...lpWeeklyTopics];
         newTopics[index] = suggestion;
         setLpWeeklyTopics(newTopics);
+      }
+      if (type === "subtopic") {
+        const newSubtopics = [...lpSubtopics];
+        newSubtopics[index] = suggestion;
+        setLpSubtopics(newSubtopics);
       }
       if (type === "activity") {
         const newActivities = [...lpActivities];
@@ -7336,6 +8068,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const clearWorkspace = () => {
     setContent(null);
     setIsReviewMode(false);
+    setRevisionTargetId(null);
     setCurrentProjectId((prev) => {
       // If we are clearing a specific project, we should also clear the history
       setHistoryStack([]);
@@ -7527,27 +8260,246 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   );
   const totalPages = Math.ceil(imageSearchResults.length / itemsPerPage);
 
+  // The directory record belonging to whoever is signed in, so a submission can
+  // be tied to a tracker row without depending on how a name is spelled.
+  // `teachers` is declared further down, so this resolves lazily at call time.
+  const findMyTeacherRecord = () =>
+    teachers.find(
+      (t) =>
+        sameTeacherName(t.name, teacherName) ||
+        sameTeacherName(t.name, user?.email || ""),
+    );
+
+  // Identity stamped onto every submission, so the weekly tracker can tick the
+  // right teacher / subject / year group row without guessing.
+  const submissionIdentity = () => ({
+    teacherId: findMyTeacherRecord()?.id || "",
+    subject:
+      content?.lessonPlan?.subject || content?.subject || lpSubject || "",
+    yearGroup:
+      content?.lessonPlan?.class || content?.gradeLevel || yearGroup || "",
+  });
+
+  // --- Approval workflow -----------------------------------------------------
+  // Admins can act at either step so the flow never stalls; a dedicated Head of
+  // Department or Coordinator only sees the step that belongs to them.
+  const canReviewAsHod =
+    userRoles.includes("admin") || userRoles.includes("hod");
+  const canReviewAsCoordinator =
+    userRoles.includes("admin") || userRoles.includes("coordinator");
+  const isPlanReviewer = canReviewAsHod || canReviewAsCoordinator;
+
+  const reviewerRoleLabel = userRoles.includes("hod")
+    ? "Head of Department"
+    : userRoles.includes("coordinator")
+      ? "Coordinator"
+      : "Admin";
+
+  const appendReviewEntry = (plan: any, action: string, note: string) => [
+    ...(Array.isArray(plan?.reviewHistory) ? plan.reviewHistory : []),
+    {
+      at: Date.now(),
+      byUid: user?.uid || "",
+      byName: teacherName,
+      role: reviewerRoleLabel,
+      action,
+      note: note || "",
+    },
+  ];
+
+  // HOD signs off → the plan moves on to the Coordinator.
+  const hodApprovePlan = async (plan: any) => {
+    if (!plan?.id) return;
+    try {
+      await updateDoc(doc(db, "submitted_plans", plan.id), {
+        reviewStage: "pending_coordinator",
+        reviewNote: "",
+        weeklyFeedback: {},
+        hodApprovedAt: Date.now(),
+        hodApprovedBy: teacherName,
+        reviewHistory: appendReviewEntry(plan, "Approved by HOD", ""),
+      });
+    } catch (err) {
+      handleFirestoreError(
+        err,
+        OperationType.WRITE,
+        `submitted_plans/${plan.id}`,
+      );
+    }
+  };
+
+  // Coordinator signs off → the plan goes back to the teacher to use.
+  const coordinatorApprovePlan = async (plan: any) => {
+    if (!plan?.id) return;
+    try {
+      await updateDoc(doc(db, "submitted_plans", plan.id), {
+        reviewStage: "approved",
+        reviewNote: "",
+        weeklyFeedback: {},
+        approvedAt: Date.now(),
+        approvedBy: teacherName,
+        reviewHistory: appendReviewEntry(plan, "Approved by Coordinator", ""),
+      });
+    } catch (err) {
+      handleFirestoreError(
+        err,
+        OperationType.WRITE,
+        `submitted_plans/${plan.id}`,
+      );
+    }
+  };
+
+  // Grant or remove the review roles that drive the approval flow.
+  const toggleMemberRole = async (member: any, role: string) => {
+    if (!user || !userRoles.includes("admin")) return;
+    const current: string[] = Array.isArray(member?.roles)
+      ? member.roles
+      : ["educator"];
+    const next = current.includes(role)
+      ? current.filter((r) => r !== role)
+      : [...current, role];
+    try {
+      await updateDoc(doc(db, "users", member.id), { roles: next });
+      setAllMembers((prev) =>
+        prev.map((m) => (m.id === member.id ? { ...m, roles: next } : m)),
+      );
+      // Keep our own permissions live if we changed our own record.
+      if (member.uid === user.uid) setUserRoles(next);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `users/${member.id}`);
+    }
+  };
+
+  const openFeedbackModal = (plan: any) => {
+    setFeedbackPlan(plan);
+    setFeedbackNote(plan?.reviewNote || "");
+    setFeedbackWeeks(plan?.weeklyFeedback || {});
+  };
+
+  // Send the plan back to its teacher with what needs fixing.
+  const requestPlanChanges = async () => {
+    if (!feedbackPlan?.id) return;
+    const weekNotes = Object.fromEntries(
+      Object.entries(feedbackWeeks).filter(([, v]) => (v || "").trim()),
+    );
+    if (!feedbackNote.trim() && Object.keys(weekNotes).length === 0) {
+      alert(
+        "Write what needs fixing — either an overall note or a note on at least one week.",
+      );
+      return;
+    }
+    setIsSavingReview(true);
+    try {
+      await updateDoc(doc(db, "submitted_plans", feedbackPlan.id), {
+        reviewStage: "changes_requested",
+        reviewNote: feedbackNote.trim(),
+        weeklyFeedback: weekNotes,
+        reviewedAt: Date.now(),
+        reviewedBy: teacherName,
+        // Sent back, so any sign-off from this round is void.
+        hodApprovedAt: null,
+        hodApprovedBy: "",
+        approvedAt: null,
+        approvedBy: "",
+        reviewHistory: appendReviewEntry(
+          feedbackPlan,
+          `Changes requested by ${reviewerRoleLabel}`,
+          feedbackNote.trim(),
+        ),
+      });
+      setFeedbackPlan(null);
+      setFeedbackNote("");
+      setFeedbackWeeks({});
+    } catch (err) {
+      handleFirestoreError(
+        err,
+        OperationType.WRITE,
+        `submitted_plans/${feedbackPlan.id}`,
+      );
+    } finally {
+      setIsSavingReview(false);
+    }
+  };
+
+  // Teacher picks up a plan that came back: open it in the editor and remember
+  // which submission the next Submit should update rather than duplicate.
+  const startPlanRevision = (plan: any) => {
+    if (!plan?.content) return;
+    loadProject({ ...plan, category: plan.category || "lesson-plan" }, false);
+    setCurrentProjectId(plan.sourceProjectId || null);
+    setRevisionTargetId(plan.id);
+    if (plan.weekId) setSelectedWeekForSubmission(plan.weekId);
+  };
+
   const submitToAdmin = async () => {
     if (!user) {
       console.warn("SubmitToAdmin: No user logged in");
       return;
     }
 
+    // Fixing a plan that was sent back: update that same submission so the
+    // reviewers see one plan moving through the flow, not a pile of copies.
+    if (revisionTargetId && content) {
+      try {
+        const previous =
+          submittedProjects.find((p: any) => p.id === revisionTargetId) || {};
+        await updateDoc(doc(db, "submitted_plans", revisionTargetId), {
+          content,
+          timestamp: Date.now(),
+          weekId: selectedWeekForSubmission,
+          title: buildSubmissionTitle(content, selectedWeekForSubmission),
+          ...submissionIdentity(),
+          reviewStage: "pending_hod",
+          reviewNote: "",
+          weeklyFeedback: {},
+          // A fresh round of review — last round's sign-offs no longer apply.
+          hodApprovedAt: null,
+          hodApprovedBy: "",
+          approvedAt: null,
+          approvedBy: "",
+          reviewHistory: [
+            ...(Array.isArray(previous.reviewHistory)
+              ? previous.reviewHistory
+              : []),
+            {
+              at: Date.now(),
+              byUid: user.uid,
+              byName: teacherName,
+              role: "Teacher",
+              action: "Resubmitted after changes",
+              note: "",
+            },
+          ],
+        });
+        setRevisionTargetId(null);
+        alert("Resubmitted to your Head of Department.");
+      } catch (err) {
+        handleFirestoreError(
+          err,
+          OperationType.WRITE,
+          `submitted_plans/${revisionTargetId}`,
+        );
+      }
+      return;
+    }
+
     console.log("SubmitToAdmin: Initiating submission for", user.email);
     try {
       if (content) {
+        // Straight into this teacher's own folder in the submissions area.
+        const folderId = await ensureTeacherFolder(teacherName);
         // We create a new entry in submitted_plans to avoid being overwritten by teacher saves
         const submissionData = {
           userId: user.uid,
+          folderId,
           timestamp: Date.now(),
           content,
           weekId: selectedWeekForSubmission,
           category: workspaceMode,
-          title:
-            content.lessonTitle ||
-            content.lessonPlan?.overallTopic ||
-            "Untitled Project",
+          title: buildSubmissionTitle(content, selectedWeekForSubmission),
           status: "submitted",
+          ...submissionIdentity(),
+          reviewStage: "pending_hod",
           teacherName: teacherName,
           settings: {
             includeStory,
@@ -7571,10 +8523,321 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     }
   };
 
+  // Submit ALL of the teacher's saved lesson plans to Admin at once.
+  // e.g. a teacher who has saved English for Y1, Y2, Y3... clicks once when
+  // they are all complete and every saved lesson plan is sent to the Admin.
+  const submitAllToAdmin = async () => {
+    if (!user) return;
+    const plans = userProjects.filter(
+      (p: any) => p?.category === "lesson-plan" && p?.content,
+    );
+    if (plans.length === 0) {
+      alert(
+        "You have no saved lesson plans to submit yet. Click Save on a lesson plan first, then submit them all together.",
+      );
+      return;
+    }
+    if (
+      !window.confirm(
+        `Submit all ${plans.length} saved lesson plan(s) to the Admin at the same time?`,
+      )
+    )
+      return;
+    try {
+      // Make sure each teacher's folder exists before filing into it.
+      await Promise.all(
+        Array.from(
+          new Set(plans.map((p: any) => p.teacherName || teacherName)),
+        ).map((n) => ensureTeacherFolder(n as string)),
+      );
+      await Promise.all(
+        plans.map((p: any) => {
+          const submissionData = {
+            userId: user.uid,
+            folderId: teacherFolderId(p.teacherName || teacherName),
+            sourceProjectId: p.id,
+            timestamp: Date.now(),
+            content: p.content,
+            weekId: selectedWeekForSubmission,
+            category: p.category || "lesson-plan",
+            title: buildSubmissionTitle(p.content, selectedWeekForSubmission),
+            status: "submitted",
+            teacherId: findMyTeacherRecord()?.id || "",
+            subject:
+              p.content?.lessonPlan?.subject || p.content?.subject || "",
+            yearGroup:
+              p.content?.lessonPlan?.class || p.content?.gradeLevel || "",
+            reviewStage: "pending_hod",
+            teacherName: p.teacherName || teacherName,
+            settings: p.settings || {
+              includeStory,
+              isTemplateMode,
+              workspaceMode,
+            },
+          };
+          // Deterministic id keyed to the source project so re-submitting
+          // the same plan updates its record instead of creating duplicates.
+          return setDoc(
+            doc(db, "submitted_plans", `sub_${p.id}`),
+            submissionData,
+          );
+        }),
+      );
+      alert(
+        `Successfully submitted ${plans.length} lesson plan(s) to the Admin Dashboard!`,
+      );
+    } catch (err) {
+      console.error("SubmitAllToAdmin: ERROR", err);
+      handleFirestoreError(err, OperationType.WRITE, "submitted_plans");
+    }
+  };
+
+  // --- Multi-plan board helpers -------------------------------------------
+  // A teacher with several subjects / year groups keeps one card per plan on
+  // the board, opens one full size to edit it, minimises it and opens the next.
+
+  const makeBlankLessonPlanContent = (
+    subj: string,
+    yearGroupLabel: string,
+  ): EduContent =>
+    ({
+      lessonTitle: `${subj} — ${yearGroupLabel}`,
+      subject: subj,
+      gradeLevel: yearGroupLabel,
+      slides: [],
+      lessonPlan: {
+        term: lpTerm || "1",
+        subject: subj,
+        duration: lpDuration || "60 mins",
+        date: new Date().toISOString().split("T")[0],
+        academicYear:
+          lpAcademicYear ||
+          `${new Date().getFullYear()}/${new Date().getFullYear() + 1}`,
+        class: yearGroupLabel,
+        preparedBy: teacherName,
+        checkedBy: "",
+        overallTopic: "",
+        weeklyBreakdown: [
+          {
+            week: 1,
+            unit: "",
+            topic: "",
+            learningObjective: "",
+            strand: "",
+            introduction: "",
+            activities: "",
+            assessment: "",
+            resources: "",
+          },
+        ],
+      },
+      metadata: {
+        yearGroup: yearGroupLabel,
+        lexileLevel: "N/A",
+        subject: subj,
+      },
+    }) as EduContent;
+
+  // Write the plan back to its project without the "saved!" alert, so
+  // minimising a card or switching plans never loses an edit.
+  const persistLessonPlanSilently = async (
+    planContent: EduContent | null,
+    projectId?: string | null,
+  ): Promise<string | null> => {
+    if (!user || !planContent?.lessonPlan) return null;
+    const id =
+      projectId ||
+      currentProjectId ||
+      Math.random().toString(36).substring(2, 15);
+    try {
+      await setDoc(doc(db, "projects", id), {
+        id,
+        userId: user.uid,
+        folderId: activeFolderId,
+        timestamp: Date.now(),
+        title:
+          planContent.lessonTitle ||
+          planContent.lessonPlan?.overallTopic ||
+          "Untitled Lesson Plan",
+        category: "lesson-plan",
+        status: "draft",
+        teacherName: teacherName,
+        content: planContent,
+        settings: {
+          includeStory,
+          isTemplateMode,
+          workspaceMode: "lesson-plan",
+        },
+      });
+      return id;
+    } catch (err) {
+      console.error("persistLessonPlanSilently: ERROR", err);
+      return null;
+    }
+  };
+
+  // Minimise the plan that is open and go back to the board.
+  const openLessonPlanBoard = async () => {
+    if (!isReviewMode && content?.lessonPlan) {
+      const id = await persistLessonPlanSilently(content, currentProjectId);
+      if (id && id !== currentProjectId) setCurrentProjectId(id);
+    }
+    setLpBoardOpen(true);
+  };
+
+  // Blow a card back up to the full editor, saving whatever was open first.
+  const openPlanFromBoard = async (project: any) => {
+    if (
+      !isReviewMode &&
+      content?.lessonPlan &&
+      project?.id !== currentProjectId
+    ) {
+      await persistLessonPlanSilently(content, currentProjectId);
+    }
+    loadProject(project);
+    setLpBoardOpen(false);
+  };
+
+  // Spin up one blank plan per year group in a single click, e.g. Science for
+  // Year 1, Year 2 and Year 3 → three cards ready to fill in.
+  const createLessonPlanDrafts = async (subj: string, years: string[]) => {
+    if (!user || !subj || years.length === 0) return;
+    setLpBoardBusy(true);
+    try {
+      await Promise.all(
+        years.map((y) => {
+          const id = Math.random().toString(36).substring(2, 15);
+          return setDoc(doc(db, "projects", id), {
+            id,
+            userId: user.uid,
+            folderId: activeFolderId,
+            timestamp: Date.now(),
+            title: `${subj} — ${y}`,
+            category: "lesson-plan",
+            status: "draft",
+            teacherName: teacherName,
+            content: makeBlankLessonPlanContent(subj, y),
+            settings: {
+              includeStory,
+              isTemplateMode,
+              workspaceMode: "lesson-plan",
+            },
+          });
+        }),
+      );
+      setLpQuickYears([]);
+      setLpQuickAddOpen(false);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, "projects");
+    } finally {
+      setLpBoardBusy(false);
+    }
+  };
+
+  // Submit exactly the plans the teacher ticked on the board.
+  const submitPlansToAdmin = async (plans: any[]) => {
+    if (!user) return;
+    const valid = plans.filter((p: any) => p?.content);
+    if (valid.length === 0) {
+      alert("Tick at least one lesson plan to submit.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Submit ${valid.length} ticked lesson plan(s) to the Admin?`,
+      )
+    )
+      return;
+    try {
+      await Promise.all(
+        Array.from(
+          new Set(valid.map((p: any) => p.teacherName || teacherName)),
+        ).map((n) => ensureTeacherFolder(n as string)),
+      );
+      await Promise.all(
+        valid.map((p: any) =>
+          // Deterministic id keyed to the source project so re-submitting
+          // the same plan updates its record instead of creating duplicates.
+          setDoc(doc(db, "submitted_plans", `sub_${p.id}`), {
+            userId: user.uid,
+            folderId: teacherFolderId(p.teacherName || teacherName),
+            sourceProjectId: p.id,
+            timestamp: Date.now(),
+            content: p.content,
+            weekId: selectedWeekForSubmission,
+            category: p.category || "lesson-plan",
+            title: buildSubmissionTitle(p.content, selectedWeekForSubmission),
+            status: "submitted",
+            teacherId: findMyTeacherRecord()?.id || "",
+            subject:
+              p.content?.lessonPlan?.subject || p.content?.subject || "",
+            yearGroup:
+              p.content?.lessonPlan?.class || p.content?.gradeLevel || "",
+            reviewStage: "pending_hod",
+            teacherName: p.teacherName || teacherName,
+            settings: p.settings || {
+              includeStory,
+              isTemplateMode,
+              workspaceMode: "lesson-plan",
+            },
+          }),
+        ),
+      );
+      setLpSelectedPlanIds([]);
+      alert(
+        `Successfully submitted ${valid.length} lesson plan(s) to the Admin Dashboard!`,
+      );
+    } catch (err) {
+      console.error("SubmitPlansToAdmin: ERROR", err);
+      handleFirestoreError(err, OperationType.WRITE, "submitted_plans");
+    }
+  };
+
+  // Submit a single card from the board (Submit All does every card at once).
+  const submitPlanToAdmin = async (project: any) => {
+    if (!user || !project?.content) return;
+    try {
+      await ensureTeacherFolder(project.teacherName || teacherName);
+      await setDoc(doc(db, "submitted_plans", `sub_${project.id}`), {
+        userId: user.uid,
+        folderId: teacherFolderId(project.teacherName || teacherName),
+        sourceProjectId: project.id,
+        timestamp: Date.now(),
+        content: project.content,
+        weekId: selectedWeekForSubmission,
+        category: project.category || "lesson-plan",
+        title: buildSubmissionTitle(
+          project.content,
+          selectedWeekForSubmission,
+        ),
+        status: "submitted",
+        teacherId: findMyTeacherRecord()?.id || "",
+        subject:
+          project.content?.lessonPlan?.subject || project.content?.subject || "",
+        yearGroup:
+          project.content?.lessonPlan?.class || project.content?.gradeLevel || "",
+        reviewStage: "pending_hod",
+        teacherName: project.teacherName || teacherName,
+        settings: project.settings || {
+          includeStory,
+          isTemplateMode,
+          workspaceMode: "lesson-plan",
+        },
+      });
+      alert(`Submitted "${project.title || "lesson plan"}" to the Admin.`);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, "submitted_plans");
+    }
+  };
+
   const loadProject = (project: any, reviewMode: boolean = false) => {
     setCurrentProjectId(project.id);
     setContent(project.content);
     setIsReviewMode(reviewMode);
+    setLpBoardOpen(false);
+    // Opening anything else ends a revision, so Submit can't update the wrong
+    // submission. startPlanRevision re-arms it straight after this call.
+    setRevisionTargetId(null);
     setWorkspaceMode(
       project.category || project.settings?.workspaceMode || "slides",
     );
@@ -7620,6 +8883,85 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     } catch (err) {
       console.error("Error creating folder:", err);
       alert("Failed to create folder.");
+    }
+  };
+
+  // Every teacher gets one folder in the submissions area, with a deterministic
+  // id so a submission can be filed into it without a lookup — and so the same
+  // teacher never ends up with two folders.
+  const teacherFolderId = (name: string): string =>
+    `teacher_${normalizeTeacherName(name).toLowerCase()}`;
+
+  // Best effort: teachers may not have permission to create folders, in which
+  // case the plan still records the folder id and drops in once an admin has
+  // run "Folders For All Teachers".
+  const ensureTeacherFolder = async (name: string): Promise<string> => {
+    const trimmed = (name || "").trim();
+    if (!trimmed) return "";
+    const id = teacherFolderId(trimmed);
+    if (submittedFolders.some((f) => f.id === id)) return id;
+    try {
+      await setDoc(
+        doc(db, "submitted_folders", id),
+        {
+          name: trimmed,
+          teacherFolder: true,
+          createdAt: Date.now(),
+          createdBy: user?.email || "",
+        },
+        { merge: true },
+      );
+    } catch (err) {
+      console.warn("Could not create teacher folder:", err);
+    }
+    return id;
+  };
+
+  // Give every teacher in the directory a folder in one go.
+  const createFoldersForAllTeachers = async () => {
+    const names = Array.from(
+      new Set(
+        getActiveStaffList(teachers)
+          .map((t: any) => (t.name || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    if (names.length === 0) {
+      alert("No teachers in the directory yet.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Create a submissions folder for each of the ${names.length} teachers in the directory?`,
+      )
+    )
+      return;
+    try {
+      const existing = new Set(submittedFolders.map((f) => f.id));
+      const toCreate = names.filter(
+        (n) => !existing.has(teacherFolderId(n as string)),
+      );
+      await Promise.all(
+        toCreate.map((n) =>
+          setDoc(
+            doc(db, "submitted_folders", teacherFolderId(n as string)),
+            {
+              name: n,
+              teacherFolder: true,
+              createdAt: Date.now(),
+              createdBy: user?.email || "",
+            },
+            { merge: true },
+          ),
+        ),
+      );
+      alert(
+        toCreate.length === 0
+          ? "Every teacher already has a folder."
+          : `Created ${toCreate.length} teacher folder(s).`,
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, "submitted_folders");
     }
   };
 
@@ -7750,7 +9092,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
     setIsFetchingSubmitted(true);
 
-    if (userRoles.includes("admin")) {
+    // Reviewers (admin, Head of Department, Coordinator) see every submission;
+    // a plain teacher only ever sees their own.
+    if (
+      userRoles.includes("admin") ||
+      userRoles.includes("hod") ||
+      userRoles.includes("coordinator")
+    ) {
       setIsFetchingSubmittedFolders(true);
       const plansQ = query(
         collection(db, "submitted_plans"),
@@ -8771,6 +10119,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         },
       );
       if (result) {
+        setLessonPlanSuggestion(result);
+        const blank = makeBlankLessonPlan(result);
         const eduContent: EduContent = {
           lessonTitle: result.overallTopic || sessionTopic,
           subject: subject,
@@ -8787,7 +10137,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             recommendedBooks: [],
             milestones: [],
           },
-          lessonPlan: result,
+          lessonPlan: blank,
           metadata: { yearGroup, lexileLevel, subject: subject },
         };
         setContent(eduContent);
@@ -8801,6 +10151,42 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       setIsGenerating(false);
     }
   };
+
+  // Produce an empty plan that keeps only the header details the teacher entered
+  // (term, subject, class, etc.) and the right number of blank week rows. The AI
+  // content is surfaced separately as suggestions.
+  const makeBlankLessonPlan = (
+    r: NonNullable<EduContent["lessonPlan"]>,
+  ): NonNullable<EduContent["lessonPlan"]> => ({
+    term: r.term || "",
+    subject: r.subject || "",
+    duration: r.duration || "",
+    date: r.date || "",
+    academicYear: r.academicYear || "",
+    class: r.class || "",
+    preparedBy: r.preparedBy || "",
+    checkedBy: r.checkedBy || "",
+    overallTopic: "",
+    weeklyBreakdown: (r.weeklyBreakdown || []).map((w) => ({
+      week: w.week,
+      unit: "",
+      topic: "",
+      learningObjective: "",
+      strand: "",
+      introduction: "",
+      activities: "",
+      assessment: "",
+      resources: "",
+    })),
+    subTopic: "",
+    strandSummary: "",
+    learningObjectiveSummary: "",
+    successCriteria: "",
+    essentialQuestions: "",
+    keyCompetencies: "",
+    portfolioEvidence: "",
+    reflection: "",
+  });
 
   const generateLP = async () => {
     const focus =
@@ -8842,8 +10228,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         fileContext: lpFileData,
       });
       if (result) {
+        // Show the AI plan as copyable suggestions; give the teacher an empty
+        // template (their header details + blank weeks) to fill in themselves.
+        setLessonPlanSuggestion(result);
+        const blank = makeBlankLessonPlan(result);
         const eduContent: EduContent = content
-          ? { ...content, lessonPlan: result }
+          ? { ...content, lessonPlan: blank }
           : {
               lessonTitle: result.overallTopic || lpDescription,
               subject: lpSubject,
@@ -8860,7 +10250,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 recommendedBooks: [],
                 milestones: [],
               },
-              lessonPlan: result,
+              lessonPlan: blank,
               metadata: { yearGroup, lexileLevel, subject: lpSubject },
             };
         setContent(eduContent);
@@ -8985,7 +10375,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     }
   }, [currentView]);
 
-  const [adminTab, setAdminTab] = useState<
+  const [adminTabRaw, setAdminTabRaw] = useState<
+    | "none"
     | "overview"
     | "timetable"
     | "teachers"
@@ -8997,6 +10388,24 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     | "classrooms"
     | "sso"
   >("overview");
+  // Single choke point: a blocked section can never become the active tab, no
+  // matter which shortcut tries to open it.
+  const adminTab = isAdminTabBlocked(adminTabRaw) ? "overview" : adminTabRaw;
+  const setAdminTab = (tab: typeof adminTabRaw) => {
+    if (isAdminTabBlocked(tab)) return;
+    setAdminTabRaw(tab);
+  };
+  // Menu items behave like an accordion: click to open the section, click the
+  // same one again to close it and clear the workspace.
+  const toggleAdminTab = (tab: typeof adminTabRaw) => {
+    if (isAdminTabBlocked(tab)) return;
+    setAdminTabRaw((prev) =>
+      isAdminNavActive(tab, prev) || prev === tab ? "none" : tab,
+    );
+  };
+  // Admin navigation lives in a collapsible left pane instead of a crowded
+  // row of tabs across the top.
+  const [adminNavOpen, setAdminNavOpen] = useState(true);
   const [allMembers, setAllMembers] = useState<any[]>([]);
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
 
@@ -9030,6 +10439,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const [apiCliEndpoint, setApiCliEndpoint] = useState<"userinfo" | "students" | "staff">("userinfo");
   const [apiCliLogs, setApiCliLogs] = useState<any[]>([]);
   const [isCliExecuting, setIsCliExecuting] = useState(false);
+  // Last ticket minted by the login simulator, ready to hand off to /sso/callback.
+  const [ssoTicket, setSsoTicket] = useState<{
+    ticket: string;
+    payload: any;
+  } | null>(null);
+  const [isGeneratingTicket, setIsGeneratingTicket] = useState(false);
+  const [ssoOpenLog, setSsoOpenLog] = useState<string | null>(null);
 
   const fetchSsoData = async () => {
     setIsSsoDataLoading(true);
@@ -9063,6 +10479,143 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       fetchSsoData();
     }
   }, [adminTab, user]);
+
+  // Persist the client id / machine token / school URL the simulator runs with.
+  const saveSsoConfig = async () => {
+    try {
+      const res = await fetch("/api/sso/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: ssoConfig.client_id,
+          machine_token: ssoConfig.machine_token,
+          school_url: ssoConfig.school_url,
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setSsoSaveSuccess(true);
+      window.setTimeout(() => setSsoSaveSuccess(false), 2500);
+      fetchSsoData();
+    } catch (e: any) {
+      alert(`Couldn't save the SSO configuration: ${e?.message || e}`);
+    }
+  };
+
+  // Wipe logs, shadow users and replayed jti ids back to factory defaults.
+  const resetSsoState = async () => {
+    if (
+      !window.confirm(
+        "Reset the SSO simulator? This clears every log, shadow user and replay guard.",
+      )
+    )
+      return;
+    try {
+      const res = await fetch("/api/sso/reset", { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setSsoTicket(null);
+      setApiCliLogs([]);
+      fetchSsoData();
+    } catch (e: any) {
+      alert(`Couldn't reset the simulator: ${e?.message || e}`);
+    }
+  };
+
+  // Front-channel: mint an RS256 ticket the way Commun would, so the
+  // /sso/callback handoff can be exercised end to end.
+  const generateSsoTicket = async () => {
+    setIsGeneratingTicket(true);
+    try {
+      const res = await fetch("/api/sso/generate-ticket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sub: simulatorUser.sub,
+          email: simulatorUser.email,
+          first_name: simulatorUser.first_name,
+          last_name: simulatorUser.last_name,
+          user_types: simulatorUser.user_types
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean),
+          clockSkewSeconds: simulatorUser.clockSkewSeconds,
+          expiredToken: simulatorUser.expiredToken,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      setSsoTicket(data);
+      fetchSsoData();
+    } catch (e: any) {
+      alert(`Couldn't generate a ticket: ${e?.message || e}`);
+    } finally {
+      setIsGeneratingTicket(false);
+    }
+  };
+
+  // Back-channel: call the machine-token protected APIs exactly as Commun does.
+  const runApiCli = async () => {
+    setIsCliExecuting(true);
+    const path =
+      apiCliEndpoint === "userinfo"
+        ? `/api/v1/userinfo/${encodeURIComponent(apiCliSub)}`
+        : `/api/v1/${apiCliEndpoint}`;
+    try {
+      const res = await fetch(path, {
+        headers: { Authorization: `Bearer ${apiCliToken}` },
+      });
+      const raw = await res.text();
+      let body: any = raw;
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        /* non-JSON response (e.g. route not mounted) — keep the raw text */
+      }
+      setApiCliLogs((prev) => [
+        {
+          id: Math.random().toString(36).substring(2, 11),
+          timestamp: new Date().toISOString(),
+          request: `GET ${path}`,
+          status: res.status,
+          ok: res.ok,
+          body:
+            typeof body === "string"
+              ? body.slice(0, 500)
+              : JSON.stringify(body, null, 2),
+        },
+        ...prev,
+      ]);
+      fetchSsoData();
+    } catch (e: any) {
+      setApiCliLogs((prev) => [
+        {
+          id: Math.random().toString(36).substring(2, 11),
+          timestamp: new Date().toISOString(),
+          request: `GET ${path}`,
+          status: 0,
+          ok: false,
+          body: String(e?.message || e),
+        },
+        ...prev,
+      ]);
+    } finally {
+      setIsCliExecuting(false);
+    }
+  };
+
+  // Flip a provisioned user active/inactive to test the active re-check path.
+  const toggleShadowActive = async (sub: string) => {
+    try {
+      const res = await fetch("/api/sso/toggle-shadow-active", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sub }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      fetchSsoData();
+    } catch (e: any) {
+      alert(`Couldn't toggle that user: ${e?.message || e}`);
+    }
+  };
 
   useEffect(() => {
     if (adminTab === "members" && user) {
@@ -9277,6 +10830,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       subjects: [],
       maxPeriods: 28,
     })),
+    // Staff from the official subject sheet who weren't in the directory.
+    ...OFFICIAL_NEW_TEACHERS,
   ]);
 
   const [teacherSearchQuery, setTeacherSearchQuery] = useState("");
@@ -9363,7 +10918,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   // Primary (Y1–Y6) subject set — shared by the KS1 and KS2 segments.
   const primaryMappingSubjects = [
     "Assembly",
-    "DEAR Program/Islamic Studies",
+    "Silent Reading/Islamic Studies",
     "Wellbeing",
     "English",
     "Mathematics",
@@ -9385,7 +10940,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     // KS3 (Y7–Y9)
     ks3: [
       "Assembly",
-      "DEAR Program/Islamic Studies",
+      "Silent Reading/Islamic Studies",
       "Wellbeing",
       "English First",
       "English Second",
@@ -9407,7 +10962,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     // KS4 IGCSE (Y10–Y11) — core subjects plus the IGCSE elective options.
     ks4: [
       "Assembly",
-      "DEAR Program/Islamic Studies",
       "Physical Education",
       "English (First Language)",
       "English (Second Language)",
@@ -9465,154 +11019,142 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const [staffAssignments, setStaffAssignments] = useState<
     Record<string, string>
   >(() => {
-    const initial: Record<string, string> = {};
-
-    // Explicit Year 1 Assignments
-    const y1Mappings: Record<string, string> = {
-      "HOMEROOM": "c-1",
-      "DEAR PROGRAM": "c-1",
-      ENGLISH: "c-1",
-      MATHEMATICS: "t-1",
-      SCIENCE: "t-2",
-      MANDARIN: "t-3",
-      MALAY: "c-1",
-      "GLOBAL PERSPECTIVES": "t-4",
-      "PHYSICAL EDUCATION": "t-5",
-      "DIGITAL LITERACY": "t-6",
-      MUSIC: "t-7",
-      "ART & DESIGN": "t-6",
-      WELLBEING: "c-1",
-      LIBRARY: "t-6",
-      CCA: "",
-    };
-    Object.entries(y1Mappings).forEach(([sub, tId]) => {
-      initial[`Year 1-${sub}`] = tId;
+    // Seeded straight from the school's official subject sheet.
+    return buildOfficialAssignments((shortName) =>
+      OFFICIAL_TEACHER_IDS[shortName.toUpperCase()] || "",
+    );
+  });
+  // What each teacher actually teaches, derived live from the year group ↔
+  // subject assignments the lesson plan mapping writes:
+  //   teacherId → { subject: ["Year 1", "Year 3", ...] }
+  const teacherAssignedSubjects = useMemo(() => {
+    const map: Record<string, Record<string, string[]>> = {};
+    Object.entries(staffAssignments || {}).forEach(([key, ids]) => {
+      if (!ids) return;
+      // Keys are normally `${yearGroup}-${subject}`, but older data can hold a
+      // bare subject with no year prefix — the tracker counts those, so we must
+      // too, otherwise a teacher shows subjects there and none here.
+      const sep = key.indexOf("-");
+      const yearGroup = sep < 0 ? "" : key.slice(0, sep);
+      const subject = sep < 0 ? key : key.slice(sep + 1);
+      if (!subject) return;
+      ids
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean)
+        .forEach((id) => {
+          if (!map[id]) map[id] = {};
+          if (!map[id][subject]) map[id][subject] = [];
+          if (yearGroup && !map[id][subject].includes(yearGroup))
+            map[id][subject].push(yearGroup);
+        });
     });
+    const yearOrder = (y: string) => parseInt(y.replace(/\D/g, ""), 10) || 99;
+    Object.values(map).forEach((subs) =>
+      Object.values(subs).forEach((ygs) =>
+        ygs.sort((a, b) => yearOrder(a) - yearOrder(b)),
+      ),
+    );
+    return map;
+  }, [staffAssignments]);
 
-    // Explicit Year 2 Assignments
-    const y2Mappings: Record<string, string> = {
-      "HOMEROOM": "t-2",
-      "DEAR PROGRAM": "t-2",
-      ENGLISH: "t-8",
-      MATHEMATICS: "t-1",
-      SCIENCE: "t-2",
-      MANDARIN: "t-3",
-      MALAY: "c-1",
-      "GLOBAL PERSPECTIVES": "t-4",
-      "PHYSICAL EDUCATION": "t-5",
-      "DIGITAL LITERACY": "t-6",
-      MUSIC: "t-7",
-      "ART & DESIGN": "c-1",
-      WELLBEING: "t-2",
-      LIBRARY: "t-6",
-      CCA: "",
-    };
-    Object.entries(y2Mappings).forEach(([sub, tId]) => {
-      initial[`Year 2-${sub}`] = tId;
-    });
+  // "Year 1", "Year 3" → "Y1, Y3"
+  const shortYearList = (ygs: string[]) =>
+    ygs.map((y) => y.replace(/^Year\s*/i, "Y")).join(", ");
 
-    // Explicit Year 3 Assignments
-    const y3Mappings: Record<string, string> = {
-      "HOMEROOM": "t-1",
-      "DEAR PROGRAM": "t-1",
-      ENGLISH: "t-8",
-      MATHEMATICS: "t-1",
-      SCIENCE: "t-9",
-      MANDARIN: "t-3",
-      MALAY: "t-1",
-      "GLOBAL PERSPECTIVES": "t-4",
-      "PHYSICAL EDUCATION": "t-5",
-      "DIGITAL LITERACY": "t-6",
-      MUSIC: "t-7",
-      "ART & DESIGN": "c-1",
-      WELLBEING: "t-1",
-      LIBRARY: "t-6",
-      CCA: "",
-    };
-    Object.entries(y3Mappings).forEach(([sub, tId]) => {
-      initial[`Year 3-${sub}`] = tId;
-    });
-
-    // Explicit Year 4 Assignments
-    const y4Mappings: Record<string, string> = {
-      "HOMEROOM": "t-10",
-      "DEAR PROGRAM": "t-10",
-      ENGLISH: "t-8",
-      MATHEMATICS: "t-10",
-      SCIENCE: "t-9",
-      MANDARIN: "t-3",
-      MALAY: "t-1",
-      "GLOBAL PERSPECTIVES": "t-4",
-      "PHYSICAL EDUCATION": "t-5",
-      "DIGITAL LITERACY": "t-6",
-      MUSIC: "t-7",
-      "ART & DESIGN": "t-10",
-      WELLBEING: "t-10",
-      LIBRARY: "t-6",
-      CCA: "",
-    };
-    Object.entries(y4Mappings).forEach(([sub, tId]) => {
-      initial[`Year 4-${sub}`] = tId;
-    });
-
-    // Explicit Year 5 Assignments
-    const y5Mappings: Record<string, string> = {
-      "HOMEROOM": "t-11",
-      "DEAR PROGRAM": "t-11",
-      ENGLISH: "t-11",
-      MATHEMATICS: "t-12",
-      SCIENCE: "c-1",
-      MANDARIN: "t-3",
-      MALAY: "c-1",
-      "GLOBAL PERSPECTIVES": "t-4",
-      "PHYSICAL EDUCATION": "t-5",
-      "DIGITAL LITERACY": "t-6",
-      MUSIC: "t-7",
-      "ART & DESIGN": "t-13",
-      WELLBEING: "t-11",
-      LIBRARY: "t-6",
-      CCA: "",
-    };
-    Object.entries(y5Mappings).forEach(([sub, tId]) => {
-      initial[`Year 5-${sub}`] = tId;
-    });
-
-    // Explicit Year 6 Assignments (Same as Year 5)
-    const y6Mappings: Record<string, string> = {
-      "HOMEROOM": "t-11",
-      "DEAR PROGRAM": "t-11",
-      ENGLISH: "t-11",
-      MATHEMATICS: "t-12",
-      SCIENCE: "c-1",
-      MANDARIN: "t-3",
-      MALAY: "c-1",
-      "GLOBAL PERSPECTIVES": "t-4",
-      "PHYSICAL EDUCATION": "t-5",
-      "DIGITAL LITERACY": "t-6",
-      MUSIC: "t-7",
-      "ART & DESIGN": "t-13",
-      WELLBEING: "t-11",
-      LIBRARY: "t-6",
-      CCA: "",
-    };
-    Object.entries(y6Mappings).forEach(([sub, tId]) => {
-      initial[`Year 6-${sub}`] = tId;
-    });
-
-    // Random assignments for other years
-    const otherYears = yearGroups.filter(
-      (y) =>
-        !["Year 1", "Year 2", "Year 3", "Year 4", "Year 5", "Year 6"].includes(
-          y,
+  // One search predicate for the directory — used by both the result count and
+  // the list, so they can never disagree. Matches the subjects a teacher is
+  // actually assigned as well as the ones stored on their record.
+  const matchesTeacherSearch = (t: any): boolean => {
+    const q = teacherSearchQuery.toLowerCase().trim();
+    if (!q) return true;
+    return Boolean(
+      t.name?.toLowerCase().includes(q) ||
+        t.preferredName?.toLowerCase().includes(q) ||
+        t.nricName?.toLowerCase().includes(q) ||
+        t.role?.toLowerCase().includes(q) ||
+        t.email?.toLowerCase().includes(q) ||
+        t.phone?.toLowerCase().includes(q) ||
+        Object.keys(subjectsForTeacher(t)).some((s) =>
+          s.toLowerCase().includes(q),
         ),
     );
-    otherYears.forEach((yg, ygIdx) => {
-      subjects.forEach((s, sIdx) => {
-        initial[`${yg}-${s}`] = `t-${((ygIdx + sIdx) % 6) + 14}`;
+  };
+
+  // Everything a directory record teaches, as { subject: [year groups] }.
+  // A teacher can appear in the mapping under a different id than the one on
+  // their directory card (duplicate records, a staff sync that re-issued ids),
+  // which is why we also look them up by name before giving up.
+  const subjectsForTeacher = (teacher: any): Record<string, string[]> => {
+    const merged: Record<string, string[]> = {};
+    const add = (src?: Record<string, string[]>) => {
+      if (!src) return;
+      Object.entries(src).forEach(([subject, ygs]) => {
+        merged[subject] = Array.from(
+          new Set([...(merged[subject] || []), ...ygs]),
+        );
       });
+    };
+
+    add(teacherAssignedSubjects[teacher.id]);
+
+    // The same person filed under another id — "FARHAH" and "NUR FARHAH" are
+    // one teacher, so match when either name contains the other.
+    const norm = normalizeTeacherName(teacher.name || "");
+    if (norm) {
+      teachers.forEach((t) => {
+        if (t.id === teacher.id) return;
+        const other = normalizeTeacherName(t.name || "");
+        if (!other) return;
+        const samePerson =
+          other === norm ||
+          (norm.length >= 4 && other.includes(norm)) ||
+          (other.length >= 4 && norm.includes(other));
+        if (samePerson) add(teacherAssignedSubjects[t.id]);
+      });
+    }
+
+    // Still nothing: fall back to the id the official subject sheet uses for
+    // whichever short name their full name contains (FARHAH → t-9).
+    if (Object.keys(merged).length === 0 && norm) {
+      Object.entries(OFFICIAL_TEACHER_IDS).forEach(([short, id]) => {
+        const sn = normalizeTeacherName(short);
+        if (sn && norm.includes(sn)) add(teacherAssignedSubjects[id]);
+      });
+    }
+
+    // Subjects stored on the record itself but not in the mapping.
+    (teacher.subjects || []).forEach((s: string) => {
+      if (s && !merged[s]) merged[s] = [];
     });
-    return initial;
-  });
+
+    const yearOrder = (y: string) => parseInt(y.replace(/\D/g, ""), 10) || 99;
+    Object.values(merged).forEach((ygs) =>
+      ygs.sort((a, b) => yearOrder(a) - yearOrder(b)),
+    );
+    return merged;
+  };
+
+  // Copy those derived subjects onto the directory records themselves, so the
+  // stored `subjects` field (and the directory search) matches the lesson plan.
+  const syncTeacherSubjectsFromAssignments = async (silent = false) => {
+    const nextTeachers = teachers.map((t) => ({
+      ...t,
+      subjects: Object.keys(teacherAssignedSubjects[t.id] || {}).sort(),
+    }));
+    setTeachers(nextTeachers);
+    setHasUnsavedTimetableChanges(true);
+    await saveTimetableDataToFirestore(nextTeachers, staffAssignments);
+    if (!silent) {
+      const withSubjects = nextTeachers.filter(
+        (t) => t.subjects.length > 0,
+      ).length;
+      alert(
+        `Teacher directory synced — ${withSubjects} teacher(s) now list the subjects they are assigned in the lesson plan mapping.`,
+      );
+    }
+  };
+
   const [readingProgramTab, setReadingProgramTab] = useState<
     "passage" | "curriculum"
   >("passage");
@@ -10102,8 +11644,27 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       return !!(teacher.id && teacher.id.startsWith("staff-"));
     }
 
+    // Nothing synced yet: still never show the numbered placeholder rows that
+    // ship with a fresh workspace ("Teacher 14", "Head Coordinator 2").
+    if (
+      /^teacher\s*\d+$/i.test(teacher.name.trim()) ||
+      /^head coordinator\s*\d*$/i.test(teacher.name.trim())
+    ) {
+      return false;
+    }
+
     return true;
   };
+
+  // Is the directory being driven by the Commun staff record?
+  const isDirectoryFromCommun = teachers.some(
+    (t: any) =>
+      t?.id &&
+      String(t.id).startsWith("staff-") &&
+      !String(t.id).includes("undefined") &&
+      !String(t.id).includes("null") &&
+      t?.name?.trim(),
+  );
 
   const getActiveStaffList = (teachersList: any[]) => {
     if (!teachersList) return [];
@@ -10117,6 +11678,94 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       return true;
     });
   };
+
+  // Remember who this reviewer supervises between sessions.
+  useEffect(() => {
+    if (!user) return;
+    try {
+      const raw = localStorage.getItem(`zera_supervised_${user.uid}`);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (Array.isArray(saved?.teachers)) setSupervisedTeachers(saved.teachers);
+        setOnlyMyTeachers(!!saved?.only);
+      }
+    } catch {
+      /* nothing saved yet */
+    }
+  }, [user]);
+
+  const persistSupervision = (names: string[], only: boolean) => {
+    setSupervisedTeachers(names);
+    setOnlyMyTeachers(only);
+    if (!user) return;
+    try {
+      localStorage.setItem(
+        `zera_supervised_${user.uid}`,
+        JSON.stringify({ teachers: names, only }),
+      );
+    } catch {
+      /* storage unavailable — the filter still works for this session */
+    }
+  };
+
+  // Does this submission belong to a teacher the reviewer supervises?
+  const isSupervisedSubmission = (p: any): boolean => {
+    if (!onlyMyTeachers || supervisedTeachers.length === 0) return true;
+    return supervisedTeachers.some(
+      (n) =>
+        p?.folderId === teacherFolderId(n) || sameTeacherName(p?.teacherName, n),
+    );
+  };
+
+  // Every teacher in the directory gets their own submissions folder, created
+  // automatically so the folders are already waiting before anyone submits.
+  const autoFolderRun = useRef(false);
+  useEffect(() => {
+    if (!user || !userRoles.includes("admin")) return;
+    if (isFetchingSubmittedFolders) return;
+    if (autoFolderRun.current) return;
+
+    const names = Array.from(
+      new Set(
+        getActiveStaffList(teachers)
+          .map((t: any) => (t.name || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    if (names.length === 0) return;
+
+    const existing = new Set(submittedFolders.map((f: any) => f.id));
+    const missing = names.filter(
+      (n) => !existing.has(teacherFolderId(n as string)),
+    );
+    if (missing.length === 0) return;
+
+    autoFolderRun.current = true;
+    Promise.all(
+      missing.map((n) =>
+        setDoc(
+          doc(db, "submitted_folders", teacherFolderId(n as string)),
+          {
+            name: n,
+            teacherFolder: true,
+            createdAt: Date.now(),
+            createdBy: user.email || "",
+          },
+          { merge: true },
+        ),
+      ),
+    )
+      .catch((err) => console.warn("Auto teacher folders:", err))
+      .finally(() => {
+        autoFolderRun.current = false;
+      });
+  }, [
+    user,
+    userRoles,
+    teachers,
+    submittedFolders,
+    isFetchingSubmittedFolders,
+  ]);
 
   // Clear local storage on initial mount to ensure a fresh start
   useEffect(() => {
@@ -10137,6 +11786,49 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const [lpClass, setLpClass] = useState("");
   const [lpPreparedBy, setLpPreparedBy] = useState("");
   const [lpCheckedBy, setLpCheckedBy] = useState("");
+  // AI-generated lesson plan shown as copyable suggestions on the side, so the
+  // teacher types/copies content into their own (empty) plan rather than having
+  // it filled in automatically.
+  const [lessonPlanSuggestion, setLessonPlanSuggestion] = useState<NonNullable<
+    EduContent["lessonPlan"]
+  > | null>(null);
+  const [copiedSug, setCopiedSug] = useState<string | null>(null);
+  // Collapse/expand the Lesson Settings side panel.
+  const [lpSettingsOpen, setLpSettingsOpen] = useState(true);
+  // Which blocks of the Lesson Settings pane are expanded, and which of the two
+  // generators is showing (they used to be stacked and competing).
+  const [lpOpenSections, setLpOpenSections] = useState<Record<string, boolean>>({
+    details: true,
+    generate: true,
+    guidance: false,
+  });
+  const toggleLpSection = (key: string) =>
+    setLpOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  const [lpGenerateMode, setLpGenerateMode] = useState<"term" | "week">("term");
+  // Publishing the plan as a shareable page for the Email action.
+  const [isSharingLessonPlan, setIsSharingLessonPlan] = useState(false);
+  const [lessonPlanShareUrl, setLessonPlanShareUrl] = useState<string | null>(
+    null,
+  );
+  // Multi-plan board: a teacher teaching several subjects / year groups keeps
+  // every plan as a minimised card, opens one full size to edit, minimises it
+  // again and opens the next — all of them submit together with Submit All.
+  const [lpBoardOpen, setLpBoardOpen] = useState(false);
+  const [lpQuickAddOpen, setLpQuickAddOpen] = useState(false);
+  const [lpQuickSubject, setLpQuickSubject] = useState("Science");
+  const [lpQuickYears, setLpQuickYears] = useState<string[]>([]);
+  const [lpBoardBusy, setLpBoardBusy] = useState(false);
+  // Plans the teacher has ticked on the board, ready to submit together.
+  const [lpSelectedPlanIds, setLpSelectedPlanIds] = useState<string[]>([]);
+  const copySuggestion = (key: string, text: string) => {
+    try {
+      navigator.clipboard?.writeText(text || "");
+    } catch {
+      /* clipboard unavailable */
+    }
+    setCopiedSug(key);
+    window.setTimeout(() => setCopiedSug((k) => (k === key ? null : k)), 1500);
+  };
   // Uploaded Scheme of Work / subject Framework used to drive lesson plan generation
   const [lpFileContext, setLpFileContext] = useState<{
     mimeType: string;
@@ -15440,49 +17132,20 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       <div className="flex-1 flex flex-col h-screen bg-[#F0FDF4] overflow-hidden">
         {/* Admin Nav */}
         <header className="h-20 bg-white border-b-2 border-[#D1FAE5] px-4 lg:px-8 flex items-center gap-4 shadow-sm z-10 shrink-0">
-          <div className="flex items-center gap-4 xl:gap-6 min-w-0 flex-1">
+          <div className="flex items-center gap-3 xl:gap-4 min-w-0 flex-1">
+            <button
+              onClick={() => setAdminNavOpen((v) => !v)}
+              title={adminNavOpen ? "Hide the menu" : "Show the menu"}
+              className="p-2.5 rounded-xl text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] transition-all shrink-0"
+            >
+              <PanelLeft size={20} />
+            </button>
             <h2 className="text-lg xl:text-2xl font-black text-[#064E3B] shrink-0 hidden sm:block">
               Admin Dashboard
             </h2>
-            <nav className="flex gap-1.5 overflow-x-auto custom-scrollbar min-w-0 py-1">
-              {[
-                "overview",
-                "timetable",
-                "teachers",
-                "plans",
-                "cover",
-                "sso",
-              ].map((tab) => {
-                // Subject Allocation, Duty Rota and Classroom Allocation now
-                // live inside the Timetable tab; Registered Members lives inside
-                // the Teachers tab. Keep the parent highlighted for its children.
-                const active =
-                  adminTab === tab ||
-                  (tab === "timetable" &&
-                    ["assignments", "duty", "classrooms"].includes(adminTab)) ||
-                  (tab === "teachers" && adminTab === "members");
-                return (
-                  <button
-                    key={tab}
-                    onClick={() => setAdminTab(tab as any)}
-                    className={cn(
-                      "px-3 py-2 rounded-xl font-bold capitalize transition-all whitespace-nowrap shrink-0 text-sm",
-                      active
-                        ? "bg-[#064E3B] text-white"
-                        : "text-[#064E3B]/60 hover:bg-[#D1FAE5]",
-                    )}
-                  >
-                    {tab === "plans"
-                      ? "Lesson Plans"
-                      : tab === "cover"
-                        ? "Cover Planner"
-                        : tab === "sso"
-                          ? "Connected Systems (SSO)"
-                          : tab}
-                  </button>
-                );
-              })}
-            </nav>
+            <span className="hidden lg:inline text-sm font-black uppercase tracking-widest text-[#064E3B]/40 truncate">
+              {adminNavLabel(adminTab)}
+            </span>
           </div>
           <div className="flex items-center gap-2 xl:gap-3 shrink-0">
             <div className="hidden 2xl:flex items-center gap-3 bg-[#F0FDF4] px-4 py-2 rounded-xl border border-[#D1FAE5]">
@@ -15527,61 +17190,153 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-12 custom-scrollbar">
-          {/* Timetable group sub-tabs: the scheduler plus everything that feeds it. */}
-          {["timetable", "assignments", "duty", "classrooms"].includes(
-            adminTab,
-          ) && (
-            <div className="max-w-6xl mx-auto mb-8 flex flex-wrap gap-2 border-b-2 border-[#D1FAE5] pb-4">
-              {[
-                { id: "timetable", label: "Timetable", icon: Calendar },
-                { id: "assignments", label: "Subject Allocation", icon: BookOpen },
-                { id: "duty", label: "Duty Rota", icon: Lock },
-                { id: "classrooms", label: "Classroom Allocation", icon: LayoutGrid },
-              ].map((s) => {
-                const Icon = s.icon;
+        <div className="flex-1 flex overflow-hidden">
+          {/* Admin menu — the old top tab row, now a pane you can hide. */}
+          {adminNavOpen ? (
+            <aside className="w-64 shrink-0 bg-white border-r-2 border-[#D1FAE5] flex flex-col overflow-hidden">
+              <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b-2 border-[#D1FAE5]">
+                <span className="text-[10px] font-black uppercase tracking-widest text-[#064E3B]/50">
+                  Menu
+                </span>
+                <button
+                  onClick={() => setAdminNavOpen(false)}
+                  title="Hide the menu"
+                  className="p-1 rounded-lg hover:bg-[#F0FDF4] text-[#064E3B]/60 hover:text-[#064E3B] transition-colors"
+                >
+                  <ChevronLeft size={18} />
+                </button>
+              </div>
+              <nav className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-1">
+                {ADMIN_NAV.filter(
+                  (item) => !ADMIN_HIDDEN_TABS.includes(item.id),
+                ).map((item) => {
+                  const Icon = item.icon;
+                  const locked = ADMIN_LOCKED_TABS.includes(item.id);
+                  const groupActive =
+                    !locked && isAdminNavActive(item.id, adminTab);
+                  if (locked) {
+                    return (
+                      <button
+                        key={item.id}
+                        disabled
+                        title="This section is locked"
+                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-bold text-sm text-left text-[#064E3B]/30 bg-[#FDFBF7] cursor-not-allowed"
+                      >
+                        <Icon size={18} className="shrink-0" />
+                        <span className="truncate flex-1">{item.label}</span>
+                        <Lock size={14} className="shrink-0" />
+                      </button>
+                    );
+                  }
+                  return (
+                    <div key={item.id} className="space-y-1">
+                      <button
+                        onClick={() => toggleAdminTab(item.id as any)}
+                        title={
+                          groupActive
+                            ? `Hide ${item.label}`
+                            : `Show ${item.label}`
+                        }
+                        className={cn(
+                          "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-bold text-sm text-left transition-all",
+                          groupActive
+                            ? "bg-[#064E3B] text-white shadow-sm"
+                            : "text-[#064E3B]/70 hover:bg-[#F0FDF4]",
+                        )}
+                      >
+                        <Icon size={18} className="shrink-0" />
+                        <span className="truncate flex-1">{item.label}</span>
+                        <ChevronRight
+                          size={14}
+                          className={cn(
+                            "shrink-0 transition-transform",
+                            groupActive ? "rotate-90" : "opacity-40",
+                          )}
+                        />
+                      </button>
+                      {item.children && groupActive && (
+                        <div className="ml-4 pl-3 border-l-2 border-[#D1FAE5] space-y-1">
+                          {item.children.map((c) => {
+                            const CIcon = c.icon;
+                            return (
+                              <button
+                                key={c.id}
+                                onClick={() => setAdminTab(c.id as any)}
+                                className={cn(
+                                  "w-full flex items-center gap-2 px-3 py-2 rounded-lg font-bold text-xs text-left transition-all",
+                                  adminTab === c.id
+                                    ? "bg-[#D1FAE5] text-[#064E3B]"
+                                    : "text-[#064E3B]/55 hover:bg-[#F0FDF4]",
+                                )}
+                              >
+                                <CIcon size={14} className="shrink-0" />
+                                <span className="truncate">{c.label}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </nav>
+            </aside>
+          ) : (
+            <div className="w-14 shrink-0 bg-white border-r-2 border-[#D1FAE5] flex flex-col items-center gap-1.5 py-3">
+              <button
+                onClick={() => setAdminNavOpen(true)}
+                title="Show the menu"
+                className="p-2 rounded-xl text-[#064E3B] hover:bg-[#F0FDF4] transition-colors"
+              >
+                <ChevronRight size={18} />
+              </button>
+              <div className="h-px w-7 bg-[#D1FAE5] my-1" />
+              {ADMIN_NAV.filter(
+                (item) => !ADMIN_HIDDEN_TABS.includes(item.id),
+              ).map((item) => {
+                const Icon = item.icon;
+                const locked = ADMIN_LOCKED_TABS.includes(item.id);
+                const groupActive =
+                  !locked && isAdminNavActive(item.id, adminTab);
                 return (
                   <button
-                    key={s.id}
-                    onClick={() => setAdminTab(s.id as any)}
+                    key={item.id}
+                    onClick={() => !locked && toggleAdminTab(item.id as any)}
+                    disabled={locked}
+                    title={locked ? `${item.label} — locked` : item.label}
                     className={cn(
-                      "flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm transition-all whitespace-nowrap border-2",
-                      adminTab === s.id
-                        ? "bg-[#064E3B] text-white border-[#064E3B]"
-                        : "bg-white text-[#064E3B]/70 border-[#D1FAE5] hover:border-[#059669]",
+                      "p-2.5 rounded-xl transition-all relative",
+                      locked
+                        ? "text-[#064E3B]/25 cursor-not-allowed"
+                        : groupActive
+                          ? "bg-[#064E3B] text-white shadow-sm"
+                          : "text-[#064E3B]/60 hover:bg-[#F0FDF4]",
                     )}
                   >
-                    <Icon size={16} className="shrink-0" />
-                    {s.label}
+                    <Icon size={18} />
+                    {locked && (
+                      <Lock
+                        size={10}
+                        className="absolute bottom-1 right-1 text-[#064E3B]/40"
+                      />
+                    )}
                   </button>
                 );
               })}
             </div>
           )}
-          {/* Teachers group sub-tabs: the staff roster and the app accounts. */}
-          {["teachers", "members"].includes(adminTab) && (
-            <div className="max-w-6xl mx-auto mb-8 flex flex-wrap gap-2 border-b-2 border-[#D1FAE5] pb-4">
-              {[
-                { id: "teachers", label: "Teacher Directory", icon: Users },
-                { id: "members", label: "Registered Members", icon: UserCheck },
-              ].map((s) => {
-                const Icon = s.icon;
-                return (
-                  <button
-                    key={s.id}
-                    onClick={() => setAdminTab(s.id as any)}
-                    className={cn(
-                      "flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm transition-all whitespace-nowrap border-2",
-                      adminTab === s.id
-                        ? "bg-[#064E3B] text-white border-[#064E3B]"
-                        : "bg-white text-[#064E3B]/70 border-[#D1FAE5] hover:border-[#059669]",
-                    )}
-                  >
-                    <Icon size={16} className="shrink-0" />
-                    {s.label}
-                  </button>
-                );
-              })}
+          <main className="flex-1 overflow-y-auto p-12 custom-scrollbar">
+          {adminTab === "none" && (
+            <div className="h-full flex items-center justify-center">
+              <div className="text-center space-y-3">
+                <LayoutGrid size={44} className="mx-auto text-[#064E3B]/15" />
+                <p className="text-sm font-black uppercase tracking-widest text-[#064E3B]/40">
+                  Nothing open
+                </p>
+                <p className="text-sm font-bold text-[#064E3B]/40">
+                  Pick a section from the menu to show it here.
+                </p>
+              </div>
             </div>
           )}
           {adminTab === "overview" && (
@@ -15635,33 +17390,67 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <button
                     onClick={() => setAdminTab("assignments")}
-                    className="p-6 rounded-2xl bg-[#D1FAE5] border-2 border-[#10B981]/20 flex items-center gap-4 hover:scale-[1.02] transition-all text-left"
+                    disabled={isAdminTabBlocked("assignments")}
+                    title={
+                      isAdminTabBlocked("assignments")
+                        ? "This section is locked"
+                        : undefined
+                    }
+                    className={cn(
+                      "p-6 rounded-2xl border-2 flex items-center gap-4 transition-all text-left",
+                      isAdminTabBlocked("assignments")
+                        ? "bg-[#FDFBF7] border-[#E5E7EB] opacity-60 cursor-not-allowed"
+                        : "bg-[#D1FAE5] border-[#10B981]/20 hover:scale-[1.02]",
+                    )}
                   >
                     <div className="p-3 bg-white rounded-xl shadow-sm">
-                      <UserPlus className="text-[#059669]" />
+                      {isAdminTabBlocked("assignments") ? (
+                        <Lock className="text-[#064E3B]/40" />
+                      ) : (
+                        <UserPlus className="text-[#059669]" />
+                      )}
                     </div>
                     <div>
                       <p className="font-black text-[#064E3B]">
                         Subject Allocation
                       </p>
                       <p className="text-xs font-bold text-[#064E3B]/60">
-                        Map subjects and set period quotas
+                        {isAdminTabBlocked("assignments")
+                          ? "Locked"
+                          : "Map subjects and set period quotas"}
                       </p>
                     </div>
                   </button>
                   <button
                     onClick={() => setAdminTab("timetable")}
-                    className="p-6 rounded-2xl bg-[#D1FAE5] border-2 border-[#10B981]/20 flex items-center gap-4 hover:scale-[1.02] transition-all text-left"
+                    disabled={isAdminTabBlocked("timetable")}
+                    title={
+                      isAdminTabBlocked("timetable")
+                        ? "This section is locked"
+                        : undefined
+                    }
+                    className={cn(
+                      "p-6 rounded-2xl border-2 flex items-center gap-4 transition-all text-left",
+                      isAdminTabBlocked("timetable")
+                        ? "bg-[#FDFBF7] border-[#E5E7EB] opacity-60 cursor-not-allowed"
+                        : "bg-[#D1FAE5] border-[#10B981]/20 hover:scale-[1.02]",
+                    )}
                   >
                     <div className="p-3 bg-white rounded-xl shadow-sm">
-                      <LayoutGrid className="text-[#059669]" />
+                      {isAdminTabBlocked("timetable") ? (
+                        <Lock className="text-[#064E3B]/40" />
+                      ) : (
+                        <LayoutGrid className="text-[#059669]" />
+                      )}
                     </div>
                     <div>
                       <p className="font-black text-[#064E3B]">
                         Master Timetable
                       </p>
                       <p className="text-xs font-bold text-[#064E3B]/60">
-                        Generate and view full school schedule
+                        {isAdminTabBlocked("timetable")
+                          ? "Locked"
+                          : "Generate and view full school schedule"}
                       </p>
                     </div>
                   </button>
@@ -17728,6 +19517,20 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     </button>
                   </div>
                   <button
+                    onClick={applyOfficialSubjectMapping}
+                    title="Add any missing teachers and reset every year group's teacher/subject assignment to the official subject sheet"
+                    className="p-3 bg-[#FACC15] text-[#064E3B] rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-md flex items-center gap-2"
+                  >
+                    <RefreshCw size={16} /> Sync Teacher &amp; Subject
+                  </button>
+                  <button
+                    onClick={createFoldersForAllTeachers}
+                    title="Give every teacher in the directory their own submissions folder"
+                    className="p-3 bg-[#F0FDF4] text-[#064E3B] border-2 border-[#D1FAE5] rounded-2xl font-black text-xs uppercase tracking-widest hover:border-[#059669] transition-all shadow-sm flex items-center gap-2"
+                  >
+                    <Users size={16} /> Teacher Folders
+                  </button>
+                  <button
                     onClick={createSubmittedFolder}
                     className="p-3 bg-[#064E3B] text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-[#059669] transition-all shadow-md flex items-center gap-2"
                   >
@@ -17736,43 +19539,227 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 </div>
               </div>
 
-              {/* Folders Bar */}
-              <div className="flex flex-wrap gap-3 pb-4 overflow-x-auto no-scrollbar">
+              {/* Review pipeline: teacher → HOD → Coordinator → teacher */}
+              <div className="bg-white rounded-[2rem] p-6 shadow-sm border-2 border-[#D1FAE5] space-y-3">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <h4 className="text-xs font-black uppercase tracking-widest text-[#064E3B]">
+                    Review Pipeline
+                  </h4>
+                  <span className="text-[10px] font-bold text-[#064E3B]/40">
+                    You review as: {reviewerRoleLabel}
+                  </span>
+                  <div className="flex items-center gap-2 ml-auto">
+                    <button
+                      onClick={() =>
+                        persistSupervision(supervisedTeachers, !onlyMyTeachers)
+                      }
+                      disabled={supervisedTeachers.length === 0}
+                      title={
+                        supervisedTeachers.length === 0
+                          ? "Pick the teachers you supervise first"
+                          : "Show only the teachers you supervise"
+                      }
+                      className={cn(
+                        "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border-2 transition-all flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed",
+                        onlyMyTeachers
+                          ? "bg-[#064E3B] border-[#064E3B] text-white"
+                          : "bg-white border-[#D1FAE5] text-[#064E3B]/60 hover:border-[#059669]",
+                      )}
+                    >
+                      {onlyMyTeachers ? (
+                        <Check size={12} />
+                      ) : (
+                        <Square size={12} />
+                      )}
+                      My Teachers Only
+                    </button>
+                    <button
+                      onClick={() => setSupervisePickerOpen((v) => !v)}
+                      className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border-2 border-[#D1FAE5] bg-white text-[#064E3B]/60 hover:border-[#059669] transition-all flex items-center gap-1.5"
+                    >
+                      <Users size={12} />
+                      Choose Teachers
+                      {supervisedTeachers.length > 0 && (
+                        <span className="inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-[#FACC15] text-[#064E3B] text-[9px] font-black">
+                          {supervisedTeachers.length}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {supervisePickerOpen && (
+                  <div className="rounded-2xl border-2 border-[#D1FAE5] bg-[#F0FDF4]/40 p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-[#064E3B]/50">
+                        Teachers under your supervision
+                      </p>
+                      <button
+                        onClick={() => persistSupervision([], onlyMyTeachers)}
+                        className="text-[10px] font-black uppercase tracking-wider text-[#064E3B]/40 hover:text-[#064E3B]"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-2 max-h-52 overflow-y-auto custom-scrollbar">
+                      {getActiveStaffList(teachers).map((t: any) => {
+                        const on = supervisedTeachers.includes(t.name);
+                        return (
+                          <button
+                            key={t.id}
+                            onClick={() =>
+                              persistSupervision(
+                                on
+                                  ? supervisedTeachers.filter(
+                                      (n) => n !== t.name,
+                                    )
+                                  : [...supervisedTeachers, t.name],
+                                onlyMyTeachers,
+                              )
+                            }
+                            className={cn(
+                              "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 transition-all",
+                              on
+                                ? "bg-[#059669] border-[#059669] text-white"
+                                : "bg-white border-[#D1FAE5] text-[#064E3B]/70 hover:border-[#059669]",
+                            )}
+                          >
+                            {t.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      ["all", "All"],
+                      ["pending_hod", REVIEW_STAGES.pending_hod.short],
+                      [
+                        "pending_coordinator",
+                        REVIEW_STAGES.pending_coordinator.short,
+                      ],
+                      [
+                        "changes_requested",
+                        REVIEW_STAGES.changes_requested.short,
+                      ],
+                      ["approved", REVIEW_STAGES.approved.short],
+                    ] as [string, string][]
+                  ).map(([key, label]) => {
+                    const count =
+                      key === "all"
+                        ? submittedProjects.filter(isSupervisedSubmission).length
+                        : submittedProjects.filter(
+                            (p: any) =>
+                              isSupervisedSubmission(p) &&
+                              getReviewStage(p) === key,
+                          ).length;
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => setReviewFilter(key as any)}
+                        className={cn(
+                          "px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest border-2 transition-all flex items-center gap-2",
+                          reviewFilter === key
+                            ? "bg-[#064E3B] text-white border-[#064E3B]"
+                            : "bg-white text-[#064E3B]/60 border-[#D1FAE5] hover:border-[#059669]",
+                        )}
+                      >
+                        {label}
+                        <span
+                          className={cn(
+                            "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[9px] font-black",
+                            reviewFilter === key
+                              ? "bg-[#FACC15] text-[#064E3B]"
+                              : "bg-[#F0FDF4] text-[#064E3B]/60",
+                          )}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Folders — one uniform tile each, so long and short names line
+                  up instead of making every row a different shape. */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 pb-4 max-h-64 overflow-y-auto custom-scrollbar">
                 <button
                   onClick={() => setCurrentSubmittedFolderId(null)}
                   className={cn(
-                    "px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest transition-all flex items-center gap-2 whitespace-nowrap",
+                    "h-11 w-full px-3 rounded-xl font-black text-[11px] uppercase tracking-wider transition-all flex items-center gap-2 border-2 min-w-0",
                     currentSubmittedFolderId === null
-                      ? "bg-[#064E3B] text-white shadow-lg scale-105"
-                      : "bg-white text-[#064E3B] hover:bg-gray-50 border-2 border-transparent",
+                      ? "bg-[#064E3B] text-white border-[#064E3B] shadow-md"
+                      : "bg-white text-[#064E3B] border-[#D1FAE5] hover:border-[#059669]",
                   )}
                 >
-                  <Grid size={14} /> All Submissions
+                  <Grid size={14} className="shrink-0" />
+                  <span className="truncate text-left flex-1">
+                    All Submissions
+                  </span>
                 </button>
-                {submittedFolders.map((folder) => (
-                  <div key={folder.id} className="relative group/folder">
+                {submittedFolders
+                  .filter(
+                    (folder) =>
+                      !onlyMyTeachers ||
+                      supervisedTeachers.length === 0 ||
+                      !folder.teacherFolder ||
+                      supervisedTeachers.some(
+                        (n) => teacherFolderId(n) === folder.id,
+                      ),
+                  )
+                  .map((folder) => {
+                    const folderCount = submittedProjects.filter(
+                      (p: any) => p.folderId === folder.id,
+                    ).length;
+                    return (
+                  <div key={folder.id} className="relative group/folder min-w-0">
                     <button
                       onClick={() => setCurrentSubmittedFolderId(folder.id)}
+                      title={folder.name}
                       className={cn(
-                        "px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest transition-all flex items-center gap-2 whitespace-nowrap pr-10",
+                        "h-11 w-full pl-3 pr-8 rounded-xl font-black text-[11px] uppercase tracking-wider transition-all flex items-center gap-2 border-2 min-w-0",
                         currentSubmittedFolderId === folder.id
-                          ? "bg-[#FACC15] text-[#064E3B] shadow-lg scale-105"
-                          : "bg-white text-[#064E3B] hover:bg-gray-50 border-2 border-transparent",
+                          ? "bg-[#FACC15] text-[#064E3B] border-[#EAB308] shadow-md"
+                          : "bg-white text-[#064E3B] border-[#D1FAE5] hover:border-[#059669]",
                       )}
                     >
-                      <Folder size={14} /> {folder.name}
+                      {folder.teacherFolder ? (
+                        <User size={14} className="shrink-0" />
+                      ) : (
+                        <Folder size={14} className="shrink-0" />
+                      )}
+                      <span className="truncate text-left flex-1">
+                        {folder.name}
+                      </span>
+                      {folderCount > 0 && (
+                        <span
+                          className={cn(
+                            "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[9px] font-black shrink-0",
+                            currentSubmittedFolderId === folder.id
+                              ? "bg-[#064E3B] text-white"
+                              : "bg-[#F0FDF4] text-[#064E3B] border border-[#D1FAE5]",
+                          )}
+                        >
+                          {folderCount}
+                        </span>
+                      )}
                     </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         deleteSubmittedFolder(folder.id);
                       }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-red-400 hover:text-red-600 opacity-0 group-hover/folder:opacity-100 transition-opacity"
+                      title="Delete folder"
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover/folder:opacity-100 transition-opacity"
                     >
                       <X size={12} />
                     </button>
                   </div>
-                ))}
+                    );
+                  })}
               </div>
 
               {isFetchingSubmitted ? (
@@ -17803,20 +19790,24 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                               key={week.id}
                               className="p-4 text-center border-b-2 border-r-2 border-black/5 min-w-[100px]"
                             >
-                              <div className="flex flex-col gap-0.5">
-                                <span className="text-[10px] font-black uppercase tracking-tighter text-[#854D0E] whitespace-nowrap">
-                                  {week.label}
-                                </span>
-                                <span className="text-[8px] font-bold text-[#854D0E]/60">
-                                  {week.dates}
-                                </span>
-                              </div>
+                              <span className="text-[10px] font-black uppercase tracking-tighter text-[#854D0E] whitespace-nowrap">
+                                {week.label}
+                              </span>
                             </th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {teachers.map((teacher) => {
+                        {teachers
+                          .filter(
+                            (teacher) =>
+                              !onlyMyTeachers ||
+                              supervisedTeachers.length === 0 ||
+                              supervisedTeachers.some((n) =>
+                                sameTeacherName(n, teacher.name),
+                              ),
+                          )
+                          .map((teacher) => {
                           // Find all subjects this teacher is assigned to in staffAssignments
                           const assignments = Object.entries(staffAssignments)
                             .filter(([_, tId]) =>
@@ -17912,70 +19903,42 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                   const subjectLabel = `${asgn.sub}`;
                                   const yearLabel = `${asgn.yg}`;
 
-                                  const tNameLower = teacher.name
-                                    ?.toLowerCase()
-                                    .trim();
                                   const asgnSubLower = asgn.sub
                                     ?.toLowerCase()
                                     .trim();
 
                                   const matchProject = (p: any) => {
-                                    // 1. Teacher match
-                                    const pTeacherNameLower = p.teacherName
-                                      ?.toLowerCase()
-                                      .trim();
-                                    const preparedByLower = (
-                                      p.content?.lessonPlan?.preparedBy ||
-                                      p.content?.preparedBy ||
-                                      p.content?.lessonTitle ||
-                                      ""
-                                    )
-                                      ?.toLowerCase()
-                                      .trim();
                                     const matchingUser = allMembers.find(
                                       (m) =>
                                         m.id === p.userId || m.uid === p.userId,
                                     );
-                                    const userRegisteredNameLower =
-                                      matchingUser?.teacherName
-                                        ?.toLowerCase()
-                                        .trim();
 
-                                    const isTeacherMatch =
-                                      p.userId === teacher.id ||
-                                      (pTeacherNameLower &&
-                                        tNameLower &&
-                                        (pTeacherNameLower === tNameLower ||
-                                          pTeacherNameLower.includes(
-                                            tNameLower,
-                                          ) ||
-                                          tNameLower.includes(
-                                            pTeacherNameLower,
-                                          ))) ||
-                                      (preparedByLower &&
-                                        tNameLower &&
-                                        (preparedByLower === tNameLower ||
-                                          preparedByLower.includes(
-                                            tNameLower,
-                                          ) ||
-                                          tNameLower.includes(
-                                            preparedByLower,
-                                          ))) ||
-                                      (userRegisteredNameLower &&
-                                        tNameLower &&
-                                        (userRegisteredNameLower ===
-                                          tNameLower ||
-                                          userRegisteredNameLower.includes(
-                                            tNameLower,
-                                          ) ||
-                                          tNameLower.includes(
-                                            userRegisteredNameLower,
-                                          )));
+                                    // 1. Teacher — the id stamped at submission
+                                    // time is authoritative; otherwise compare
+                                    // names on word chunks, so "shahidah.a" and
+                                    // "NUR SHAHIDAH" still resolve to one person.
+                                    const isTeacherMatch = p.teacherId
+                                      ? p.teacherId === teacher.id
+                                      : sameTeacherName(
+                                          p.teacherName,
+                                          teacher.name,
+                                        ) ||
+                                        sameTeacherName(
+                                          p.content?.lessonPlan?.preparedBy ||
+                                            p.content?.preparedBy ||
+                                            "",
+                                          teacher.name,
+                                        ) ||
+                                        sameTeacherName(
+                                          matchingUser?.teacherName,
+                                          teacher.name,
+                                        );
 
                                     if (!isTeacherMatch) return false;
 
                                     // 2. Subject match
                                     const pSubjectLower =
+                                      p.subject?.toLowerCase().trim() ||
                                       p.content?.subject
                                         ?.toLowerCase()
                                         .trim() ||
@@ -17999,7 +19962,26 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                         (pTitleLower &&
                                           pTitleLower.includes(asgnSubLower)));
 
-                                    return !!isSubjectMatch;
+                                    if (!isSubjectMatch) return false;
+
+                                    // 3. Year group — only when the submission
+                                    // recorded one, so older plans still tick.
+                                    const pYear = (
+                                      p.yearGroup ||
+                                      p.content?.lessonPlan?.class ||
+                                      p.content?.gradeLevel ||
+                                      ""
+                                    )
+                                      .toString()
+                                      .toLowerCase()
+                                      .trim();
+                                    const asgnYear = (asgn.yg || "")
+                                      .toLowerCase()
+                                      .trim();
+                                    if (pYear && asgnYear && pYear !== asgnYear)
+                                      return false;
+
+                                    return true;
                                   };
 
                                   return (
@@ -18078,11 +20060,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     </table>
                   </div>
                 </div>
-              ) : submittedProjects.filter((p) =>
-                  currentSubmittedFolderId === null
-                    ? !p.folderId
-                    : p.folderId === currentSubmittedFolderId,
-                ).length === 0 ? (
+              ) : submittedProjects
+                  .filter(isSupervisedSubmission)
+                  .filter((p) =>
+                    currentSubmittedFolderId === null
+                      ? !p.folderId
+                      : p.folderId === currentSubmittedFolderId,
+                  ).length === 0 ? (
                 <div className="p-20 text-center space-y-6 bg-white rounded-[3rem] shadow-xl border-4 border-dashed border-[#D1FAE5]">
                   <div className="w-24 h-24 bg-[#F0FDF4] rounded-full flex items-center justify-center mx-auto shadow-sm">
                     <BookOpen size={40} className="text-[#D1FAE5]" />
@@ -18101,10 +20085,16 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {submittedProjects
+                    .filter(isSupervisedSubmission)
                     .filter((p) =>
                       currentSubmittedFolderId === null
                         ? !p.folderId
                         : p.folderId === currentSubmittedFolderId,
+                    )
+                    .filter(
+                      (p) =>
+                        reviewFilter === "all" ||
+                        getReviewStage(p) === reviewFilter,
                     )
                     .map((project) => (
                       <motion.div
@@ -18118,8 +20108,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             <FileText size={24} />
                           </div>
                           <div className="flex flex-col items-end gap-2">
-                            <div className="flex items-center gap-1.5 px-3 py-1 bg-green-50 text-green-600 rounded-full text-[10px] font-black uppercase tracking-widest border border-green-100">
-                              <CheckCircle size={10} /> {project.status}
+                            <div
+                              className={cn(
+                                "flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border",
+                                REVIEW_STAGES[getReviewStage(project)].chip,
+                              )}
+                            >
+                              <CheckCircle size={10} />{" "}
+                              {REVIEW_STAGES[getReviewStage(project)].short}
                             </div>
                             {submittedFolders.find(
                               (f) => f.id === project.folderId,
@@ -18136,7 +20132,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           </div>
                         </div>
 
-                        <div className="space-y-1">
+                        <div className="space-y-1.5">
                           <h4 className="font-black text-[#064E3B] text-lg leading-tight line-clamp-2">
                             {project.title}
                           </h4>
@@ -18146,12 +20142,116 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                               {project.teacherName || "Unknown Teacher"}
                             </span>
                           </div>
+                          {/* Subject / year group / week at a glance */}
+                          <div className="flex flex-wrap gap-1.5 pt-0.5">
+                            {[
+                              project.subject ||
+                                project.content?.lessonPlan?.subject ||
+                                project.content?.subject,
+                              project.yearGroup ||
+                                project.content?.lessonPlan?.class ||
+                                project.content?.gradeLevel,
+                              project.weekId ? `Week ${project.weekId}` : "",
+                            ]
+                              .filter(Boolean)
+                              .map((chip: string) => (
+                                <span
+                                  key={chip}
+                                  className="px-2 py-0.5 rounded-full bg-[#F0FDF4] border border-[#D1FAE5] text-[9px] font-black uppercase tracking-wider text-[#064E3B]/70"
+                                >
+                                  {chip}
+                                </span>
+                              ))}
+                          </div>
                         </div>
 
-                        <div className="mt-auto pt-4 border-t border-gray-50 flex items-center justify-between">
-                          <div className="text-[9px] font-black text-gray-400 uppercase">
-                            {new Date(project.timestamp).toLocaleDateString()}
+                        {/* What was sent back, and what the reviewer can do */}
+                        {getReviewStage(project) === "changes_requested" && (
+                          <div className="rounded-2xl bg-red-50 border border-red-100 p-3 space-y-1.5">
+                            <p className="text-[9px] font-black uppercase tracking-widest text-red-500">
+                              Returned to teacher
+                            </p>
+                            {project.reviewNote && (
+                              <p className="text-[11px] font-bold text-red-700">
+                                {project.reviewNote}
+                              </p>
+                            )}
+                            {Object.keys(project.weeklyFeedback || {}).length >
+                              0 && (
+                              <p className="text-[10px] font-bold text-red-500/80">
+                                {
+                                  Object.keys(project.weeklyFeedback || {})
+                                    .length
+                                }{" "}
+                                week note(s)
+                              </p>
+                            )}
                           </div>
+                        )}
+
+                        {isPlanReviewer &&
+                          project.category === "lesson-plan" && (
+                            <div className="flex flex-wrap gap-2">
+                              {getReviewStage(project) === "pending_hod" &&
+                                canReviewAsHod && (
+                                  <button
+                                    onClick={() => hodApprovePlan(project)}
+                                    className="flex-1 min-w-[130px] inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-[#059669] text-white text-[10px] font-black uppercase tracking-widest hover:bg-[#047857] transition-all shadow-sm active:scale-95"
+                                  >
+                                    <CheckCircle size={12} /> Approve → Coord.
+                                  </button>
+                                )}
+                              {getReviewStage(project) ===
+                                "pending_coordinator" &&
+                                canReviewAsCoordinator && (
+                                  <button
+                                    onClick={() =>
+                                      coordinatorApprovePlan(project)
+                                    }
+                                    className="flex-1 min-w-[130px] inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-[#064E3B] text-white text-[10px] font-black uppercase tracking-widest hover:bg-[#0B6B4F] transition-all shadow-sm active:scale-95"
+                                  >
+                                    <CheckCircle size={12} /> Approve & Return
+                                  </button>
+                                )}
+                              {getReviewStage(project) !== "approved" && (
+                                <button
+                                  onClick={() => openFeedbackModal(project)}
+                                  className="flex-1 min-w-[130px] inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-amber-400 text-amber-950 text-[10px] font-black uppercase tracking-widest hover:bg-amber-300 transition-all shadow-sm active:scale-95"
+                                >
+                                  <MessageSquare size={12} /> Request Changes
+                                </button>
+                              )}
+                            </div>
+                          )}
+
+                        {/* When it was submitted, and when each step signed off */}
+                        <div className="pt-3 border-t border-gray-50 space-y-1">
+                          <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider text-[#064E3B]/45">
+                            <Calendar size={10} className="shrink-0" />
+                            Submitted {formatStamp(project.timestamp) || "—"}
+                          </div>
+                          {project.hodApprovedAt && (
+                            <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider text-blue-600/70">
+                              <CheckCircle size={10} className="shrink-0" />
+                              HOD approved {formatStamp(project.hodApprovedAt)}
+                            </div>
+                          )}
+                          {project.approvedAt && (
+                            <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider text-emerald-700">
+                              <CheckCircle size={10} className="shrink-0" />
+                              Approved {formatStamp(project.approvedAt)}
+                            </div>
+                          )}
+                          {project.reviewedAt &&
+                            getReviewStage(project) === "changes_requested" && (
+                              <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider text-red-500">
+                                <MessageSquare size={10} className="shrink-0" />
+                                Returned {formatStamp(project.reviewedAt)}
+                              </div>
+                            )}
+                        </div>
+
+                        <div className="mt-auto pt-3 border-t border-gray-50 flex items-center justify-end">
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() =>
@@ -18179,6 +20279,108 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         </div>
                       </motion.div>
                     ))}
+                </div>
+              )}
+
+              {/* Send back with feedback — overall plus per week */}
+              {feedbackPlan && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="bg-white rounded-[2.5rem] p-8 max-w-2xl w-full shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto custom-scrollbar"
+                  >
+                    <div className="flex justify-between items-start gap-4">
+                      <div>
+                        <h4 className="text-xl font-black text-[#064E3B]">
+                          Request Changes
+                        </h4>
+                        <p className="text-xs font-bold text-[#064E3B]/50 mt-1">
+                          {feedbackPlan.title} •{" "}
+                          {feedbackPlan.teacherName || "Teacher"}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setFeedbackPlan(null)}
+                        className="p-2 hover:bg-gray-100 rounded-full shrink-0"
+                      >
+                        <X size={18} />
+                      </button>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-[#064E3B]/40">
+                        What needs fixing overall
+                      </label>
+                      <textarea
+                        value={feedbackNote}
+                        onChange={(e) => setFeedbackNote(e.target.value)}
+                        placeholder="e.g. Learning objectives need to be measurable, and the assessment column is missing for most weeks."
+                        className="w-full h-24 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-medium resize-none outline-none focus:border-[#059669]"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-[#064E3B]/40">
+                        Feedback week by week
+                      </label>
+                      {(feedbackPlan.content?.lessonPlan?.weeklyBreakdown || [])
+                        .length === 0 ? (
+                        <p className="text-xs font-bold text-[#064E3B]/40">
+                          This submission has no weekly breakdown.
+                        </p>
+                      ) : (
+                        <div className="space-y-3 max-h-72 overflow-y-auto custom-scrollbar pr-1">
+                          {(
+                            feedbackPlan.content?.lessonPlan?.weeklyBreakdown ||
+                            []
+                          ).map((w: any, i: number) => (
+                            <div
+                              key={i}
+                              className="rounded-2xl border-2 border-[#D1FAE5] p-3 space-y-1.5"
+                            >
+                              <p className="text-[11px] font-black text-[#064E3B]">
+                                Week {w?.week ?? i + 1}
+                                {w?.topic ? ` — ${w.topic}` : ""}
+                              </p>
+                              <textarea
+                                value={feedbackWeeks[String(i)] || ""}
+                                onChange={(e) =>
+                                  setFeedbackWeeks((prev) => ({
+                                    ...prev,
+                                    [String(i)]: e.target.value,
+                                  }))
+                                }
+                                placeholder="Leave blank if this week is fine…"
+                                className="w-full h-16 p-2.5 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-medium resize-none outline-none focus:border-[#059669]"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex gap-3 pt-2">
+                      <button
+                        onClick={() => setFeedbackPlan(null)}
+                        className="flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest bg-white text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] transition-all"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={requestPlanChanges}
+                        disabled={isSavingReview}
+                        className="flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest bg-amber-400 text-amber-950 hover:bg-amber-300 transition-all shadow-md disabled:opacity-50 inline-flex items-center justify-center gap-2"
+                      >
+                        {isSavingReview ? (
+                          <Loader2 size={16} className="animate-spin" />
+                        ) : (
+                          <ArrowRightCircle size={16} />
+                        )}
+                        Send Back To Teacher
+                      </button>
+                    </div>
+                  </motion.div>
                 </div>
               )}
 
@@ -18270,8 +20472,29 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     Manage staff members, working days, and subject expertise
                     catalog
                   </p>
+                  {/* The roster is whatever Commun says it is, once synced. */}
+                  <p
+                    className={cn(
+                      "text-[10px] font-black uppercase tracking-wider mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border",
+                      isDirectoryFromCommun
+                        ? "bg-[#F0FDF4] text-[#059669] border-[#D1FAE5]"
+                        : "bg-amber-50 text-amber-700 border-amber-200",
+                    )}
+                  >
+                    <Globe size={11} />
+                    {isDirectoryFromCommun
+                      ? "Cambridge teachers from the Commun staff record"
+                      : "Not synced with Commun yet — showing local records"}
+                  </p>
                 </div>
                 <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => syncTeacherSubjectsFromAssignments()}
+                    title="Copy each teacher's assigned subjects from the lesson plan mapping into their directory record"
+                    className="bg-[#FACC15] text-[#064E3B] px-6 py-3 rounded-2xl font-bold flex items-center gap-2 border-2 border-[#EAB308] hover:bg-yellow-300 transition-all"
+                  >
+                    <RefreshCw size={18} /> Sync Subjects From Lesson Plan
+                  </button>
                   <button
                     onClick={() => {
                       const newSub = prompt(
@@ -18368,20 +20591,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   <span className="w-2 h-2 rounded-full bg-[#059669] animate-pulse"></span>
                   {(() => {
                     const activeStaff = getActiveStaffList(teachers);
-                    const filteredCount = activeStaff.filter((t) => {
-                      const q = teacherSearchQuery.toLowerCase().trim();
-                      if (!q) return true;
-                      return (
-                        t.name?.toLowerCase().includes(q) ||
-                        t.preferredName?.toLowerCase().includes(q) ||
-                        t.nricName?.toLowerCase().includes(q) ||
-                        t.role?.toLowerCase().includes(q) ||
-                        t.email?.toLowerCase().includes(q) ||
-                        t.phone?.toLowerCase().includes(q) ||
-                        (t.subjects &&
-                          t.subjects.some((s) => s.toLowerCase().includes(q)))
-                      );
-                    }).length;
+                    const filteredCount =
+                      activeStaff.filter(matchesTeacherSearch).length;
                     return `Showing ${filteredCount} of ${activeStaff.length} Staff Members`;
                   })()}
                 </div>
@@ -18390,20 +20601,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {(() => {
                   const activeStaff = getActiveStaffList(teachers);
-                  const filtered = activeStaff.filter((t) => {
-                    const q = teacherSearchQuery.toLowerCase().trim();
-                    if (!q) return true;
-                    return (
-                      t.name?.toLowerCase().includes(q) ||
-                      t.preferredName?.toLowerCase().includes(q) ||
-                      t.nricName?.toLowerCase().includes(q) ||
-                      t.role?.toLowerCase().includes(q) ||
-                      t.email?.toLowerCase().includes(q) ||
-                      t.phone?.toLowerCase().includes(q) ||
-                      (t.subjects &&
-                        t.subjects.some((s) => s.toLowerCase().includes(q)))
-                    );
-                  });
+                  const filtered = activeStaff.filter(matchesTeacherSearch);
 
                   if (filtered.length === 0) {
                     return (
@@ -18443,9 +20641,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                               <div className="flex gap-2 flex-wrap text-left">
                                 <p className="text-[9px] font-black bg-[#F0FDF4] px-1.5 py-0.5 rounded text-[#059669] uppercase tracking-widest">
                                   {teacher.role}
-                                </p>
-                                <p className="text-[9px] font-black bg-gray-100 px-1.5 py-0.5 rounded text-gray-500 uppercase tracking-widest">
-                                  Max: {teacher.maxPeriods} Periods
                                 </p>
                                 {teacher.jobType && (
                                   <p className="text-[9px] font-black bg-blue-50 px-1.5 py-0.5 rounded text-blue-600 uppercase tracking-widest">
@@ -18629,63 +20824,48 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           </button>
                         </div>
                       </div>
-                      <p className="text-[10px] font-black uppercase text-[#064E3B]/30 mb-1.5 mt-3 flex items-center gap-1">
-                        <span>🏷️ Assigned Subjects:</span>
-                      </p>
+                      {/* Assigned subjects, straight from the lesson plan
+                          year group ↔ subject mapping */}
                       {(() => {
-                        const assignedSubjects: string[] = [];
-                        const seen = new Set<string>();
-
-                        if (teacher.subjects) {
-                          teacher.subjects.forEach((s) => {
-                            if (s && !seen.has(s)) {
-                              seen.add(s);
-                              assignedSubjects.push(s);
-                            }
-                          });
-                        }
-
-                        Object.entries(staffAssignments || {}).forEach(
-                          ([key, val]) => {
-                            if (!val) return;
-                            const ids = val.split(",").map((id) => id.trim());
-                            if (ids.includes(teacher.id)) {
-                              const parts = key.split("-");
-                              if (parts.length >= 2) {
-                                const subName = parts.slice(1).join("-");
-                                if (!seen.has(subName)) {
-                                  seen.add(subName);
-                                  assignedSubjects.push(subName);
-                                }
-                              }
-                            }
-                          },
-                        );
-
-                        if (assignedSubjects.length === 0) {
-                          return (
-                            <div className="text-[10px] font-extrabold text-amber-600 bg-amber-50 rounded-xl px-3 py-2 border border-amber-100/50">
-                              No subject assigned or mapped yet.
-                            </div>
-                          );
-                        }
-
+                        const entries = Object.entries(
+                          subjectsForTeacher(teacher),
+                        ).sort(([a], [b]) => a.localeCompare(b));
                         return (
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {assignedSubjects.map((s) => {
-                              const colorClass = getSubjectColorClass(s);
-                              return (
-                                <span
-                                  key={s}
-                                  className={cn(
-                                    "px-2 py-1 rounded-md text-[9px] font-black uppercase border",
-                                    colorClass,
-                                  )}
-                                >
-                                  {s}
-                                </span>
-                              );
-                            })}
+                          <div className="pt-3 border-t border-gray-100 space-y-1.5">
+                            <p className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35">
+                              Assigned Subjects
+                              {entries.length > 0 && ` (${entries.length})`}
+                            </p>
+                            {entries.length === 0 ? (
+                              <p className="text-[10px] font-extrabold text-amber-600 bg-amber-50 rounded-xl px-3 py-2 border border-amber-100/50">
+                                No subject assigned yet — use “Sync Subjects From
+                                Lesson Plan”.
+                              </p>
+                            ) : (
+                              <div className="flex flex-wrap gap-1">
+                                {entries.map(([subject, ygs]) => (
+                                  <span
+                                    key={subject}
+                                    title={
+                                      ygs.length
+                                        ? `${subject} — ${ygs.join(", ")}`
+                                        : subject
+                                    }
+                                    className={cn(
+                                      "px-2 py-1 rounded-md text-[9px] font-black uppercase border",
+                                      getSubjectColorClass(subject),
+                                    )}
+                                  >
+                                    {subject}
+                                    {ygs.length > 0 && (
+                                      <span className="ml-1 opacity-60 normal-case">
+                                        {shortYearList(ygs)}
+                                      </span>
+                                    )}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         );
                       })()}
@@ -20598,6 +22778,43 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                 </span>
                               )}
                             </div>
+                            {/* Who reviews lesson plans, and at which step */}
+                            <div className="flex flex-wrap gap-2 mt-3">
+                              {(
+                                [
+                                  ["hod", "Head of Dept"],
+                                  ["coordinator", "Coordinator"],
+                                ] as [string, string][]
+                              ).map(([role, label]) => {
+                                const on = (member.roles || []).includes(role);
+                                return (
+                                  <button
+                                    key={role}
+                                    onClick={() =>
+                                      toggleMemberRole(member, role)
+                                    }
+                                    title={
+                                      on
+                                        ? `Remove ${label}`
+                                        : `Make this member ${label}`
+                                    }
+                                    className={cn(
+                                      "px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border-2 transition-all flex items-center gap-1",
+                                      on
+                                        ? "bg-[#064E3B] border-[#064E3B] text-white"
+                                        : "bg-white border-[#D1FAE5] text-[#064E3B]/50 hover:border-[#059669]",
+                                    )}
+                                  >
+                                    {on ? (
+                                      <Check size={10} />
+                                    ) : (
+                                      <Plus size={10} />
+                                    )}
+                                    {label}
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </td>
                           <td className="px-6 py-5 bg-[#F0FDF4]/30 border-y-2 border-[#F0FDF4]">
                             <p className="text-sm font-bold text-[#064E3B]">
@@ -21160,7 +23377,524 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               </div>
             </div>
           )}
-        </main>
+
+          {adminTab === "sso" && (
+            <div className="max-w-6xl mx-auto space-y-8 pb-20">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div className="space-y-1">
+                  <h3 className="text-2xl font-black text-[#064E3B]">
+                    Connected Systems (SSO)
+                  </h3>
+                  <p className="text-sm font-bold text-[#064E3B]/50 max-w-2xl">
+                    Single sign-on with Commun: the credentials this school
+                    connects with, a simulator for the browser handoff, and a
+                    console for the machine-token APIs.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={fetchSsoData}
+                    disabled={isSsoDataLoading}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all active:scale-95 bg-white text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] shadow-sm disabled:opacity-50"
+                  >
+                    {isSsoDataLoading ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <RefreshCw size={16} />
+                    )}
+                    Refresh
+                  </button>
+                  <button
+                    onClick={resetSsoState}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all active:scale-95 bg-red-50 text-red-600 border-2 border-red-100 hover:bg-red-500 hover:text-white hover:border-red-500 shadow-sm"
+                  >
+                    <Trash2 size={16} /> Reset Simulator
+                  </button>
+                </div>
+              </div>
+
+              {/* Connection credentials */}
+              <section className="bg-white border-2 border-[#D1FAE5] rounded-[2rem] p-8 space-y-5 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <Globe size={20} className="text-[#059669]" />
+                  <h4 className="text-sm font-black uppercase tracking-widest text-[#064E3B]">
+                    Connection
+                  </h4>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  {[
+                    { key: "client_id", label: "Client ID" },
+                    { key: "machine_token", label: "Machine Token" },
+                    { key: "school_url", label: "School URL (issuer)" },
+                  ].map((f) => (
+                    <div key={f.key} className="space-y-1">
+                      <label className="text-[10px] font-black uppercase text-[#064E3B]/40 tracking-widest">
+                        {f.label}
+                      </label>
+                      <input
+                        type="text"
+                        value={ssoConfig?.[f.key] || ""}
+                        onChange={(e) =>
+                          setSsoConfig((prev: any) => ({
+                            ...prev,
+                            [f.key]: e.target.value,
+                          }))
+                        }
+                        className="w-full p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669] font-mono"
+                      />
+                    </div>
+                  ))}
+                  {[
+                    { key: "callback_url", label: "Callback URL" },
+                    { key: "jwks_url", label: "JWKS URL" },
+                  ].map((f) => (
+                    <div key={f.key} className="space-y-1">
+                      <label className="text-[10px] font-black uppercase text-[#064E3B]/40 tracking-widest">
+                        {f.label} — read only
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          readOnly
+                          value={ssoConfig?.[f.key] || ""}
+                          className="w-full p-3 bg-[#FDFBF7] border-2 border-[#E5E7EB] rounded-xl text-xs font-bold text-[#064E3B]/60 font-mono outline-none"
+                        />
+                        <button
+                          onClick={() =>
+                            copySuggestion(f.key, ssoConfig?.[f.key] || "")
+                          }
+                          title="Copy"
+                          className="p-3 rounded-xl border-2 border-[#D1FAE5] text-[#064E3B] hover:border-[#059669] hover:bg-[#F0FDF4] transition-colors shrink-0"
+                        >
+                          {copiedSug === f.key ? (
+                            <Check size={16} />
+                          ) : (
+                            <Copy size={16} />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  onClick={saveSsoConfig}
+                  className={cn(
+                    "inline-flex items-center gap-2 px-5 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 shadow-md",
+                    ssoSaveSuccess
+                      ? "bg-emerald-500 text-white"
+                      : "bg-[#059669] text-white hover:bg-[#047857]",
+                  )}
+                >
+                  {ssoSaveSuccess ? <Check size={16} /> : <Save size={16} />}
+                  {ssoSaveSuccess ? "Saved" : "Save Connection"}
+                </button>
+              </section>
+
+              {/* Front-channel login simulator */}
+              <section className="bg-white border-2 border-[#D1FAE5] rounded-[2rem] p-8 space-y-5 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <Unlock size={20} className="text-[#059669]" />
+                  <h4 className="text-sm font-black uppercase tracking-widest text-[#064E3B]">
+                    Login Simulator (front-channel)
+                  </h4>
+                </div>
+                <p className="text-xs font-bold text-[#064E3B]/50">
+                  Mints an RS256 ticket signed with the server key, exactly like
+                  Commun would, then hands it to /sso/callback.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {[
+                    { key: "sub", label: "Subject (sub)" },
+                    { key: "first_name", label: "First Name" },
+                    { key: "last_name", label: "Last Name" },
+                    { key: "email", label: "Email" },
+                    { key: "user_types", label: "User Types (comma separated)" },
+                  ].map((f) => (
+                    <div key={f.key} className="space-y-1">
+                      <label className="text-[10px] font-black uppercase text-[#064E3B]/40 tracking-widest">
+                        {f.label}
+                      </label>
+                      <input
+                        type="text"
+                        value={(simulatorUser as any)[f.key] || ""}
+                        onChange={(e) =>
+                          setSimulatorUser((prev: any) => ({
+                            ...prev,
+                            [f.key]: e.target.value,
+                          }))
+                        }
+                        className="w-full p-2.5 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
+                      />
+                    </div>
+                  ))}
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40 tracking-widest">
+                      Clock Skew (seconds)
+                    </label>
+                    <input
+                      type="number"
+                      value={simulatorUser.clockSkewSeconds}
+                      onChange={(e) =>
+                        setSimulatorUser((prev: any) => ({
+                          ...prev,
+                          clockSkewSeconds: Number(e.target.value),
+                        }))
+                      }
+                      className="w-full p-2.5 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <button
+                    onClick={() =>
+                      setSimulatorUser((prev: any) => ({
+                        ...prev,
+                        expiredToken: !prev.expiredToken,
+                      }))
+                    }
+                    className={cn(
+                      "inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-[11px] uppercase tracking-wider border-2 transition-all",
+                      simulatorUser.expiredToken
+                        ? "bg-amber-400 border-amber-500 text-amber-950"
+                        : "bg-white border-[#D1FAE5] text-[#064E3B]/70 hover:border-[#059669]",
+                    )}
+                  >
+                    {simulatorUser.expiredToken ? (
+                      <Check size={14} />
+                    ) : (
+                      <Square size={14} />
+                    )}
+                    Expired Token
+                  </button>
+                  <button
+                    onClick={generateSsoTicket}
+                    disabled={isGeneratingTicket}
+                    className="inline-flex items-center gap-2 px-5 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 bg-[#FACC15] text-[#064E3B] hover:bg-yellow-300 shadow-md disabled:opacity-50"
+                  >
+                    {isGeneratingTicket ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <Sparkles size={16} />
+                    )}
+                    Generate Ticket
+                  </button>
+                  {ssoTicket && (
+                    <a
+                      href={`/sso/callback?ticket=${encodeURIComponent(ssoTicket.ticket)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 px-5 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 bg-[#064E3B] text-white hover:bg-[#0B6B4F] shadow-md"
+                    >
+                      <ArrowRightCircle size={16} /> Run Handoff
+                    </a>
+                  )}
+                </div>
+                {ssoTicket && (
+                  <div className="space-y-3 pt-2">
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-black uppercase text-[#064E3B]/40 tracking-widest">
+                          Signed Ticket (JWT)
+                        </label>
+                        <button
+                          onClick={() =>
+                            copySuggestion("sso-ticket", ssoTicket.ticket)
+                          }
+                          className="text-[10px] font-black text-[#059669] hover:underline flex items-center gap-1"
+                        >
+                          {copiedSug === "sso-ticket" ? (
+                            <Check size={12} />
+                          ) : (
+                            <Copy size={12} />
+                          )}
+                          Copy
+                        </button>
+                      </div>
+                      <p className="p-3 bg-[#FDFBF7] border-2 border-[#E5E7EB] rounded-xl text-[10px] font-mono break-all text-[#064E3B]/70 max-h-24 overflow-y-auto custom-scrollbar">
+                        {ssoTicket.ticket}
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase text-[#064E3B]/40 tracking-widest">
+                        Claims
+                      </label>
+                      <pre className="p-4 bg-[#064E3B] text-emerald-100 rounded-xl text-[10px] font-mono overflow-x-auto max-h-64 custom-scrollbar">
+                        {JSON.stringify(ssoTicket.payload, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              {/* Back-channel API console */}
+              <section className="bg-white border-2 border-[#D1FAE5] rounded-[2rem] p-8 space-y-5 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <Lock size={20} className="text-[#059669]" />
+                  <h4 className="text-sm font-black uppercase tracking-widest text-[#064E3B]">
+                    Back-channel API Console
+                  </h4>
+                </div>
+                <p className="text-xs font-bold text-[#064E3B]/50">
+                  Calls the machine-token protected endpoints. A wrong or missing
+                  Bearer token is rejected and shows up in the activity log.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {(["userinfo", "students"] as const).map((ep) => (
+                    <button
+                      key={ep}
+                      onClick={() => setApiCliEndpoint(ep)}
+                      className={cn(
+                        "px-4 py-2 rounded-xl font-black text-[11px] uppercase tracking-wider border-2 transition-all",
+                        apiCliEndpoint === ep
+                          ? "bg-[#064E3B] text-white border-[#064E3B]"
+                          : "bg-white text-[#064E3B]/70 border-[#D1FAE5] hover:border-[#059669]",
+                      )}
+                    >
+                      {ep === "userinfo"
+                        ? "GET /api/v1/userinfo/:sub"
+                        : "GET /api/v1/students"}
+                    </button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40 tracking-widest">
+                      Bearer Token
+                    </label>
+                    <input
+                      type="text"
+                      value={apiCliToken}
+                      onChange={(e) => setApiCliToken(e.target.value)}
+                      className="w-full p-2.5 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold font-mono outline-none focus:border-[#059669]"
+                    />
+                  </div>
+                  {apiCliEndpoint === "userinfo" && (
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase text-[#064E3B]/40 tracking-widest">
+                        Subject (sub)
+                      </label>
+                      <input
+                        type="text"
+                        value={apiCliSub}
+                        onChange={(e) => setApiCliSub(e.target.value)}
+                        className="w-full p-2.5 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold font-mono outline-none focus:border-[#059669]"
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={runApiCli}
+                    disabled={isCliExecuting}
+                    className="inline-flex items-center gap-2 px-5 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 bg-[#059669] text-white hover:bg-[#047857] shadow-md disabled:opacity-50"
+                  >
+                    {isCliExecuting ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <Play size={16} />
+                    )}
+                    Send Request
+                  </button>
+                  {apiCliLogs.length > 0 && (
+                    <button
+                      onClick={() => setApiCliLogs([])}
+                      className="inline-flex items-center gap-2 px-4 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all bg-white text-[#064E3B]/60 border-2 border-[#D1FAE5] hover:border-[#059669]"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                {apiCliLogs.length > 0 && (
+                  <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar">
+                    {apiCliLogs.map((l: any) => (
+                      <div
+                        key={l.id}
+                        className="rounded-xl border-2 border-[#E5E7EB] overflow-hidden"
+                      >
+                        <div className="flex items-center justify-between gap-3 px-3 py-2 bg-[#FDFBF7]">
+                          <span className="text-[10px] font-black font-mono text-[#064E3B] truncate">
+                            {l.request}
+                          </span>
+                          <span
+                            className={cn(
+                              "text-[9px] font-black uppercase px-2 py-0.5 rounded-full shrink-0",
+                              l.ok
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "bg-red-100 text-red-600",
+                            )}
+                          >
+                            {l.status || "ERR"}
+                          </span>
+                        </div>
+                        <pre className="p-3 bg-[#064E3B] text-emerald-100 text-[10px] font-mono overflow-x-auto max-h-48 custom-scrollbar">
+                          {l.body}
+                        </pre>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              {/* Provisioned users */}
+              <section className="bg-white border-2 border-[#D1FAE5] rounded-[2rem] p-8 space-y-5 shadow-sm">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3">
+                    <UserCheck size={20} className="text-[#059669]" />
+                    <h4 className="text-sm font-black uppercase tracking-widest text-[#064E3B]">
+                      Provisioned Users
+                    </h4>
+                  </div>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[#064E3B]/40">
+                    {ssoShadowUsers.length} account
+                    {ssoShadowUsers.length === 1 ? "" : "s"}
+                  </span>
+                </div>
+                {ssoShadowUsers.length === 0 ? (
+                  <p className="text-xs font-bold text-[#064E3B]/40 py-4 text-center">
+                    No users provisioned yet — run a handoff above to create one.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs border-collapse">
+                      <thead>
+                        <tr className="text-left">
+                          {["Name", "Email", "Sub", "Types", "Status", ""].map(
+                            (h) => (
+                              <th
+                                key={h}
+                                className="px-3 py-2 text-[9px] font-black uppercase tracking-widest text-[#064E3B]/40 border-b-2 border-[#D1FAE5]"
+                              >
+                                {h}
+                              </th>
+                            ),
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ssoShadowUsers.map((u: any) => (
+                          <tr
+                            key={u.sub}
+                            className="border-b border-[#E5E7EB] hover:bg-[#F0FDF4]/50"
+                          >
+                            <td className="px-3 py-2.5 font-black text-[#064E3B] whitespace-nowrap">
+                              {u?.name?.first_name} {u?.name?.last_name}
+                            </td>
+                            <td className="px-3 py-2.5 font-bold text-[#064E3B]/70">
+                              {u.email}
+                            </td>
+                            <td className="px-3 py-2.5 font-mono text-[10px] text-[#064E3B]/50">
+                              {u.sub}
+                            </td>
+                            <td className="px-3 py-2.5 font-bold text-[#064E3B]/70">
+                              {Array.isArray(u.user_types)
+                                ? u.user_types.join(", ")
+                                : u.user_types}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <span
+                                className={cn(
+                                  "text-[9px] font-black uppercase px-2 py-0.5 rounded-full",
+                                  u.active
+                                    ? "bg-emerald-100 text-emerald-700"
+                                    : "bg-red-100 text-red-600",
+                                )}
+                              >
+                                {u.active ? "Active" : "Inactive"}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2.5 text-right">
+                              <button
+                                onClick={() => toggleShadowActive(u.sub)}
+                                title="Toggle active status to test re-check failures"
+                                className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider border-2 border-[#D1FAE5] text-[#064E3B]/70 hover:border-[#059669] hover:bg-[#F0FDF4] transition-colors whitespace-nowrap"
+                              >
+                                {u.active ? "Deactivate" : "Activate"}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              {/* Activity log */}
+              <section className="bg-white border-2 border-[#D1FAE5] rounded-[2rem] p-8 space-y-4 shadow-sm">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3">
+                    <FileText size={20} className="text-[#059669]" />
+                    <h4 className="text-sm font-black uppercase tracking-widest text-[#064E3B]">
+                      Activity Log
+                    </h4>
+                  </div>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[#064E3B]/40">
+                    {ssoLogs.length} event{ssoLogs.length === 1 ? "" : "s"}
+                  </span>
+                </div>
+                {ssoLogs.length === 0 ? (
+                  <p className="text-xs font-bold text-[#064E3B]/40 py-4 text-center">
+                    Nothing logged yet.
+                  </p>
+                ) : (
+                  <div className="space-y-2 max-h-[30rem] overflow-y-auto custom-scrollbar">
+                    {ssoLogs.map((l: any) => (
+                      <div
+                        key={l.id}
+                        className="rounded-xl border-2 border-[#E5E7EB] p-3 space-y-1.5"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-start gap-2 min-w-0">
+                            <span
+                              className={cn(
+                                "text-[9px] font-black uppercase px-2 py-0.5 rounded-full shrink-0 mt-0.5",
+                                l.status === "success"
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : l.status === "failed"
+                                    ? "bg-red-100 text-red-600"
+                                    : "bg-[#F0FDF4] text-[#064E3B]/60",
+                              )}
+                            >
+                              {l.status}
+                            </span>
+                            <p className="text-xs font-bold text-[#064E3B] break-words">
+                              {l.message}
+                            </p>
+                          </div>
+                          <span className="text-[9px] font-black text-[#064E3B]/35 whitespace-nowrap shrink-0">
+                            {l.timestamp
+                              ? new Date(l.timestamp).toLocaleTimeString()
+                              : ""}
+                          </span>
+                        </div>
+                        {l.details && (
+                          <>
+                            <button
+                              onClick={() =>
+                                setSsoOpenLog((prev) =>
+                                  prev === l.id ? null : l.id,
+                                )
+                              }
+                              className="text-[10px] font-black uppercase tracking-wider text-[#059669] hover:underline"
+                            >
+                              {ssoOpenLog === l.id ? "Hide" : "Details"}
+                            </button>
+                            {ssoOpenLog === l.id && (
+                              <pre className="p-3 bg-[#064E3B] text-emerald-100 rounded-xl text-[10px] font-mono overflow-x-auto max-h-56 custom-scrollbar">
+                                {l.details}
+                              </pre>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
+          )}
+          </main>
+        </div>
 
         <AnimatePresence>
           {isCommunExportModalOpen && (
@@ -22304,6 +25038,19 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 )}
               </button>
             )}
+            {userRoles.includes("admin") && (
+              <button
+                onClick={() => {
+                  clearWorkspace();
+                  setCurrentView("admin");
+                }}
+                title="Go to Admin Portal"
+                className="flex items-center gap-2 px-5 py-2.5 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest border border-[#EAB308] hover:bg-yellow-300 transition-all shadow-lg active:scale-95 whitespace-nowrap shrink-0"
+              >
+                <LayoutGrid size={18} className="shrink-0" />
+                <span className="hidden lg:inline">Admin Portal</span>
+              </button>
+            )}
             <div className="hidden md:flex items-center gap-3 bg-white/10 px-6 py-2.5 rounded-xl border border-white/20">
               <div className="w-8 h-8 bg-[#FACC15] rounded-full flex items-center justify-center text-[#064E3B] font-black text-xs">
                 {teacherName[0]}
@@ -22794,9 +25541,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     >
                       <div className="space-y-4">
                         <div className="flex justify-between items-start">
-                          <span className="px-3 py-1 bg-emerald-50 text-[#064E3B] text-[9px] font-black uppercase tracking-wider rounded-full flex items-center gap-1.5 border border-emerald-100">
-                            <CheckCircle size={10} className="text-[#059669]" />{" "}
-                            Submitted (Live)
+                          <span
+                            className={cn(
+                              "px-3 py-1 text-[9px] font-black uppercase tracking-wider rounded-full flex items-center gap-1.5 border",
+                              REVIEW_STAGES[getReviewStage(plan)].chip,
+                            )}
+                          >
+                            <CheckCircle size={10} />{" "}
+                            {REVIEW_STAGES[getReviewStage(plan)].label}
                           </span>
                           <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100/50">
                             {week ? week.label : `Week ${plan.weekId || "?"}`}
@@ -22821,10 +25573,68 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             </p>
                           )}
                         </div>
+
+                        {/* Came back with things to fix */}
+                        {getReviewStage(plan) === "changes_requested" && (
+                          <div className="rounded-2xl bg-red-50 border border-red-100 p-3 space-y-2">
+                            <p className="text-[9px] font-black uppercase tracking-widest text-red-500">
+                              {plan.reviewedBy
+                                ? `${plan.reviewedBy} asked for changes`
+                                : "Changes requested"}
+                            </p>
+                            {plan.reviewNote && (
+                              <p className="text-[11px] font-bold text-red-700">
+                                {plan.reviewNote}
+                              </p>
+                            )}
+                            {Object.entries(plan.weeklyFeedback || {}).map(
+                              ([idx, note]: any) => {
+                                const w =
+                                  plan.content?.lessonPlan?.weeklyBreakdown?.[
+                                    Number(idx)
+                                  ];
+                                return (
+                                  <div
+                                    key={idx}
+                                    className="rounded-xl bg-white border border-red-100 p-2"
+                                  >
+                                    <p className="text-[9px] font-black uppercase tracking-wider text-red-500">
+                                      Week {w?.week ?? Number(idx) + 1}
+                                      {w?.topic ? ` — ${w.topic}` : ""}
+                                    </p>
+                                    <p className="text-[11px] font-bold text-[#064E3B]/80">
+                                      {note}
+                                    </p>
+                                  </div>
+                                );
+                              },
+                            )}
+                            <button
+                              onClick={() => startPlanRevision(plan)}
+                              className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-[#064E3B] text-white text-[10px] font-black uppercase tracking-widest hover:bg-[#0B6B4F] transition-all shadow-sm active:scale-95"
+                            >
+                              <Wand2 size={12} /> Fix &amp; Resubmit
+                            </button>
+                          </div>
+                        )}
+
+                        {getReviewStage(plan) === "approved" && (
+                          <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-3">
+                            <p className="text-[11px] font-bold text-emerald-700">
+                              Approved{plan.approvedBy ? ` by ${plan.approvedBy}` : ""} — you
+                              can use this lesson plan.
+                            </p>
+                            {plan.approvedAt && (
+                              <p className="text-[10px] font-black uppercase tracking-wider text-emerald-700/70 mt-1">
+                                Approved {formatStamp(plan.approvedAt)}
+                              </p>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <div className="border-t border-gray-100 pt-4 mt-6 flex items-center justify-between">
-                        <span className="text-[10px] font-black text-gray-400">
-                          {formattedDate}
+                      <div className="border-t border-gray-100 pt-4 mt-6 flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-black text-gray-400 leading-tight">
+                          Submitted {formattedDate}
                         </span>
                         <div className="flex items-center gap-2">
                           <button
@@ -22914,18 +25724,22 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     };
 
     return (
-      <div className="h-12 bg-white border-b border-[#E6F4EA] flex items-center justify-between px-6 shrink-0 shadow-sm overflow-x-auto gap-4 select-none">
-        {/* Back Button */}
+      <div className="w-48 shrink-0 bg-white border-r border-[#E6F4EA] flex flex-col py-4 shadow-sm select-none overflow-y-auto">
+        {/* Back */}
         <button
           onClick={handleBack}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[#064E3B] hover:bg-[#F0FDF4] text-xs font-black uppercase tracking-wider transition-all border border-[#D1FAE5] active:scale-95 cursor-pointer hover:border-[#059669]"
+          className="mx-3 mb-4 flex items-center gap-1.5 px-3 py-2 rounded-xl text-[#064E3B] hover:bg-[#F0FDF4] text-[11px] font-black uppercase tracking-wider transition-all border border-[#D1FAE5] active:scale-95 cursor-pointer hover:border-[#059669]"
         >
-          <ChevronLeft size={16} className="stroke-[3]" />
+          <ChevronLeft size={14} className="stroke-[3]" />
           Back
         </button>
 
-        {/* Steps */}
-        <div className="hidden md:flex items-center gap-0.5">
+        <div className="px-4 mb-2 text-[9px] font-black uppercase tracking-[0.2em] text-[#064E3B]/40">
+          Workflow
+        </div>
+
+        {/* Vertical Steps */}
+        <div className="flex flex-col gap-1 px-2 flex-1">
           {steps.map((step, idx) => {
             const StepIcon = step.icon;
             const isActive = step.id === currentView;
@@ -22933,44 +25747,72 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
             return (
               <React.Fragment key={step.id}>
-                {idx > 0 && (
-                  <div className="text-[#064E3B]/20 font-black mx-2 select-none">
-                    &rarr;
-                  </div>
+              <button
+                onClick={() => handleStepClick(step.id)}
+                className={cn(
+                  "flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all active:scale-95 border cursor-pointer text-left",
+                  isActive
+                    ? "bg-[#059669] text-white border-[#059669] shadow-sm shadow-[#059669]/10"
+                    : isCompleted
+                      ? "bg-[#F0FDF4] text-[#064E3B] border-[#D1FAE5]"
+                      : "bg-transparent text-gray-400 border-transparent hover:text-[#064E3B] hover:bg-[#F9FCFA]",
                 )}
-                <button
-                  onClick={() => handleStepClick(step.id)}
+              >
+                <span
                   className={cn(
-                    "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all active:scale-95 border cursor-pointer",
+                    "w-5 h-5 rounded-full flex items-center justify-center text-[9px] shrink-0",
                     isActive
-                      ? "bg-[#059669] text-white border-[#059669] shadow-sm shadow-[#059669]/10"
+                      ? "bg-white/20 text-white"
                       : isCompleted
-                        ? "bg-[#F0FDF4] text-[#064E3B] border-[#D1FAE5]"
-                        : "bg-transparent text-gray-400 border-transparent hover:text-[#064E3B] hover:bg-[#F9FCFA]",
+                        ? "bg-[#D1FAE5] text-[#064E3B]"
+                        : "bg-gray-100 text-gray-400",
                   )}
                 >
-                  <StepIcon size={14} />
-                  <span>{step.label}</span>
+                  {idx + 1}
+                </span>
+                <StepIcon size={14} className="shrink-0" />
+                <span className="leading-tight">{step.label}</span>
+              </button>
+
+              {/* Every lesson plan the teacher has, one card each — sits with
+                  Lesson Design because that is what it opens. */}
+              {step.id === "lesson-plan" && !isReviewMode && (
+                <button
+                  onClick={async () => {
+                    await openLessonPlanBoard();
+                    setCurrentView("lesson-plan");
+                  }}
+                  title="Minimise this plan and see all your lesson plans"
+                  className="ml-6 flex items-center gap-2 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all active:scale-95 border border-[#D1FAE5] bg-white text-[#064E3B] hover:border-[#059669] hover:bg-[#F0FDF4] cursor-pointer text-left"
+                >
+                  <Minimize2 size={13} className="shrink-0" />
+                  <span className="leading-tight flex-1">All Plans</span>
+                  {userProjects.filter(
+                    (p: any) => p?.category === "lesson-plan" && p?.content,
+                  ).length > 0 && (
+                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#FACC15] text-[#064E3B] text-[9px] font-black shrink-0">
+                      {
+                        userProjects.filter(
+                          (p: any) =>
+                            p?.category === "lesson-plan" && p?.content,
+                        ).length
+                      }
+                    </span>
+                  )}
                 </button>
+              )}
               </React.Fragment>
             );
           })}
         </div>
 
-        {/* Steps Indicator for Small Screens */}
-        <div className="md:hidden flex items-center bg-[#F0FDF4] px-3 py-1.5 rounded-xl border border-[#D1FAE5]">
-          <span className="text-[10px] font-black uppercase tracking-wider text-[#064E3B]">
-            Step {currentIdx + 1} of 5: {steps[currentIdx].label}
-          </span>
-        </div>
-
-        {/* Next Button */}
+        {/* Next */}
         <button
           onClick={handleNext}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[#064E3B] hover:bg-[#F0FDF4] text-xs font-black uppercase tracking-wider transition-all border border-[#D1FAE5] active:scale-95 cursor-pointer hover:border-[#059669]"
+          className="mx-3 mt-4 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-[#064E3B] text-white text-[11px] font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer hover:bg-[#0B6B4F]"
         >
           {currentIdx === steps.length - 1 ? "Finish" : "Next"}
-          <ChevronRight size={16} className="stroke-[3]" />
+          <ChevronRight size={14} className="stroke-[3]" />
         </button>
       </div>
     );
@@ -22980,7 +25822,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     if (!content || !content.slides || content.slides.length === 0) {
       return (
         <div className="flex-1 flex flex-col bg-[#F0FDF4] overflow-hidden">
-          {renderWorkspaceFlowNavigator()}
           <div className="flex-1 flex items-center justify-center bg-[#F0FDF4]">
             <div className="text-center space-y-4">
               <Presentation size={48} className="mx-auto text-[#064E3B]/20" />
@@ -23140,6 +25981,26 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       >
                         <CheckCircle size={14} /> Submit
                       </button>
+                      <button
+                        onClick={() => submitAllToAdmin()}
+                        title="Submit every lesson plan you've saved (all year groups) to the Admin at once"
+                        className="px-4 py-2 bg-[#064E3B] text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#0B6B4F] transition-all shadow-sm flex items-center gap-2"
+                      >
+                        <CheckCircle size={14} /> Submit All
+                        {userProjects.filter(
+                          (p: any) =>
+                            p?.category === "lesson-plan" && p?.content,
+                        ).length > 0 && (
+                          <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#FACC15] text-[#064E3B] text-[10px] font-black">
+                            {
+                              userProjects.filter(
+                                (p: any) =>
+                                  p?.category === "lesson-plan" && p?.content,
+                              ).length
+                            }
+                          </span>
+                        )}
+                      </button>
                     </div>
                   </>
                 )}
@@ -23147,7 +26008,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             )}
           </div>
         </div>
-        {renderWorkspaceFlowNavigator()}
         <div className="flex-1 flex overflow-hidden">
           {!isReviewMode && (
             <aside className="w-80 bg-white border-r-2 border-[#D1FAE5] p-6 space-y-8 overflow-y-auto custom-scrollbar">
@@ -24833,7 +27693,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     if (!content || !content.worksheet) {
       return (
         <div className="flex-1 flex flex-col bg-[#FDFBF7] overflow-hidden">
-          {renderWorkspaceFlowNavigator()}
           <div className="flex-1 flex items-center justify-center bg-[#FDFBF7]">
             <div className="text-center space-y-4">
               <FileText size={48} className="mx-auto text-[#064E3B]/20" />
@@ -24958,7 +27817,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             <div className="w-12" />
           </div>
         </div>
-        {renderWorkspaceFlowNavigator()}
         <div className="flex-1 flex overflow-hidden">
           {!isReviewMode && (
             <aside className="w-80 bg-white border-r-2 border-[#D1FAE5] p-6 space-y-6 overflow-y-auto">
@@ -27220,7 +30078,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     if (!content || !content.readingProgram) {
       return (
         <div className="flex-1 flex flex-col bg-[#FDFBF7] overflow-hidden">
-          {renderWorkspaceFlowNavigator()}
           <div className="flex-1 flex items-center justify-center bg-[#FDFBF7]">
             <div className="text-center space-y-4">
               <Book size={48} className="mx-auto text-[#064E3B]/20" />
@@ -27347,8 +30204,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             <div className="w-12" />
           </div>
         </div>
-
-        {renderWorkspaceFlowNavigator()}
 
         <div className="flex-1 flex overflow-hidden">
           {/* Left Sidebar for inputs / configuration */}
@@ -28644,7 +31499,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     if (!content) {
       return (
         <div className="flex-1 flex flex-col bg-[#FDFBF7] overflow-hidden">
-          {renderWorkspaceFlowNavigator()}
           <div className="flex-1 flex items-center justify-center bg-[#FDFBF7]">
             <div className="text-center space-y-4">
               <Edit2 size={48} className="mx-auto text-[#064E3B]/20" />
@@ -28749,7 +31603,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             )}
           </div>
         </div>
-        {renderWorkspaceFlowNavigator()}
 
         <div className="flex-1 p-8 max-w-7xl mx-auto w-full overflow-y-auto custom-scrollbar">
           <div
@@ -29319,17 +32172,408 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     window.speechSynthesis.speak(utterance);
   };
 
+  // The minimised multi-plan board. Every saved lesson plan is a small card;
+  // clicking one blows it up into the full editor, and minimising brings the
+  // teacher straight back here to pick the next subject / year group.
+  const renderLessonPlanBoard = () => {
+    const plans = userProjects.filter((p: any) => p?.category === "lesson-plan");
+    const yearOptions = [
+      "Year 1",
+      "Year 2",
+      "Year 3",
+      "Year 4",
+      "Year 5",
+      "Year 6",
+      "Year 7",
+      "Year 8",
+      "Year 9",
+      "Year 10",
+      "Year 11",
+    ];
+    const chip =
+      "px-2 py-0.5 rounded-full bg-[#F0FDF4] border border-[#D1FAE5] text-[9px] font-black uppercase tracking-wider text-[#064E3B]/70";
+    const submittable = plans.filter((p: any) => p?.content);
+    const submittableCount = submittable.length;
+    const selectedCount = plans.filter((p: any) =>
+      lpSelectedPlanIds.includes(p.id),
+    ).length;
+    const allTicked =
+      submittableCount > 0 && selectedCount === submittableCount;
+    const togglePlanTicked = (id: string) =>
+      setLpSelectedPlanIds((prev) =>
+        prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id],
+      );
+
+    return (
+      <div className="flex-1 flex flex-col bg-[#F0FDF4] overflow-hidden">
+        <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20">
+          <button
+            onClick={() => {
+              clearWorkspace();
+              setLpBoardOpen(false);
+              setCurrentView(previousView || "educator-suite");
+            }}
+            className="flex items-center gap-2 text-[#064E3B]/60 font-bold hover:text-[#064E3B] transition-colors"
+          >
+            <Home size={18} />{" "}
+            {previousView === "admin"
+              ? "Admin Portal"
+              : previousView === "home"
+                ? "Home"
+                : "Suite"}
+          </button>
+          <div className="flex items-center gap-2">
+            <LayoutGrid className="text-[#FACC15]" size={22} />
+            <h2 className="text-xl font-black text-[#064E3B]">My Lesson Plans</h2>
+          </div>
+          <div className="flex items-center justify-end gap-2 min-w-[150px]">
+            {content?.lessonPlan && (
+              <button
+                onClick={() => setLpBoardOpen(false)}
+                title="Go back to the plan you were editing"
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all active:scale-95 bg-white text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] shadow-sm"
+              >
+                <Maximize2 size={16} /> Current Plan
+              </button>
+            )}
+            <button
+              onClick={() =>
+                submitPlansToAdmin(
+                  plans.filter((p: any) => lpSelectedPlanIds.includes(p.id)),
+                )
+              }
+              disabled={selectedCount === 0}
+              title={
+                selectedCount === 0
+                  ? "Tick the lesson plans you want to submit"
+                  : `Submit the ${selectedCount} ticked lesson plan(s) to the Admin`
+              }
+              className="relative inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all active:scale-95 bg-[#FACC15] text-[#064E3B] hover:bg-yellow-300 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <CheckCircle size={16} /> Submit Ticked
+              {selectedCount > 0 && (
+                <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#064E3B] text-white text-[10px] font-black">
+                  {selectedCount}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => submitAllToAdmin()}
+              title="Submit every saved lesson plan to the Admin at once"
+              className="relative inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all active:scale-95 bg-[#064E3B] text-white hover:bg-[#0B6B4F] shadow-sm"
+            >
+              <CheckCircle size={16} /> Submit All
+              {submittableCount > 0 && (
+                <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#FACC15] text-[#064E3B] text-[10px] font-black">
+                  {submittableCount}
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-10">
+          <div className="max-w-[1500px] mx-auto space-y-8">
+            <div className="flex items-end justify-between gap-6 flex-wrap">
+              <div className="space-y-1">
+                <h3 className="text-2xl font-black text-[#064E3B]">
+                  {plans.length} plan{plans.length === 1 ? "" : "s"} in progress
+                </h3>
+                <p className="text-sm font-bold text-[#064E3B]/50 max-w-2xl">
+                  Teaching a few subjects across a few year groups? Keep them all
+                  here. Click a card to open it full size, edit, then minimise and
+                  open the next one — Submit All sends every card together.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {submittableCount > 0 && (
+                  <button
+                    onClick={() =>
+                      setLpSelectedPlanIds(
+                        allTicked ? [] : submittable.map((p: any) => p.id),
+                      )
+                    }
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all active:scale-95 bg-white text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] shadow-sm"
+                  >
+                    {allTicked ? <Square size={16} /> : <Check size={16} />}
+                    {allTicked ? "Untick All" : "Tick All"}
+                  </button>
+                )}
+                <button
+                  onClick={() => setLpQuickAddOpen((v) => !v)}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all active:scale-95 bg-[#FACC15] text-[#064E3B] hover:bg-yellow-300 shadow-sm"
+                >
+                  <Layers size={16} /> Add Plans For Year Groups
+                </button>
+              </div>
+            </div>
+
+            {lpQuickAddOpen && (
+              <div className="bg-white border-2 border-[#D1FAE5] rounded-[2rem] p-6 space-y-5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-black uppercase tracking-wider text-[#064E3B]">
+                    Create one plan per year group
+                  </h4>
+                  <button
+                    onClick={() => setLpQuickAddOpen(false)}
+                    className="p-1 rounded-lg hover:bg-[#F0FDF4] text-[#064E3B]/60"
+                  >
+                    <X size={16} className="stroke-[3]" />
+                  </button>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
+                    Subject
+                  </label>
+                  <select
+                    value={lpQuickSubject}
+                    onChange={(e) => setLpQuickSubject(e.target.value)}
+                    className="w-full max-w-md p-2.5 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
+                  >
+                    {CAMBRIDGE_SUBJECTS.map((g) => (
+                      <optgroup key={g.group} label={g.group}>
+                        {g.subjects.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
+                    Year Groups
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {yearOptions.map((y) => {
+                      const on = lpQuickYears.includes(y);
+                      return (
+                        <button
+                          key={y}
+                          onClick={() =>
+                            setLpQuickYears((prev) =>
+                              prev.includes(y)
+                                ? prev.filter((v) => v !== y)
+                                : [...prev, y],
+                            )
+                          }
+                          className={cn(
+                            "px-3 py-1.5 rounded-xl border-2 text-[11px] font-black uppercase tracking-wider transition-all active:scale-95",
+                            on
+                              ? "bg-[#059669] border-[#059669] text-white shadow-sm"
+                              : "bg-white border-[#D1FAE5] text-[#064E3B] hover:border-[#059669]",
+                          )}
+                        >
+                          {y}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <button
+                  onClick={() =>
+                    createLessonPlanDrafts(lpQuickSubject, lpQuickYears)
+                  }
+                  disabled={lpBoardBusy || lpQuickYears.length === 0}
+                  className="inline-flex items-center gap-2 px-5 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 bg-[#059669] text-white hover:bg-[#047857] shadow-md disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {lpBoardBusy ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Plus size={16} />
+                  )}
+                  Create {lpQuickYears.length || ""} Plan
+                  {lpQuickYears.length === 1 ? "" : "s"}
+                </button>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-5">
+              {plans.map((p: any) => {
+                const lp = p?.content?.lessonPlan;
+                const weeks = lp?.weeklyBreakdown || [];
+                const isOpen = currentProjectId === p.id;
+                const ticked = lpSelectedPlanIds.includes(p.id);
+                return (
+                  <div
+                    key={p.id}
+                    onClick={() => openPlanFromBoard(p)}
+                    title="Click to open this plan full size"
+                    className={cn(
+                      "group relative bg-white border-2 rounded-[1.75rem] p-5 shadow-sm hover:shadow-xl transition-all cursor-pointer flex flex-col gap-3",
+                      ticked
+                        ? "border-[#059669] ring-2 ring-[#059669]/30"
+                        : isOpen
+                          ? "border-[#059669] ring-2 ring-[#059669]/20"
+                          : "border-[#D1FAE5] hover:border-[#059669]",
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          togglePlanTicked(p.id);
+                        }}
+                        title={
+                          ticked
+                            ? "Ticked — this plan will be submitted"
+                            : "Tick to include this plan in the submission"
+                        }
+                        className={cn(
+                          "shrink-0 w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all active:scale-90",
+                          ticked
+                            ? "bg-[#059669] border-[#059669] text-white"
+                            : "bg-white border-[#D1FAE5] text-transparent hover:border-[#059669]",
+                        )}
+                      >
+                        <Check size={14} className="stroke-[4]" />
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-[#059669] truncate">
+                          {lp?.subject ||
+                            p?.content?.subject ||
+                            "No subject yet"}
+                        </p>
+                        <h4 className="text-sm font-black text-[#064E3B] truncate">
+                          {lp?.overallTopic ||
+                            p?.title ||
+                            p?.content?.lessonTitle ||
+                            "Untitled plan"}
+                        </h4>
+                      </div>
+                      <Maximize2
+                        size={14}
+                        className="shrink-0 text-[#064E3B]/25 group-hover:text-[#059669] transition-colors"
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className={chip}>
+                        {lp?.class || p?.content?.gradeLevel || "No year group"}
+                      </span>
+                      <span className={chip}>Term {lp?.term || "-"}</span>
+                      <span className={chip}>
+                        {weeks.length} week{weeks.length === 1 ? "" : "s"}
+                      </span>
+                      {isOpen && (
+                        <span className="px-2 py-0.5 rounded-full bg-[#059669] text-[9px] font-black uppercase tracking-wider text-white">
+                          Open
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Mini sheet — a shrunken preview of the real plan */}
+                    <div className="rounded-xl border-2 border-[#E5E7EB] overflow-hidden bg-[#FDFBF7]">
+                      <div className="bg-[#064E3B] px-3 py-1.5 text-[8px] font-black uppercase tracking-[0.2em] text-white">
+                        Lesson Plan
+                      </div>
+                      {weeks.length > 0 ? (
+                        <table className="w-full text-[9px] text-[#111827]">
+                          <tbody>
+                            {weeks.slice(0, 3).map((w: any, i: number) => (
+                              <tr key={i} className="border-b border-[#E5E7EB]">
+                                <td className="px-2 py-1.5 font-black bg-[#F0FDF4] w-[34%] align-top">
+                                  {w?.unit || `Week ${w?.week ?? i + 1}`}
+                                </td>
+                                <td className="px-2 py-1.5 align-top truncate">
+                                  {w?.topic || "—"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <div className="px-3 py-4 text-[9px] font-bold uppercase tracking-wider text-[#064E3B]/40 text-center">
+                          Empty plan — click to fill it in
+                        </div>
+                      )}
+                      {weeks.length > 3 && (
+                        <div className="px-2 py-1 text-[8px] font-black uppercase tracking-wider text-[#064E3B]/40 bg-white">
+                          + {weeks.length - 3} more week
+                          {weeks.length - 3 === 1 ? "" : "s"}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between pt-1 mt-auto">
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-[#064E3B]/35">
+                        {p?.timestamp
+                          ? new Date(p.timestamp).toLocaleDateString()
+                          : ""}
+                      </span>
+                      <div
+                        className="flex items-center gap-1"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          onClick={() => submitPlanToAdmin(p)}
+                          title="Submit just this plan to the Admin"
+                          className="p-1.5 rounded-lg text-[#064E3B]/50 hover:text-[#064E3B] hover:bg-[#F0FDF4] transition-colors"
+                        >
+                          <CheckCircle size={14} />
+                        </button>
+                        <button
+                          onClick={() => deleteProject(p.id)}
+                          title="Delete this plan"
+                          className="p-1.5 rounded-lg text-red-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              <button
+                onClick={async () => {
+                  if (!isReviewMode && content?.lessonPlan) {
+                    await persistLessonPlanSilently(content, currentProjectId);
+                  }
+                  resetLessonPlan();
+                  setLpBoardOpen(false);
+                }}
+                className="min-h-[240px] rounded-[1.75rem] border-2 border-dashed border-[#D1FAE5] hover:border-[#059669] bg-white/40 hover:bg-white transition-all flex flex-col items-center justify-center gap-2 text-[#064E3B]/50 hover:text-[#064E3B]"
+              >
+                <Plus size={28} />
+                <span className="text-xs font-black uppercase tracking-widest">
+                  New Blank Plan
+                </span>
+              </button>
+            </div>
+
+            {plans.length === 0 && (
+              <p className="text-center text-sm font-bold text-[#064E3B]/40 pt-4">
+                Nothing saved yet — create a blank plan, or add one per year
+                group above.
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderLessonPlanView = () => {
+    if (lpBoardOpen && !isReviewMode) return renderLessonPlanBoard();
     if (!content || !content.lessonPlan) {
       return (
         <div className="flex-1 flex flex-col bg-[#FDFBF7] overflow-hidden">
-          {renderWorkspaceFlowNavigator()}
           <div className="flex-1 flex items-center justify-center bg-[#FDFBF7]">
             <div className="text-center space-y-4">
               <BookOpen size={48} className="mx-auto text-[#064E3B]/20" />
               <p className="text-[#064E3B]/60 font-bold">
                 No lesson plan content available.
               </p>
+              {!isReviewMode && (
+                <button
+                  onClick={() => setLpBoardOpen(true)}
+                  className="inline-flex items-center gap-2 px-5 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 bg-[#059669] text-white hover:bg-[#047857] shadow-md"
+                >
+                  <LayoutGrid size={16} /> Open My Lesson Plans
+                </button>
+              )}
               <button
                 onClick={() => {
                   clearWorkspace();
@@ -29371,551 +32615,845 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             <BookOpen className="text-[#FACC15]" size={24} />
             <h2 className="text-xl font-black text-[#064E3B]">Lesson Design</h2>
           </div>
-          <div className="flex items-center gap-3">
-            {!isReviewMode && (
-              <>
-                <button
-                  onClick={() => setCurrentView("notes")}
-                  className="px-4 py-2 bg-[#F0FDF4] text-[#059669] border-2 border-[#D1FAE5] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#D1FAE5] transition-all flex items-center gap-2"
-                >
-                  <Edit2 size={14} /> Journal & Handouts
-                </button>
-                <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
-                <button
-                  onClick={resetLessonPlan}
-                  className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-white/80 transition-all shadow-sm flex items-center gap-2"
-                >
-                  <Plus size={14} /> New Lesson
-                </button>
-                <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
-              </>
+          <div className="flex items-center justify-end gap-2 min-w-[150px]">
+            {isReviewMode && content?.lessonPlan && (
+              <button
+                onClick={downloadLessonPlanExcel}
+                title="Download as Excel"
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all active:scale-95 bg-white text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] shadow-sm"
+              >
+                <FileSpreadsheet size={16} /> Excel
+              </button>
             )}
-            {content?.lessonPlan && (
-              <div className="flex items-center gap-2">
-                {!isReviewMode && (
+            {/* All Plans now lives in the left pane's Lesson group; only the
+                pane toggle stays here so the header keeps its breathing room. */}
+            {!isReviewMode && !lpSettingsOpen && (
+              <button
+                onClick={() => setLpSettingsOpen(true)}
+                title="Show the actions & settings panel"
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all active:scale-95 bg-white text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] shadow-sm"
+              >
+                <PanelLeft size={16} /> Panel
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="flex-1 flex overflow-hidden">
+          {!isReviewMode && !lpSettingsOpen && (
+            <div className="w-12 shrink-0 bg-white border-r-2 border-[#D1FAE5] flex flex-col items-center gap-2 py-3">
+              <button
+                onClick={() => setLpSettingsOpen(true)}
+                title="Show actions & lesson settings"
+                className="p-2 rounded-xl text-[#064E3B] hover:bg-[#F0FDF4] transition-colors"
+              >
+                <ChevronRight size={18} />
+              </button>
+              <div className="h-px w-6 bg-[#D1FAE5]" />
+              <button
+                onClick={openLessonPlanBoard}
+                title="Minimise this plan and see all your lesson plans"
+                className="p-2 rounded-xl text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] transition-colors"
+              >
+                <LayoutGrid size={16} />
+              </button>
+              {content?.lessonPlan && (
+                <>
+                  <div className="h-px w-6 bg-[#D1FAE5]" />
                   <button
                     onClick={sendLessonPlanEmail}
-                    className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
+                    disabled={isSharingLessonPlan}
+                    title="Publish this plan and email a link to it"
+                    className="p-2 rounded-xl text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] transition-colors disabled:opacity-50"
                   >
-                    <Plus size={14} /> Email
+                    {isSharingLessonPlan ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <Mail size={16} />
+                    )}
                   </button>
-                )}
-                <button
-                  onClick={downloadLessonPlanExcel}
-                  className="px-4 py-2 bg-[#1D6F42] text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#155332] transition-all shadow-sm flex items-center gap-2"
+                  <button
+                    onClick={downloadLessonPlanExcel}
+                    title="Download as Excel"
+                    className="p-2 rounded-xl text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] transition-colors"
+                  >
+                    <FileSpreadsheet size={16} />
+                  </button>
+                  <button
+                    onClick={() =>
+                      content &&
+                      saveProject(
+                        content,
+                        content.lessonTitle || lessonInput,
+                        workspaceMode,
+                      )
+                    }
+                    title="Save to your projects"
+                    className="p-2 rounded-xl text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] transition-colors"
+                  >
+                    <Save size={16} />
+                  </button>
+                  <div className="h-px w-6 bg-[#D1FAE5]" />
+                  <button
+                    onClick={() => submitToAdmin()}
+                    title={`Submit this plan for Week ${selectedWeekForSubmission}`}
+                    className="p-2 rounded-xl bg-[#FACC15] text-[#064E3B] hover:bg-yellow-300 transition-colors shadow-sm"
+                  >
+                    <CheckCircle size={16} />
+                  </button>
+                  <button
+                    onClick={() => submitAllToAdmin()}
+                    title="Submit every lesson plan you've saved (all year groups) to the Admin at once"
+                    className="relative p-2 rounded-xl bg-[#064E3B] text-white hover:bg-[#0B6B4F] transition-colors shadow-sm"
+                  >
+                    <CheckCircle size={16} />
+                    {userProjects.filter(
+                      (p: any) => p?.category === "lesson-plan" && p?.content,
+                    ).length > 0 && (
+                      <span className="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-[#FACC15] text-[#064E3B] text-[9px] font-black">
+                        {
+                          userProjects.filter(
+                            (p: any) =>
+                              p?.category === "lesson-plan" && p?.content,
+                          ).length
+                        }
+                      </span>
+                    )}
+                  </button>
+                </>
+              )}
+              <button
+                onClick={() => setLpSettingsOpen(true)}
+                title="Show actions & lesson settings"
+                className="flex-1 flex items-start justify-center pt-3 hover:text-[#064E3B] transition-colors"
+              >
+                <span
+                  className="text-[10px] font-black uppercase tracking-widest text-[#064E3B]/60"
+                  style={{ writingMode: "vertical-rl" }}
                 >
-                  <FileSpreadsheet size={14} /> Excel
+                  Lesson Workspace
+                </span>
+              </button>
+            </div>
+          )}
+          {!isReviewMode && lpSettingsOpen && (
+            <aside className="w-[500px] shrink-0 bg-white border-r-2 border-[#D1FAE5] flex flex-col overflow-hidden">
+              <div className="shrink-0 flex items-center justify-between px-8 pt-6 pb-4 border-b-2 border-[#D1FAE5]">
+                <div className="flex items-center gap-2">
+                  <BookOpen size={16} className="text-[#FACC15]" />
+                  <h3 className="text-sm font-black uppercase text-[#064E3B] tracking-wider">
+                    Lesson Workspace
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setLpSettingsOpen(false)}
+                  title="Hide panel"
+                  className="p-1 rounded-lg hover:bg-[#F0FDF4] text-[#064E3B]/60 hover:text-[#064E3B] transition-colors"
+                >
+                  <ChevronLeft size={18} />
                 </button>
-                {!isReviewMode && (
+              </div>
+
+              {/* Everything below the title scrolls together, so the actions
+                  don't steal height from the settings underneath them. */}
+              <div className="flex-1 overflow-y-auto custom-scrollbar">
+              <div className="px-5 py-5 space-y-5 border-b-2 border-[#D1FAE5] bg-[#F0FDF4]/40">
+                <div className="space-y-2">
+                  <p className="text-[10px] font-black uppercase text-[#064E3B]/40 tracking-widest">
+                    Lesson
+                  </p>
+                  {/* All Plans lives in the Workflow list under Lesson Design. */}
+                  <button
+                    onClick={resetLessonPlan}
+                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-black text-[11px] uppercase tracking-wider transition-all active:scale-95 bg-white text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] shadow-sm"
+                  >
+                    <Plus size={16} /> New Lesson
+                  </button>
+                </div>
+
+                {content?.lessonPlan && (
                   <>
-                    <button
-                      onClick={() =>
-                        content &&
-                        saveProject(
-                          content,
-                          content.lessonTitle || lessonInput,
-                          workspaceMode,
-                        )
-                      }
-                      className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
-                    >
-                      <PlusCircle size={14} /> Save
-                    </button>
-                    <div className="flex items-center gap-4">
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-black uppercase text-[#064E3B]/40 tracking-widest">
+                        Share &amp; Save
+                      </p>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          onClick={sendLessonPlanEmail}
+                          disabled={isSharingLessonPlan}
+                          title="Publish this plan and email a link to it"
+                          className="inline-flex flex-col items-center justify-center gap-1 px-2 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all active:scale-95 bg-white text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] shadow-sm disabled:opacity-50"
+                        >
+                          {isSharingLessonPlan ? (
+                            <Loader2 size={16} className="animate-spin" />
+                          ) : (
+                            <Mail size={16} />
+                          )}{" "}
+                          Email
+                        </button>
+                        <button
+                          onClick={downloadLessonPlanExcel}
+                          title="Download as Excel"
+                          className="inline-flex flex-col items-center justify-center gap-1 px-2 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all active:scale-95 bg-white text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] shadow-sm"
+                        >
+                          <FileSpreadsheet size={16} /> Excel
+                        </button>
+                        <button
+                          onClick={() =>
+                            content &&
+                            saveProject(
+                              content,
+                              content.lessonTitle || lessonInput,
+                              workspaceMode,
+                            )
+                          }
+                          title="Save to your projects"
+                          className="inline-flex flex-col items-center justify-center gap-1 px-2 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all active:scale-95 bg-white text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] shadow-sm"
+                        >
+                          <Save size={16} /> Save
+                        </button>
+                      </div>
+                      {lessonPlanShareUrl && (
+                        <div className="space-y-1 pt-1">
+                          <p className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/40">
+                            Shareable link — copied
+                          </p>
+                          <div className="flex items-center gap-1.5">
+                            <a
+                              href={lessonPlanShareUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex-1 p-2 bg-white border-2 border-[#D1FAE5] rounded-xl text-[10px] font-bold text-[#059669] truncate hover:border-[#059669]"
+                            >
+                              {lessonPlanShareUrl}
+                            </a>
+                            <button
+                              onClick={() =>
+                                copySuggestion("lp-share", lessonPlanShareUrl)
+                              }
+                              title="Copy link"
+                              className="p-2 rounded-xl border-2 border-[#D1FAE5] text-[#064E3B] hover:border-[#059669] hover:bg-[#F0FDF4] transition-colors shrink-0"
+                            >
+                              {copiedSug === "lp-share" ? (
+                                <Check size={14} />
+                              ) : (
+                                <Copy size={14} />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-black uppercase text-[#064E3B]/40 tracking-widest">
+                        Submit to Admin
+                      </p>
                       <WeekSelector
                         value={selectedWeekForSubmission}
                         onChange={handleWeekSelectionChange}
+                        className="w-full justify-between bg-white py-2"
+                        selectClassName="text-right"
                       />
+                      {revisionTargetId && (
+                        <p className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                          Fixing a plan that was sent back — Submit returns it to
+                          your Head of Department.
+                        </p>
+                      )}
                       <button
                         onClick={() => submitToAdmin()}
-                        className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
+                        title={
+                          revisionTargetId
+                            ? "Resubmit this corrected plan to your Head of Department"
+                            : "Submit this plan for the selected week"
+                        }
+                        className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all active:scale-95 bg-[#FACC15] text-[#064E3B] hover:bg-yellow-300 shadow-sm"
                       >
-                        <CheckCircle size={14} /> Submit
+                        <CheckCircle size={16} />{" "}
+                        {revisionTargetId ? "Resubmit Plan" : "Submit This Plan"}
+                      </button>
+                      <button
+                        onClick={() => submitAllToAdmin()}
+                        title="Submit every lesson plan you've saved (all year groups) to the Admin at once"
+                        className="w-full relative inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all active:scale-95 bg-[#064E3B] text-white hover:bg-[#0B6B4F] shadow-sm"
+                      >
+                        <CheckCircle size={16} /> Submit All
+                        {userProjects.filter(
+                          (p: any) =>
+                            p?.category === "lesson-plan" && p?.content,
+                        ).length > 0 && (
+                          <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#FACC15] text-[#064E3B] text-[10px] font-black">
+                            {
+                              userProjects.filter(
+                                (p: any) =>
+                                  p?.category === "lesson-plan" && p?.content,
+                              ).length
+                            }
+                          </span>
+                        )}
                       </button>
                     </div>
                   </>
                 )}
               </div>
-            )}
-          </div>
-        </div>
-        {renderWorkspaceFlowNavigator()}
-        <div className="flex-1 flex overflow-hidden">
-          {!isReviewMode && (
-            <aside className="w-[450px] bg-white border-r-2 border-[#D1FAE5] p-8 space-y-8 overflow-y-auto custom-scrollbar">
-              <div className="space-y-6">
-                <h3 className="text-sm font-black uppercase text-[#064E3B]/60 tracking-wider border-b-2 border-[#D1FAE5] pb-2">
-                  Lesson Settings
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                      Year Group
-                    </label>
-                    <select
-                      value={yearGroup}
-                      onChange={(e) => {
-                        setYearGroup(e.target.value);
-                        if (content?.lessonPlan)
-                          updateLessonPlanMetadata(
-                            "gradeLevel" as any,
-                            e.target.value,
-                          );
-                      }}
-                      className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
-                    >
-                      {[
-                        "Year 1",
-                        "Year 2",
-                        "Year 3",
-                        "Year 4",
-                        "Year 5",
-                        "Year 6",
-                        "Year 7",
-                        "Year 8",
-                        "Year 9",
-                        "Year 10",
-                        "Year 11",
-                      ].map((y) => (
-                        <option key={y} value={y}>
-                          {y}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                      Term
-                    </label>
-                    <input
-                      type="text"
-                      value={content?.lessonPlan?.term || lpTerm}
-                      onChange={(e) => {
-                        setLpTerm(e.target.value);
-                        if (content?.lessonPlan)
-                          updateLessonPlanMetadata("term", e.target.value);
-                      }}
-                      className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                      Subject
-                    </label>
-                    <select
-                      value={content?.lessonPlan?.subject || lpSubject}
-                      onChange={(e) => {
-                        setLpSubject(e.target.value);
-                        if (content?.lessonPlan)
-                          updateLessonPlanMetadata("subject", e.target.value);
-                      }}
-                      className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
-                    >
-                      <option value="">Select Cambridge Subject...</option>
-                      {CAMBRIDGE_SUBJECTS.map((g) => (
-                        <optgroup key={g.group} label={g.group}>
-                          {g.subjects.map((s) => (
-                            <option key={s} value={s}>
-                              {s}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                      Duration
-                    </label>
-                    <input
-                      type="text"
-                      value={content?.lessonPlan?.duration || lpDuration}
-                      onChange={(e) => {
-                        setLpDuration(e.target.value);
-                        if (content?.lessonPlan)
-                          updateLessonPlanMetadata("duration", e.target.value);
-                      }}
-                      className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                      Date
-                    </label>
-                    <input
-                      type="date"
-                      value={content?.lessonPlan?.date || lpDate}
-                      onChange={(e) => {
-                        setLpDate(e.target.value);
-                        if (content?.lessonPlan)
-                          updateLessonPlanMetadata("date", e.target.value);
-                      }}
-                      className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                      Academic Year
-                    </label>
-                    <input
-                      type="text"
-                      value={
-                        content?.lessonPlan?.academicYear || lpAcademicYear
-                      }
-                      onChange={(e) => {
-                        setLpAcademicYear(e.target.value);
-                        if (content?.lessonPlan)
-                          updateLessonPlanMetadata(
-                            "academicYear",
-                            e.target.value,
-                          );
-                      }}
-                      className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                      Class
-                    </label>
-                    <input
-                      type="text"
-                      value={content?.lessonPlan?.class || lpClass}
-                      onChange={(e) => {
-                        setLpClass(e.target.value);
-                        if (content?.lessonPlan)
-                          updateLessonPlanMetadata("class", e.target.value);
-                      }}
-                      className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold"
-                    />
-                  </div>
-                </div>
 
-                <div className="grid grid-cols-2 gap-4 border-t-2 border-dashed border-[#D1FAE5] pt-4">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                      Prepared By
-                    </label>
-                    <input
-                      type="text"
-                      list="teachers-datalist-sidebar"
-                      value={content?.lessonPlan?.preparedBy || lpPreparedBy}
-                      onChange={(e) => {
-                        setLpPreparedBy(e.target.value);
-                        if (content?.lessonPlan)
-                          updateLessonPlanMetadata(
-                            "preparedBy",
-                            e.target.value,
-                          );
-                      }}
-                      className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold"
-                    />
-                    <datalist id="teachers-datalist-sidebar">
-                      {teachers.map((t) => (
-                        <option key={t.id} value={t.name} />
-                      ))}
-                    </datalist>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                      Checked By
-                    </label>
-                    <input
-                      type="text"
-                      value={content?.lessonPlan?.checkedBy || lpCheckedBy}
-                      onChange={(e) => {
-                        setLpCheckedBy(e.target.value);
-                        if (content?.lessonPlan)
-                          updateLessonPlanMetadata("checkedBy", e.target.value);
-                      }}
-                      className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-black uppercase text-[#064E3B]/40 tracking-widest">
-                      Targeted Week Generator
-                    </label>
-                    <button
-                      onClick={() => {
-                        if (sessionWeeks < 12) {
-                          setSessionWeeks((prev) => prev + 1);
-                        }
-                      }}
-                      className="p-1 px-3 bg-[#D1FAE5] text-[#059669] rounded-lg hover:bg-[#A7F3D0] transition-all flex items-center gap-2"
-                    >
-                      <Plus size={14} />
-                      <span className="text-xs font-black uppercase">
-                        Add Week
-                      </span>
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
-                    {Array.from({ length: sessionWeeks }).map((_, i) => (
-                      <div
-                        key={i}
-                        className="p-5 bg-white border-2 border-[#D1FAE5] rounded-[2rem] shadow-sm space-y-4 relative group"
+              <div className="p-5 space-y-3">
+                <div className="space-y-3">
+                  <LpSection
+                    title="Plan Details"
+                    icon={FileText}
+                    hint={`${content?.lessonPlan?.subject || lpSubject || "No subject"} • ${yearGroup}`}
+                    open={lpOpenSections.details}
+                    onToggle={() => toggleLpSection("details")}
+                  >
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-black uppercase text-[#064E3B]/50">
+                        Year Group
+                      </label>
+                      <select
+                        value={yearGroup}
+                        onChange={(e) => {
+                          setYearGroup(e.target.value);
+                          if (content?.lessonPlan)
+                            updateLessonPlanMetadata(
+                              "gradeLevel" as any,
+                              e.target.value,
+                            );
+                        }}
+                        className="w-full p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold outline-none focus:border-[#059669]"
                       >
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1">
-                            <input
-                              type="text"
-                              value={lpWeekLabels[i] || ""}
-                              onChange={(e) => {
-                                const newLabels = [...lpWeekLabels];
-                                newLabels[i] = e.target.value;
-                                setLpWeekLabels(newLabels);
-                              }}
-                              className="bg-transparent border-none font-black text-sm text-[#064E3B] uppercase outline-none w-full focus:ring-0 placeholder-[#064E3B]/20"
-                              placeholder={`Week ${i + 1}`}
-                            />
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {sessionWeeks > 1 && (
-                              <button
-                                onClick={() => {
-                                  setSessionWeeks((prev) => prev - 1);
-                                }}
-                                className="p-1 text-red-300 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            )}
-                          </div>
-                        </div>
+                        {[
+                          "Year 1",
+                          "Year 2",
+                          "Year 3",
+                          "Year 4",
+                          "Year 5",
+                          "Year 6",
+                          "Year 7",
+                          "Year 8",
+                          "Year 9",
+                          "Year 10",
+                          "Year 11",
+                        ].map((y) => (
+                          <option key={y} value={y}>
+                            {y}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-black uppercase text-[#064E3B]/50">
+                        Term
+                      </label>
+                      <input
+                        type="text"
+                        value={content?.lessonPlan?.term || lpTerm}
+                        onChange={(e) => {
+                          setLpTerm(e.target.value);
+                          if (content?.lessonPlan)
+                            updateLessonPlanMetadata("term", e.target.value);
+                        }}
+                        className="w-full p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold outline-none focus:border-[#059669]"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-black uppercase text-[#064E3B]/50">
+                        Subject
+                      </label>
+                      <select
+                        value={content?.lessonPlan?.subject || lpSubject}
+                        onChange={(e) => {
+                          setLpSubject(e.target.value);
+                          if (content?.lessonPlan)
+                            updateLessonPlanMetadata("subject", e.target.value);
+                        }}
+                        className="w-full p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold outline-none focus:border-[#059669]"
+                      >
+                        <option value="">Select Cambridge Subject...</option>
+                        {CAMBRIDGE_SUBJECTS.map((g) => (
+                          <optgroup key={g.group} label={g.group}>
+                            {g.subjects.map((s) => (
+                              <option key={s} value={s}>
+                                {s}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-black uppercase text-[#064E3B]/50">
+                        Duration
+                      </label>
+                      <input
+                        type="text"
+                        value={content?.lessonPlan?.duration || lpDuration}
+                        onChange={(e) => {
+                          setLpDuration(e.target.value);
+                          if (content?.lessonPlan)
+                            updateLessonPlanMetadata(
+                              "duration",
+                              e.target.value,
+                            );
+                        }}
+                        className="w-full p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold outline-none focus:border-[#059669]"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-black uppercase text-[#064E3B]/50">
+                        Date
+                      </label>
+                      <input
+                        type="date"
+                        value={content?.lessonPlan?.date || lpDate}
+                        onChange={(e) => {
+                          setLpDate(e.target.value);
+                          if (content?.lessonPlan)
+                            updateLessonPlanMetadata("date", e.target.value);
+                        }}
+                        className="w-full p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold outline-none focus:border-[#059669]"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-black uppercase text-[#064E3B]/50">
+                        Academic Year
+                      </label>
+                      <input
+                        type="text"
+                        value={
+                          content?.lessonPlan?.academicYear || lpAcademicYear
+                        }
+                        onChange={(e) => {
+                          setLpAcademicYear(e.target.value);
+                          if (content?.lessonPlan)
+                            updateLessonPlanMetadata(
+                              "academicYear",
+                              e.target.value,
+                            );
+                        }}
+                        className="w-full p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold outline-none focus:border-[#059669]"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-black uppercase text-[#064E3B]/50">
+                        Class
+                      </label>
+                      <input
+                        type="text"
+                        value={content?.lessonPlan?.class || lpClass}
+                        onChange={(e) => {
+                          setLpClass(e.target.value);
+                          if (content?.lessonPlan)
+                            updateLessonPlanMetadata("class", e.target.value);
+                        }}
+                        className="w-full p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold outline-none focus:border-[#059669]"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-black uppercase text-[#064E3B]/50">
+                        Prepared By
+                      </label>
+                      <input
+                        type="text"
+                        list="teachers-datalist-sidebar"
+                        value={content?.lessonPlan?.preparedBy || lpPreparedBy}
+                        onChange={(e) => {
+                          setLpPreparedBy(e.target.value);
+                          if (content?.lessonPlan)
+                            updateLessonPlanMetadata(
+                              "preparedBy",
+                              e.target.value,
+                            );
+                        }}
+                        className="w-full p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold outline-none focus:border-[#059669]"
+                      />
+                      <datalist id="teachers-datalist-sidebar">
+                        {teachers.map((t) => (
+                          <option key={t.id} value={t.name} />
+                        ))}
+                      </datalist>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-black uppercase text-[#064E3B]/50">
+                        Checked By
+                      </label>
+                      <input
+                        type="text"
+                        value={content?.lessonPlan?.checkedBy || lpCheckedBy}
+                        onChange={(e) => {
+                          setLpCheckedBy(e.target.value);
+                          if (content?.lessonPlan)
+                            updateLessonPlanMetadata(
+                              "checkedBy",
+                              e.target.value,
+                            );
+                        }}
+                        className="w-full p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold outline-none focus:border-[#059669]"
+                      />
+                    </div>
+                  </div>
 
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between">
-                              <label className="text-[9px] font-black uppercase text-[#064E3B]/40">
-                                Unit
-                              </label>
-                              <button
-                                onClick={() => handleSuggestInput("unit", i)}
-                                className="text-[8px] font-bold text-[#059669] hover:underline flex items-center gap-1"
-                                disabled={isSuggesting !== null}
-                              >
-                                {isSuggesting === `unit-${i}` ? (
-                                  <Loader2 size={10} className="animate-spin" />
-                                ) : (
-                                  <Sparkles size={10} />
-                                )}{" "}
-                                Suggest
-                              </button>
-                            </div>
-                            <input
-                              type="text"
-                              value={lpUnit[i] || ""}
-                              onChange={(e) => {
-                                const next = [...lpUnit];
-                                next[i] = e.target.value;
-                                setLpUnit(next);
-                              }}
-                              placeholder="e.g. Unit 4"
-                              className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <div className="flex items-center justify-between">
-                              <label className="text-[9px] font-black uppercase text-[#064E3B]/40">
-                                Topic
-                              </label>
-                              <button
-                                onClick={() => handleSuggestInput("topic", i)}
-                                className="text-[8px] font-bold text-[#059669] hover:underline flex items-center gap-1"
-                                disabled={isSuggesting !== null}
-                              >
-                                {isSuggesting === `topic-${i}` ? (
-                                  <Loader2 size={10} className="animate-spin" />
-                                ) : (
-                                  <Sparkles size={10} />
-                                )}{" "}
-                                Suggest
-                              </button>
-                            </div>
-                            <input
-                              type="text"
-                              value={lpWeeklyTopics[i] || ""}
-                              onChange={(e) => {
-                                const next = [...lpWeeklyTopics];
-                                next[i] = e.target.value;
-                                setLpWeeklyTopics(next);
-                              }}
-                              placeholder="e.g. Electricity"
-                              className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
-                            />
-                          </div>
-                        </div>
+                  </LpSection>
 
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between">
-                            <label className="text-[9px] font-black uppercase text-[#064E3B]/40">
-                              Activities & Focus
-                            </label>
-                            <button
-                              onClick={() => handleSuggestInput("activity", i)}
-                              className="text-[8px] font-bold text-[#059669] hover:underline flex items-center gap-1"
-                              disabled={isSuggesting !== null}
-                            >
-                              {isSuggesting === `activity-${i}` ? (
-                                <Loader2 size={10} className="animate-spin" />
-                              ) : (
-                                <Sparkles size={10} />
-                              )}{" "}
-                              Suggest
-                            </button>
-                          </div>
-                          <textarea
-                            value={lpActivities[i] || ""}
-                            onChange={(e) => {
-                              const next = [...lpActivities];
-                              next[i] = e.target.value;
-                              setLpActivities(next);
-                            }}
-                            placeholder="Describe activities (e.g., 'Hands-on experiment with circuits')..."
-                            className="w-full h-20 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold resize-none outline-none focus:border-[#059669]"
-                          />
-                        </div>
-
+                  <LpSection
+                    title="Generate"
+                    icon={Wand2}
+                    hint={
+                      lpGenerateMode === "term"
+                        ? `Whole term — ${termWeeks} weeks`
+                        : "Week by week"
+                    }
+                    open={lpOpenSections.generate}
+                    onToggle={() => toggleLpSection("generate")}
+                  >
+                    {/* One generator at a time instead of two stacked ones */}
+                    <div className="grid grid-cols-2 gap-2 p-1 bg-[#F0FDF4] rounded-xl border-2 border-[#D1FAE5]">
+                      {(
+                        [
+                          ["term", "Whole Term"],
+                          ["week", "Week By Week"],
+                        ] as ["term" | "week", string][]
+                      ).map(([mode, label]) => (
                         <button
-                          onClick={() => generateSpecificWeek(i)}
-                          disabled={
-                            isGeneratingWeek?.index === i &&
-                            isGeneratingWeek?.type === "plan"
-                          }
-                          className="w-full py-2.5 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-yellow-400 transition-all shadow-md flex items-center justify-center gap-2"
-                        >
-                          {isGeneratingWeek?.index === i &&
-                          isGeneratingWeek?.type === "plan" ? (
-                            <Loader2 className="animate-spin" size={14} />
-                          ) : (
-                            <Wand2 size={14} />
+                          key={mode}
+                          onClick={() => setLpGenerateMode(mode)}
+                          className={cn(
+                            "py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                            lpGenerateMode === mode
+                              ? "bg-[#064E3B] text-white shadow-sm"
+                              : "text-[#064E3B]/50 hover:text-[#064E3B]",
                           )}
-                          Auto-Fill {lpWeekLabels[i] || `Week ${i + 1}`}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <label className="text-xs font-black uppercase text-[#064E3B]/40 tracking-widest">
-                    Lesson Focus / Methodology
-                  </label>
-                  <textarea
-                    value={lpDescription}
-                    onChange={(e) => setLpDescription(e.target.value)}
-                    placeholder="e.g. Focus on active learning, Cambridge standards, and textbook integration."
-                    className="w-full h-24 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-medium resize-none focus:outline-none focus:border-[#059669]"
-                  />
-                </div>
-
-                <div className="space-y-4 pt-4 border-t-2 border-[#D1FAE5]">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-black uppercase text-[#064E3B]/40 tracking-widest">
-                      Full Term Program Generator
-                    </label>
-                    <div className="h-px flex-1 bg-[#D1FAE5] ml-4" />
-                  </div>
-                  <div className="p-4 bg-white border-2 border-[#D1FAE5] rounded-[2rem] shadow-sm space-y-4">
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                        Topic, Subtopic & Unit
-                      </label>
-                      <textarea
-                        value={sessionTopic}
-                        onChange={(e) => setSessionTopic(e.target.value)}
-                        placeholder="Enter your topic, subtopics and units for the whole term..."
-                        className="w-full h-24 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold resize-none outline-none focus:border-[#059669]"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                        Instructions (optional)
-                      </label>
-                      <textarea
-                        value={sessionInstructions}
-                        onChange={(e) =>
-                          setSessionInstructions(e.target.value)
-                        }
-                        placeholder="Tell the AI exactly what you want before it generates — e.g. emphasise hands-on experiments, include weekly assessments, align to a specific textbook, pacing notes..."
-                        className="w-full h-24 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold resize-none outline-none focus:border-[#059669]"
-                      />
-                    </div>
-                    <div className="grid grid-cols-1 gap-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between">
-                          <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                            Program Duration
-                          </label>
-                          <button
-                            onClick={() =>
-                              setTermWeeks((prev) => Math.min(12, prev + 1))
-                            }
-                            className="text-[9px] font-bold text-[#059669] bg-[#D1FAE5] px-2 py-0.5 rounded-md hover:bg-[#A7F3D0] transition-all flex items-center gap-1"
-                          >
-                            <Plus size={10} /> Add Week
-                          </button>
-                        </div>
-                        <select
-                          value={termWeeks}
-                          onChange={(e) => setTermWeeks(Number(e.target.value))}
-                          className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none cursor-pointer hover:border-[#059669] transition-all"
                         >
-                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((w) => (
-                            <option key={w} value={w}>
-                              {w} Weeks Program
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                  {lpGenerateMode === "week" && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-black uppercase text-[#064E3B]/40 tracking-widest">
+                        One Week At A Time
+                      </label>
                       <button
-                        onClick={generateSP}
-                        disabled={isGenerating}
-                        className="py-3 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-400 transition-all shadow-md flex items-center justify-center gap-2"
+                        onClick={() => {
+                          if (sessionWeeks < 12) {
+                            setSessionWeeks((prev) => prev + 1);
+                          }
+                        }}
+                        className="p-1 px-3 bg-[#D1FAE5] text-[#059669] rounded-lg hover:bg-[#A7F3D0] transition-all flex items-center gap-2"
                       >
-                        {isGenerating ? (
-                          <Loader2 className="animate-spin" size={16} />
-                        ) : (
-                          <Wand2 size={16} />
-                        )}{" "}
-                        Generate {termWeeks}-Week Program
+                        <Plus size={14} />
+                        <span className="text-xs font-black uppercase">
+                          Add Week
+                        </span>
                       </button>
                     </div>
-                  </div>
-                </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                    Scheme of Work / Framework (optional)
-                  </label>
-                  {!lpFileContext ? (
-                    <div
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                      }}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        const file = e.dataTransfer.files?.[0];
-                        if (file) {
-                          setLpFileContext({
-                            name: file.name,
-                            mimeType: file.type || "application/octet-stream",
-                            data: file,
-                          });
-                        }
-                      }}
-                      className="border-2 border-dashed border-[#D1FAE5] hover:border-[#059669] transition-all rounded-2xl p-4 text-center cursor-pointer bg-[#FDFBF7] flex flex-col items-center justify-center gap-1.5 relative group"
-                    >
-                      <input
-                        type="file"
-                        accept=".pdf,.txt,.docx,.doc,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.pptx"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
+                    <div className="grid grid-cols-1 gap-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+                      {Array.from({ length: sessionWeeks }).map((_, i) => (
+                        <div
+                          key={i}
+                          className="p-5 bg-white border-2 border-[#D1FAE5] rounded-[2rem] shadow-sm space-y-4 relative group"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <input
+                                type="text"
+                                value={lpWeekLabels[i] || ""}
+                                onChange={(e) => {
+                                  const newLabels = [...lpWeekLabels];
+                                  newLabels[i] = e.target.value;
+                                  setLpWeekLabels(newLabels);
+                                }}
+                                className="bg-transparent border-none font-black text-sm text-[#064E3B] uppercase outline-none w-full focus:ring-0 placeholder-[#064E3B]/20"
+                                placeholder={`Week ${i + 1}`}
+                              />
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {sessionWeeks > 1 && (
+                                <button
+                                  onClick={() => {
+                                    setSessionWeeks((prev) => prev - 1);
+                                  }}
+                                  className="p-1 text-red-300 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[9px] font-black uppercase text-[#064E3B]/40">
+                                  Unit
+                                </label>
+                                <button
+                                  onClick={() => handleSuggestInput("unit", i)}
+                                  className="text-[8px] font-bold text-[#059669] hover:underline flex items-center gap-1"
+                                  disabled={isSuggesting !== null}
+                                >
+                                  {isSuggesting === `unit-${i}` ? (
+                                    <Loader2
+                                      size={10}
+                                      className="animate-spin"
+                                    />
+                                  ) : (
+                                    <Sparkles size={10} />
+                                  )}{" "}
+                                  Suggest
+                                </button>
+                              </div>
+                              <input
+                                type="text"
+                                value={lpUnit[i] || ""}
+                                onChange={(e) => {
+                                  const next = [...lpUnit];
+                                  next[i] = e.target.value;
+                                  setLpUnit(next);
+                                }}
+                                placeholder="e.g. Unit 4"
+                                className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[9px] font-black uppercase text-[#064E3B]/40">
+                                  Topic
+                                </label>
+                                <button
+                                  onClick={() => handleSuggestInput("topic", i)}
+                                  className="text-[8px] font-bold text-[#059669] hover:underline flex items-center gap-1"
+                                  disabled={isSuggesting !== null}
+                                >
+                                  {isSuggesting === `topic-${i}` ? (
+                                    <Loader2
+                                      size={10}
+                                      className="animate-spin"
+                                    />
+                                  ) : (
+                                    <Sparkles size={10} />
+                                  )}{" "}
+                                  Suggest
+                                </button>
+                              </div>
+                              <input
+                                type="text"
+                                value={lpWeeklyTopics[i] || ""}
+                                onChange={(e) => {
+                                  const next = [...lpWeeklyTopics];
+                                  next[i] = e.target.value;
+                                  setLpWeeklyTopics(next);
+                                }}
+                                placeholder="e.g. Electricity"
+                                className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[9px] font-black uppercase text-[#064E3B]/40">
+                                Subtopic
+                              </label>
+                              <button
+                                onClick={() =>
+                                  handleSuggestInput("subtopic", i)
+                                }
+                                className="text-[8px] font-bold text-[#059669] hover:underline flex items-center gap-1"
+                                disabled={isSuggesting !== null}
+                              >
+                                {isSuggesting === `subtopic-${i}` ? (
+                                  <Loader2 size={10} className="animate-spin" />
+                                ) : (
+                                  <Sparkles size={10} />
+                                )}{" "}
+                                Suggest
+                              </button>
+                            </div>
+                            <input
+                              type="text"
+                              value={lpSubtopics[i] || ""}
+                              onChange={(e) => {
+                                const next = [...lpSubtopics];
+                                next[i] = e.target.value;
+                                setLpSubtopics(next);
+                              }}
+                              placeholder="e.g. Series and parallel circuits"
+                              className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[9px] font-black uppercase text-[#064E3B]/40">
+                                Activities & Focus
+                              </label>
+                              <button
+                                onClick={() =>
+                                  handleSuggestInput("activity", i)
+                                }
+                                className="text-[8px] font-bold text-[#059669] hover:underline flex items-center gap-1"
+                                disabled={isSuggesting !== null}
+                              >
+                                {isSuggesting === `activity-${i}` ? (
+                                  <Loader2 size={10} className="animate-spin" />
+                                ) : (
+                                  <Sparkles size={10} />
+                                )}{" "}
+                                Suggest
+                              </button>
+                            </div>
+                            <textarea
+                              value={lpActivities[i] || ""}
+                              onChange={(e) => {
+                                const next = [...lpActivities];
+                                next[i] = e.target.value;
+                                setLpActivities(next);
+                              }}
+                              placeholder="Describe activities (e.g., 'Hands-on experiment with circuits')..."
+                              className="w-full h-20 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold resize-none outline-none focus:border-[#059669]"
+                            />
+                          </div>
+
+                          <button
+                            onClick={() => generateSpecificWeek(i)}
+                            disabled={
+                              isGeneratingWeek?.index === i &&
+                              isGeneratingWeek?.type === "plan"
+                            }
+                            className="w-full py-2.5 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-yellow-400 transition-all shadow-md flex items-center justify-center gap-2"
+                          >
+                            {isGeneratingWeek?.index === i &&
+                            isGeneratingWeek?.type === "plan" ? (
+                              <Loader2 className="animate-spin" size={14} />
+                            ) : (
+                              <Wand2 size={14} />
+                            )}
+                            Generate {lpWeekLabels[i] || `Week ${i + 1}`}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  )}
+
+                  {lpGenerateMode === "term" && (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-white border-2 border-[#D1FAE5] rounded-[2rem] shadow-sm space-y-4">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
+                          Topic, Subtopic & Unit
+                        </label>
+                        <textarea
+                          value={sessionTopic}
+                          onChange={(e) => setSessionTopic(e.target.value)}
+                          placeholder="Enter your topic, subtopics and units for the whole term..."
+                          className="w-full h-24 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold resize-none outline-none focus:border-[#059669]"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
+                          Instructions (optional)
+                        </label>
+                        <textarea
+                          value={sessionInstructions}
+                          onChange={(e) =>
+                            setSessionInstructions(e.target.value)
+                          }
+                          placeholder="Tell the AI exactly what you want before it generates — e.g. emphasise hands-on experiments, include weekly assessments, align to a specific textbook, pacing notes..."
+                          className="w-full h-24 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold resize-none outline-none focus:border-[#059669]"
+                        />
+                      </div>
+                      <div className="grid grid-cols-1 gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
+                              Program Duration
+                            </label>
+                            <button
+                              onClick={() =>
+                                setTermWeeks((prev) => Math.min(12, prev + 1))
+                              }
+                              className="text-[9px] font-bold text-[#059669] bg-[#D1FAE5] px-2 py-0.5 rounded-md hover:bg-[#A7F3D0] transition-all flex items-center gap-1"
+                            >
+                              <Plus size={10} /> Add Week
+                            </button>
+                          </div>
+                          <select
+                            value={termWeeks}
+                            onChange={(e) =>
+                              setTermWeeks(Number(e.target.value))
+                            }
+                            className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none cursor-pointer hover:border-[#059669] transition-all"
+                          >
+                            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(
+                              (w) => (
+                                <option key={w} value={w}>
+                                  {w} Weeks Program
+                                </option>
+                              ),
+                            )}
+                          </select>
+                        </div>
+                        <button
+                          onClick={generateSP}
+                          disabled={isGenerating}
+                          className="py-3 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-400 transition-all shadow-md flex items-center justify-center gap-2"
+                        >
+                          {isGenerating ? (
+                            <Loader2 className="animate-spin" size={16} />
+                          ) : (
+                            <Wand2 size={16} />
+                          )}{" "}
+                          Generate {termWeeks}-Week Program
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  )}
+                  </LpSection>
+
+                  <LpSection
+                    title="Guidance & References"
+                    icon={FileUp}
+                    hint={
+                      lpFileContext
+                        ? lpFileContext.name
+                        : "Focus, methodology, scheme of work"
+                    }
+                    open={lpOpenSections.guidance}
+                    onToggle={() => toggleLpSection("guidance")}
+                  >
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
+                      Lesson Focus / Methodology
+                    </label>
+                    <textarea
+                      value={lpDescription}
+                      onChange={(e) => setLpDescription(e.target.value)}
+                      placeholder="e.g. Focus on active learning, Cambridge standards, and textbook integration."
+                      className="w-full h-24 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-medium resize-none focus:outline-none focus:border-[#059669]"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
+                      Scheme of Work / Framework (optional)
+                    </label>
+                    {!lpFileContext ? (
+                      <div
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const file = e.dataTransfer.files?.[0];
                           if (file) {
                             setLpFileContext({
                               name: file.name,
@@ -29925,46 +33463,70 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             });
                           }
                         }}
-                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                      />
-                      <FileUp
-                        className="text-[#059669] group-hover:scale-110 transition-transform"
-                        size={24}
-                      />
-                      <span className="text-xs font-black text-[#064E3B] uppercase">
-                        Upload scheme of work
-                      </span>
-                      <span className="text-[9px] font-medium text-[#064E3B]/60 italic leading-snug">
-                        Doc, PDF, Excel, TXT, or Image — the plan will follow it
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-between p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-2xl relative shadow-sm">
-                      <div className="flex items-center gap-2 truncate max-w-[80%]">
-                        <FileText
-                          className="text-[#059669] shrink-0"
-                          size={16}
+                        className="border-2 border-dashed border-[#D1FAE5] hover:border-[#059669] transition-all rounded-2xl p-4 text-center cursor-pointer bg-[#FDFBF7] flex flex-col items-center justify-center gap-1.5 relative group"
+                      >
+                        <input
+                          type="file"
+                          accept=".pdf,.txt,.docx,.doc,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.pptx"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              setLpFileContext({
+                                name: file.name,
+                                mimeType:
+                                  file.type || "application/octet-stream",
+                                data: file,
+                              });
+                            }
+                          }}
+                          className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
                         />
-                        <span className="text-xs font-black text-[#0A4F29] truncate uppercase">
-                          {lpFileContext.name}
+                        <FileUp
+                          className="text-[#059669] group-hover:scale-110 transition-transform"
+                          size={24}
+                        />
+                        <span className="text-xs font-black text-[#064E3B] uppercase">
+                          Upload scheme of work
+                        </span>
+                        <span className="text-[9px] font-medium text-[#064E3B]/60 italic leading-snug">
+                          Doc, PDF, Excel, TXT, or Image — the plan will follow
+                          it
                         </span>
                       </div>
-                      <button
-                        onClick={() => setLpFileContext(null)}
-                        className="p-1 hover:bg-emerald-100 rounded-full transition-colors text-[#064E3B]"
-                        type="button"
-                        title="Remove File"
-                      >
-                        <X size={14} className="stroke-[3]" />
-                      </button>
-                    </div>
-                  )}
-                </div>
+                    ) : (
+                      <div className="flex items-center justify-between p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-2xl relative shadow-sm">
+                        <div className="flex items-center gap-2 truncate max-w-[80%]">
+                          <FileText
+                            className="text-[#059669] shrink-0"
+                            size={16}
+                          />
+                          <span className="text-xs font-black text-[#0A4F29] truncate uppercase">
+                            {lpFileContext.name}
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => setLpFileContext(null)}
+                          className="p-1 hover:bg-emerald-100 rounded-full transition-colors text-[#064E3B]"
+                          type="button"
+                          title="Remove File"
+                        >
+                          <X size={14} className="stroke-[3]" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
 
+                  </LpSection>
+                </div>
+              </div>
+              </div>
+
+              {/* Primary action stays reachable without scrolling the pane */}
+              <div className="shrink-0 p-4 border-t-2 border-[#D1FAE5] bg-white">
                 <button
                   onClick={generateLP}
                   disabled={isGenerating}
-                  className="w-full py-4 bg-[#059669] text-white rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl shadow-[#059669]/20 transition-all flex items-center justify-center gap-3 hover:bg-[#047857] active:scale-[0.98]"
+                  className="w-full py-4 bg-[#059669] text-white rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl shadow-[#059669]/20 transition-all flex items-center justify-center gap-3 hover:bg-[#047857] active:scale-[0.98] disabled:opacity-60"
                 >
                   {isGenerating ? (
                     <Loader2 className="animate-spin" />
@@ -29978,382 +33540,523 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           )}
           <main className="flex-1 p-12 overflow-y-auto bg-[#F0FDF4]/50 custom-scrollbar">
             {content?.lessonPlan ? (
-              <div
-                className="max-w-[1000px] mx-auto bg-white p-12 pt-12 shadow-2xl border-[16px] border-white ring-[12px] ring-[#059669] flex flex-col gap-10 font-serif relative"
-                ref={lessonPlanRef}
-                data-ref-id="lesson-plan-container"
-              >
-                <div className="text-center border-b-4 border-[#064E3B] pb-8">
-                  <img
-                    src={ZERA_LOGO_B64}
-                    alt="Zera Education"
-                    className="h-10 w-auto mx-auto mb-5 select-none"
-                    draggable={false}
-                  />
-                  <h1 className="text-4xl font-black uppercase tracking-tight mb-2 text-[#064E3B]">
-                    Cambridge Termly Lesson Plan (
-                    {content.lessonPlan.weeklyBreakdown.length}-Week Program)
-                  </h1>
-                  <p className="text-sm font-bold opacity-40 uppercase tracking-[0.3em] text-[#059669]">
-                    Zera International School Academic Standards
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-6 border-2 border-black divide-x-2 divide-black text-[10px] font-black uppercase">
-                  <div className="col-span-2 p-3">
-                    Term:{" "}
-                    <input
-                      type="text"
-                      value={content.lessonPlan.term || ""}
-                      onChange={(e) =>
-                        updateLessonPlanMetadata("term", e.target.value)
-                      }
-                      className="bg-transparent font-normal normal-case ml-1 outline-none border-b border-transparent hover:border-black/10 focus:border-black/30 w-full"
-                    />
-                  </div>
-                  <div className="col-span-2 p-3">
-                    Subject:{" "}
-                    <select
-                      value={content.lessonPlan.subject || ""}
-                      onChange={(e) =>
-                        updateLessonPlanMetadata("subject", e.target.value)
-                      }
-                      className="bg-transparent font-normal normal-case ml-1 outline-none border-b border-transparent hover:border-black/10 focus:border-black/30 w-full cursor-pointer"
-                    >
-                      <option value="">Select Subject...</option>
-                      {CAMBRIDGE_SUBJECTS.map((g) => (
-                        <optgroup key={g.group} label={g.group}>
-                          {g.subjects.map((s) => (
-                            <option key={s} value={s}>
-                              {s}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="col-span-2 p-3">
-                    Duration:{" "}
-                    <input
-                      type="text"
-                      value={content.lessonPlan.duration || ""}
-                      onChange={(e) =>
-                        updateLessonPlanMetadata("duration", e.target.value)
-                      }
-                      className="bg-transparent font-normal normal-case ml-1 outline-none border-b border-transparent hover:border-black/10 focus:border-black/30 w-full"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-6 border-x-2 border-b-2 border-black divide-x-2 divide-black text-[10px] font-black uppercase">
-                  <div className="col-span-2 p-3">
-                    Date:{" "}
-                    <input
-                      type="text"
-                      value={content.lessonPlan.date || ""}
-                      onChange={(e) =>
-                        updateLessonPlanMetadata("date", e.target.value)
-                      }
-                      className="bg-transparent font-normal normal-case ml-1 outline-none border-b border-transparent hover:border-black/10 focus:border-black/30 w-full"
-                    />
-                  </div>
-                  <div className="col-span-2 p-3">
-                    Academic Year:{" "}
-                    <input
-                      type="text"
-                      value={content.lessonPlan.academicYear || ""}
-                      onChange={(e) =>
-                        updateLessonPlanMetadata("academicYear", e.target.value)
-                      }
-                      className="bg-transparent font-normal normal-case ml-1 outline-none border-b border-transparent hover:border-black/10 focus:border-black/30 w-full"
-                    />
-                  </div>
-                  <div className="col-span-2 p-3">
-                    Class:{" "}
-                    <input
-                      type="text"
-                      value={content.lessonPlan.class || ""}
-                      onChange={(e) =>
-                        updateLessonPlanMetadata("class", e.target.value)
-                      }
-                      className="bg-transparent font-normal normal-case ml-1 outline-none border-b border-transparent hover:border-black/10 focus:border-black/30 w-full"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-6 border-x-2 border-b-2 border-black divide-x-2 divide-black text-[10px] font-black uppercase">
-                  <div className="col-span-3 p-3 italic opacity-60">
-                    Prepared By:{" "}
-                    <input
-                      type="text"
-                      list="teachers-datalist-table"
-                      value={content.lessonPlan.preparedBy || ""}
-                      onChange={(e) =>
-                        updateLessonPlanMetadata("preparedBy", e.target.value)
-                      }
-                      className="bg-transparent font-bold ml-1 outline-none border-b border-transparent hover:border-black/10 focus:border-black/30 w-full"
-                    />
-                    <datalist id="teachers-datalist-table">
-                      {teachers.map((t) => (
-                        <option key={t.id} value={t.name} />
-                      ))}
-                    </datalist>
-                  </div>
-                  <div className="col-span-3 p-3 italic opacity-60">
-                    Checked By:{" "}
-                    <input
-                      type="text"
-                      value={content.lessonPlan.checkedBy || ""}
-                      onChange={(e) =>
-                        updateLessonPlanMetadata("checkedBy", e.target.value)
-                      }
-                      className="bg-transparent font-bold ml-1 outline-none border-b border-transparent hover:border-black/10 focus:border-black/30 w-full"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-6">
-                  <div className="grid grid-cols-6 gap-0 border-2 border-black">
-                    <div className="col-span-1 bg-black text-white p-2 font-black text-[10px] uppercase flex items-center justify-center">
-                      <div className="-rotate-90 whitespace-nowrap overflow-visible">
-                        Overall Topic
-                      </div>
+              (() => {
+                const lp = content!.lessonPlan!;
+                const weeks = lp.weeklyBreakdown || [];
+                const chunks: {
+                  start: number;
+                  end: number;
+                  items: typeof weeks;
+                }[] = [];
+                for (let i = 0; i < weeks.length; i += 6)
+                  chunks.push({
+                    start: i + 1,
+                    end: Math.min(i + 6, weeks.length),
+                    items: weeks.slice(i, i + 6),
+                  });
+                const toLines = (v: any): string[] =>
+                  Array.isArray(v)
+                    ? v
+                        .map((s: any) => (s ?? "").toString().trim())
+                        .filter(Boolean)
+                    : ((v as string) || "")
+                        .split("\n")
+                        .map((s) => s.trim())
+                        .filter(Boolean);
+                const toText = (v: any): string =>
+                  Array.isArray(v) ? v.join("\n") : (v as string) || "";
+                const essentials = toLines(lp.essentialQuestions);
+                const competencies = toLines(lp.keyCompetencies);
+                const portfolio = toLines(lp.portfolioEvidence);
+                const labelCls =
+                  "bg-[#F0FDF4] text-[#064E3B] font-bold border border-[#E5E7EB] px-3 py-2.5 align-top";
+                const cellCls = "border border-[#E5E7EB] px-3 py-2.5 align-top";
+                const inCls =
+                  "w-full bg-transparent outline-none text-[#111827]";
+                const secLabel =
+                  "text-xs font-black uppercase tracking-[0.18em] text-[#064E3B] mb-3";
+                const taCls =
+                  "w-full bg-transparent outline-none resize-y min-h-[80px] text-[12px] leading-relaxed";
+                return (
+                  <div
+                    ref={lessonPlanRef}
+                    data-ref-id="lesson-plan-container"
+                    className="max-w-[1000px] mx-auto bg-white shadow-2xl rounded-lg overflow-hidden text-[#111827]"
+                  >
+                    {/* Header bar */}
+                    <div className="bg-[#064E3B] px-10 py-6 flex items-center">
+                      <h1 className="text-2xl font-black text-white tracking-tight">
+                        Lesson Plan
+                      </h1>
                     </div>
-                    <div className="col-span-5 p-6 border-l-2 border-black flex items-center">
-                      <input
-                        type="text"
-                        value={content.lessonPlan.overallTopic || ""}
-                        onChange={(e) =>
-                          updateLessonPlanMetadata(
-                            "overallTopic",
-                            e.target.value,
-                          )
-                        }
-                        className="bg-transparent w-full text-3xl font-black italic outline-none border-b-2 border-transparent hover:border-black/10 focus:border-black/30"
-                      />
-                    </div>
-                  </div>
 
-                  {/* Removed Top Learning Objectives as per user request */}
+                    <div className="p-10 space-y-10">
+                      {/* DETAILS */}
+                      <section>
+                        <div className={secLabel}>Details</div>
+                        <table className="w-full border-collapse text-[13px]">
+                          <tbody>
+                            <tr>
+                              <td className={labelCls + " w-[16%]"}>Term</td>
+                              <td className={cellCls + " w-[34%]"}>
+                                <input
+                                  value={lp.term || ""}
+                                  onChange={(e) =>
+                                    updateLessonPlanMetadata(
+                                      "term",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className={inCls}
+                                />
+                              </td>
+                              <td className={labelCls + " w-[16%]"}>
+                                Academic Year
+                              </td>
+                              <td className={cellCls + " w-[34%]"}>
+                                <input
+                                  value={lp.academicYear || ""}
+                                  onChange={(e) =>
+                                    updateLessonPlanMetadata(
+                                      "academicYear",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className={inCls}
+                                />
+                              </td>
+                            </tr>
+                            <tr>
+                              <td className={labelCls}>Subject</td>
+                              <td className={cellCls}>
+                                <select
+                                  value={lp.subject || ""}
+                                  onChange={(e) =>
+                                    updateLessonPlanMetadata(
+                                      "subject",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className={inCls + " cursor-pointer"}
+                                >
+                                  <option value="">Select Subject...</option>
+                                  {CAMBRIDGE_SUBJECTS.map((g) => (
+                                    <optgroup key={g.group} label={g.group}>
+                                      {g.subjects.map((s) => (
+                                        <option key={s} value={s}>
+                                          {s}
+                                        </option>
+                                      ))}
+                                    </optgroup>
+                                  ))}
+                                </select>
+                              </td>
+                              <td className={labelCls}>Class</td>
+                              <td className={cellCls}>
+                                <input
+                                  value={lp.class || ""}
+                                  onChange={(e) =>
+                                    updateLessonPlanMetadata(
+                                      "class",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className={inCls}
+                                />
+                              </td>
+                            </tr>
+                            <tr>
+                              <td className={labelCls}>
+                                Target Lesson Duration
+                              </td>
+                              <td className={cellCls}>
+                                <input
+                                  value={lp.duration || ""}
+                                  onChange={(e) =>
+                                    updateLessonPlanMetadata(
+                                      "duration",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className={inCls}
+                                />
+                              </td>
+                              <td className={labelCls}>Prepared by</td>
+                              <td className={cellCls}>
+                                <input
+                                  list="lp-teachers-datalist"
+                                  value={lp.preparedBy || ""}
+                                  onChange={(e) =>
+                                    updateLessonPlanMetadata(
+                                      "preparedBy",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className={inCls}
+                                />
+                                <datalist id="lp-teachers-datalist">
+                                  {teachers.map((t) => (
+                                    <option key={t.id} value={t.name} />
+                                  ))}
+                                </datalist>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td className={labelCls}>Date of lesson</td>
+                              <td className={cellCls}>
+                                <input
+                                  value={lp.date || ""}
+                                  onChange={(e) =>
+                                    updateLessonPlanMetadata(
+                                      "date",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className={inCls}
+                                />
+                              </td>
+                              <td className={labelCls}>Checked by</td>
+                              <td className={cellCls}>
+                                <input
+                                  value={lp.checkedBy || ""}
+                                  onChange={(e) =>
+                                    updateLessonPlanMetadata(
+                                      "checkedBy",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className={inCls}
+                                />
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </section>
 
-                  <div className="pt-6">
-                    <h3 className="text-sm font-black uppercase tracking-widest mb-4 flex items-center gap-3">
-                      <span className="h-[2px] flex-1 bg-black opacity-10"></span>
-                      Term Schedule ({content.lessonPlan.weeklyBreakdown.length}{" "}
-                      Weeks)
-                      <span className="h-[2px] flex-1 bg-black opacity-10"></span>
-                    </h3>
+                      {/* SUMMARY */}
+                      <section>
+                        <table className="w-full border-collapse text-[13px]">
+                          <tbody>
+                            <tr>
+                              <td className={labelCls + " w-[16%]"}>Strand</td>
+                              <td className={cellCls}>
+                                <input
+                                  value={toText(lp.strandSummary)}
+                                  onChange={(e) =>
+                                    updateLessonPlanMetadata(
+                                      "strandSummary",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className={inCls}
+                                  placeholder="e.g. Communication, Learning to Learn"
+                                />
+                              </td>
+                            </tr>
+                            <tr>
+                              <td className={labelCls}>Topic</td>
+                              <td className={cellCls}>
+                                <input
+                                  value={lp.overallTopic || ""}
+                                  onChange={(e) =>
+                                    updateLessonPlanMetadata(
+                                      "overallTopic",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className={inCls}
+                                />
+                              </td>
+                            </tr>
+                            <tr>
+                              <td className={labelCls}>Subtopic</td>
+                              <td className={cellCls}>
+                                <input
+                                  value={lp.subTopic || ""}
+                                  onChange={(e) =>
+                                    updateLessonPlanMetadata(
+                                      "subTopic",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className={inCls}
+                                />
+                              </td>
+                            </tr>
+                            <tr>
+                              <td className={labelCls}>Learning Objective</td>
+                              <td className={cellCls}>
+                                {/* Editable so objectives can be typed or
+                                    pasted in — one per line. */}
+                                <textarea
+                                  value={toText(lp.learningObjectiveSummary)}
+                                  onChange={(e) =>
+                                    updateLessonPlanMetadata(
+                                      "learningObjectiveSummary",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className={taCls}
+                                  placeholder="One objective per line — paste them straight in."
+                                />
+                                <div className="font-bold text-[#064E3B] mt-3 mb-1">
+                                  Success criteria (I can…):
+                                </div>
+                                <textarea
+                                  value={toText(lp.successCriteria)}
+                                  onChange={(e) =>
+                                    updateLessonPlanMetadata(
+                                      "successCriteria",
+                                      e.target.value,
+                                    )
+                                  }
+                                  className={taCls}
+                                  placeholder="One success criterion per line."
+                                />
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </section>
 
-                    <div className="overflow-x-auto pb-4 custom-scrollbar">
-                      <table className="w-full border-4 border-black border-double text-[10px] min-w-[1200px]">
-                        <thead>
-                          <tr className="bg-black text-white uppercase font-black tracking-wider">
-                            <th className="p-3 border-2 border-black text-left w-[10%]">
-                              Unit
-                            </th>
-                            <th className="p-3 border-2 border-black text-left w-[12%]">
-                              Topic
-                            </th>
-                            <th className="p-3 border-2 border-black text-left w-[15%]">
-                              Learning Objective
-                            </th>
-                            <th className="p-3 border-2 border-black text-left w-[10%]">
-                              Strand
-                            </th>
-                            <th className="p-3 border-2 border-black text-left w-[15%]">
-                              Introduction
-                            </th>
-                            <th className="p-3 border-2 border-black text-left w-[15%]">
-                              Activities
-                            </th>
-                            <th className="p-3 border-2 border-black text-left w-[12%]">
-                              Assessment
-                            </th>
-                            <th className="p-3 border-2 border-black text-left w-[13%]">
-                              Resources
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="font-medium align-top">
-                          {content.lessonPlan.weeklyBreakdown.map(
-                            (week, idx) => (
-                              <tr key={idx} className="border-b-2 border-black">
-                                <td className="p-0 border-2 border-black">
-                                  <input
-                                    value={week.unit}
-                                    onChange={(e) =>
-                                      updateWeeklyBreakdown(
-                                        idx,
-                                        "unit",
-                                        e.target.value,
-                                      )
-                                    }
-                                    className="w-full p-3 bg-transparent font-black text-[#e67e22] outline-none border-none text-center"
-                                  />
-                                </td>
-                                <td className="p-3 border-2 border-black">
-                                  <div className="font-black mb-1">
-                                    Week {week.week}
-                                  </div>
-                                  <textarea
-                                    value={week.topic}
-                                    onChange={(e) =>
-                                      updateWeeklyBreakdown(
-                                        idx,
-                                        "topic",
-                                        e.target.value,
-                                      )
-                                    }
-                                    className="w-full bg-transparent font-bold uppercase tracking-tight text-[#6C5CE7] outline-none border-none resize-none h-16"
-                                  />
-                                </td>
-                                <td className="p-0 border-2 border-black leading-relaxed">
-                                  <textarea
-                                    value={week.learningObjective}
-                                    onChange={(e) =>
-                                      updateWeeklyBreakdown(
-                                        idx,
-                                        "learningObjective",
-                                        e.target.value,
-                                      )
-                                    }
-                                    className="w-full p-3 bg-transparent font-bold text-[#d63031] outline-none border-none resize-none h-32 text-[10px]"
-                                  />
-                                </td>
-                                <td className="p-0 border-2 border-black text-center">
-                                  <textarea
-                                    value={week.strand}
-                                    onChange={(e) =>
-                                      updateWeeklyBreakdown(
-                                        idx,
-                                        "strand",
-                                        e.target.value,
-                                      )
-                                    }
-                                    className="w-full p-3 bg-transparent font-bold uppercase text-[9px] text-[#27ae60] outline-none border-none resize-none h-16"
-                                  />
-                                </td>
-                                <td className="p-0 border-2 border-black leading-relaxed">
-                                  <textarea
-                                    value={week.introduction}
-                                    onChange={(e) =>
-                                      updateWeeklyBreakdown(
-                                        idx,
-                                        "introduction",
-                                        e.target.value,
-                                      )
-                                    }
-                                    className="w-full p-3 bg-transparent outline-none border-none resize-none h-32 text-[10px]"
-                                  />
-                                </td>
-                                <td className="p-0 border-2 border-black leading-relaxed">
-                                  <textarea
-                                    value={week.activities}
-                                    onChange={(e) =>
-                                      updateWeeklyBreakdown(
-                                        idx,
-                                        "activities",
-                                        e.target.value,
-                                      )
-                                    }
-                                    className="w-full p-3 bg-transparent outline-none border-none resize-none h-40 text-[10px]"
-                                  />
-                                </td>
-                                <td className="p-0 border-2 border-black leading-relaxed font-bold">
-                                  <textarea
-                                    value={week.assessment}
-                                    onChange={(e) =>
-                                      updateWeeklyBreakdown(
-                                        idx,
-                                        "assessment",
-                                        e.target.value,
-                                      )
-                                    }
-                                    className="w-full p-3 bg-transparent font-bold outline-none border-none resize-none h-32 text-[10px]"
-                                  />
-                                </td>
-                                <td className="p-3 border-2 border-black leading-relaxed italic opacity-80">
-                                  <div className="space-y-2 py-1">
-                                    <textarea
-                                      value={week.resources}
+                      {/* WEEKLY PLAN */}
+                      {chunks.map((chunk, ci) => (
+                        <section key={ci}>
+                          <div className={secLabel}>
+                            Plan — Weeks {chunk.start}
+                            {chunk.end > chunk.start ? `–${chunk.end}` : ""}
+                          </div>
+                          <div className="space-y-5">
+                            {chunk.items.map((week, li) => {
+                              const idx = chunk.start - 1 + li;
+                              const rows: { label: string; field: string }[] = [
+                                {
+                                  label: "Introduction / Do Now",
+                                  field: "introduction",
+                                },
+                                { label: "Activities", field: "activities" },
+                                { label: "Assessment", field: "assessment" },
+                                { label: "Curriculum Link", field: "strand" },
+                              ];
+                              return (
+                                <div
+                                  key={idx}
+                                  className="border border-[#E5E7EB] rounded-lg overflow-hidden"
+                                >
+                                  {/* Week header */}
+                                  <div className="bg-[#F0FDF4] px-4 py-3 border-b border-[#E5E7EB] flex flex-wrap items-center gap-x-4 gap-y-1">
+                                    <span className="font-black text-[#064E3B] whitespace-nowrap">
+                                      Week {week.week}
+                                    </span>
+                                    <input
+                                      value={week.topic}
                                       onChange={(e) =>
                                         updateWeeklyBreakdown(
                                           idx,
-                                          "resources",
+                                          "topic",
                                           e.target.value,
                                         )
                                       }
-                                      className="w-full bg-transparent opacity-60 outline-none border-none resize-none h-24 text-[10px]"
+                                      className="flex-1 min-w-[140px] bg-transparent font-semibold outline-none text-[13px]"
+                                      placeholder="Topic"
                                     />
-                                    <div className="flex flex-wrap gap-2 pt-1 not-italic">
-                                      <button
-                                        onClick={() =>
-                                          generateSlidesForWeek(idx)
-                                        }
-                                        disabled={isGeneratingWeek !== null}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#FF6B6B] text-white rounded-lg text-[10px] font-black uppercase hover:bg-[#FF5252] transition-all disabled:opacity-50 cursor-pointer shadow-sm active:scale-95 border-2 border-transparent hover:border-white/20"
-                                      >
-                                        {isGeneratingWeek?.index === idx &&
-                                        isGeneratingWeek?.type === "slides" ? (
-                                          <Loader2
-                                            size={12}
-                                            className="animate-spin"
-                                          />
-                                        ) : (
-                                          <Presentation size={12} />
-                                        )}
-                                        Slides
-                                      </button>
-                                      <button
-                                        onClick={() =>
-                                          generateWorksheetForWeek(idx)
-                                        }
-                                        disabled={isGeneratingWeek !== null}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#4ECDC4] text-white rounded-lg text-[10px] font-black uppercase hover:bg-[#3DBDB3] transition-all disabled:opacity-50 cursor-pointer shadow-sm active:scale-95 border-2 border-transparent hover:border-white/20"
-                                      >
-                                        {isGeneratingWeek?.index === idx &&
-                                        isGeneratingWeek?.type ===
-                                          "worksheet" ? (
-                                          <Loader2
-                                            size={12}
-                                            className="animate-spin"
-                                          />
-                                        ) : (
-                                          <FileText size={12} />
-                                        )}
-                                        Worksheet
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                          removeWeek(idx);
-                                        }}
-                                        className="flex items-center justify-center w-7 h-7 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all cursor-pointer shadow-sm active:scale-95"
-                                        title="Remove Week"
-                                      >
-                                        <Trash2 size={12} />
-                                      </button>
-                                    </div>
+                                    <span className="text-[11px] text-gray-400 whitespace-nowrap">
+                                      Date: ______
+                                    </span>
                                   </div>
-                                </td>
-                              </tr>
-                            ),
-                          )}
-                        </tbody>
-                      </table>
+                                  <table className="w-full border-collapse text-[12px]">
+                                    <tbody className="align-top">
+                                      {week.unit ? (
+                                        <tr>
+                                          <td className={labelCls + " w-[22%]"}>
+                                            Unit
+                                          </td>
+                                          <td className={cellCls}>
+                                            <input
+                                              value={week.unit}
+                                              onChange={(e) =>
+                                                updateWeeklyBreakdown(
+                                                  idx,
+                                                  "unit",
+                                                  e.target.value,
+                                                )
+                                              }
+                                              className={inCls}
+                                            />
+                                          </td>
+                                        </tr>
+                                      ) : null}
+                                      {rows.map((r) => (
+                                        <tr key={r.field}>
+                                          <td className={labelCls + " w-[22%]"}>
+                                            {r.label}
+                                          </td>
+                                          <td className={cellCls}>
+                                            <textarea
+                                              value={
+                                                (week as any)[r.field] || ""
+                                              }
+                                              onChange={(e) =>
+                                                updateWeeklyBreakdown(
+                                                  idx,
+                                                  r.field,
+                                                  e.target.value,
+                                                )
+                                              }
+                                              className={taCls}
+                                            />
+                                          </td>
+                                        </tr>
+                                      ))}
+                                      <tr>
+                                        <td className={labelCls + " w-[22%]"}>
+                                          Resources (Attachment: File, Picture,
+                                          Video)
+                                        </td>
+                                        <td className={cellCls}>
+                                          <textarea
+                                            value={week.resources}
+                                            onChange={(e) =>
+                                              updateWeeklyBreakdown(
+                                                idx,
+                                                "resources",
+                                                e.target.value,
+                                              )
+                                            }
+                                            className={taCls}
+                                          />
+                                          <div className="flex flex-wrap gap-2 mt-2">
+                                            <button
+                                              onClick={() =>
+                                                generateSlidesForWeek(idx)
+                                              }
+                                              disabled={
+                                                isGeneratingWeek !== null
+                                              }
+                                              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#064E3B] text-white rounded-lg text-[10px] font-black uppercase hover:bg-[#0B6B4F] transition-all disabled:opacity-50 cursor-pointer shadow-sm active:scale-95"
+                                            >
+                                              {isGeneratingWeek?.index ===
+                                                idx &&
+                                              isGeneratingWeek?.type ===
+                                                "slides" ? (
+                                                <Loader2
+                                                  size={12}
+                                                  className="animate-spin"
+                                                />
+                                              ) : (
+                                                <Presentation size={12} />
+                                              )}
+                                              Slides
+                                            </button>
+                                            <button
+                                              onClick={() =>
+                                                generateWorksheetForWeek(idx)
+                                              }
+                                              disabled={
+                                                isGeneratingWeek !== null
+                                              }
+                                              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#059669] text-white rounded-lg text-[10px] font-black uppercase hover:bg-[#047857] transition-all disabled:opacity-50 cursor-pointer shadow-sm active:scale-95"
+                                            >
+                                              {isGeneratingWeek?.index ===
+                                                idx &&
+                                              isGeneratingWeek?.type ===
+                                                "worksheet" ? (
+                                                <Loader2
+                                                  size={12}
+                                                  className="animate-spin"
+                                                />
+                                              ) : (
+                                                <FileText size={12} />
+                                              )}
+                                              Worksheet
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                removeWeek(idx);
+                                              }}
+                                              className="flex items-center justify-center w-7 h-7 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all cursor-pointer shadow-sm active:scale-95"
+                                              title="Remove Week"
+                                            >
+                                              <Trash2 size={12} />
+                                            </button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    </tbody>
+                                  </table>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </section>
+                      ))}
+
+                      {/* REFLECTION */}
+                      <section>
+                        <div className={secLabel}>Reflection</div>
+                        <div className="border border-[#E5E7EB] rounded-lg p-4">
+                          <textarea
+                            value={lp.reflection || ""}
+                            onChange={(e) =>
+                              updateLessonPlanMetadata(
+                                "reflection",
+                                e.target.value,
+                              )
+                            }
+                            placeholder="Write your reflection on how the unit went…"
+                            className="w-full bg-transparent outline-none resize-y min-h-[90px] text-[13px] leading-relaxed"
+                          />
+                        </div>
+                      </section>
+
+                      {essentials.length > 0 && (
+                        <section>
+                          <div className={secLabel}>Essential Questions</div>
+                          <ul className="border border-[#E5E7EB] rounded-lg p-5 list-disc pl-9 space-y-1.5 text-[13px]">
+                            {essentials.map((q, i) => (
+                              <li key={i}>{q}</li>
+                            ))}
+                          </ul>
+                        </section>
+                      )}
+
+                      {competencies.length > 0 && (
+                        <section>
+                          <div className={secLabel}>
+                            Key Competencies Developed
+                          </div>
+                          <ul className="border border-[#E5E7EB] rounded-lg p-5 list-disc pl-9 space-y-1.5 text-[13px]">
+                            {competencies.map((c, i) => (
+                              <li key={i}>{c}</li>
+                            ))}
+                          </ul>
+                        </section>
+                      )}
+
+                      {portfolio.length > 0 && (
+                        <section>
+                          <div className={secLabel}>
+                            Suggested Portfolio Evidence
+                          </div>
+                          <ul className="border border-[#E5E7EB] rounded-lg p-5 list-disc pl-9 space-y-1.5 text-[13px]">
+                            {portfolio.map((p, i) => (
+                              <li key={i}>{p}</li>
+                            ))}
+                          </ul>
+                        </section>
+                      )}
+
+                      <div className="border-t border-gray-100 pt-6 text-[10px] font-black uppercase opacity-30 tracking-widest text-center">
+                        Zera International School • Cambridge Aligned Lesson
+                        Program
+                      </div>
                     </div>
                   </div>
-                </div>
-
-                <div className="mt-auto flex justify-between items-end border-t border-gray-100 pt-8">
-                  <div className="text-[10px] font-black uppercase opacity-20 tracking-widest">
-                    Cambridge Aligned Lesson Program • Professional Educator
-                    Suite
-                  </div>
-                </div>
-              </div>
+                );
+              })()
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-[#7C7A65] opacity-20 group">
                 <BookOpen
@@ -30366,6 +34069,135 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               </div>
             )}
           </main>
+          {!isReviewMode && lessonPlanSuggestion && (
+            <aside className="w-[380px] shrink-0 bg-[#F0FDF4]/40 border-l-2 border-[#D1FAE5] p-5 overflow-y-auto custom-scrollbar">
+              <div className="flex items-start justify-between mb-4 gap-2">
+                <div>
+                  <h3 className="text-sm font-black uppercase text-[#064E3B] tracking-wider flex items-center gap-2">
+                    <Sparkles size={16} /> AI Suggestions
+                  </h3>
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    These are ideas only — type or copy them into your plan.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setLessonPlanSuggestion(null)}
+                  title="Dismiss suggestions"
+                  className="text-gray-400 hover:text-gray-700 shrink-0"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              {(() => {
+                const s = lessonPlanSuggestion;
+                const t = (v: any): string =>
+                  Array.isArray(v) ? v.join("\n") : (v as string) || "";
+                const renderSug = (key: string, label: string, text: string) =>
+                  text && text.trim() ? (
+                    <div className="border border-[#E5E7EB] rounded-lg p-3 bg-white">
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <span className="text-[10px] font-black uppercase tracking-wide text-[#064E3B]">
+                          {label}
+                        </span>
+                        <button
+                          onClick={() => copySuggestion(key, text)}
+                          className="flex items-center gap-1 text-[10px] font-bold text-[#059669] hover:text-[#064E3B] shrink-0"
+                        >
+                          {copiedSug === key ? (
+                            <>
+                              <Check size={12} /> Copied
+                            </>
+                          ) : (
+                            <>
+                              <Copy size={12} /> Copy
+                            </>
+                          )}
+                        </button>
+                      </div>
+                      <div className="text-[12px] text-gray-700 whitespace-pre-wrap leading-relaxed">
+                        {text}
+                      </div>
+                    </div>
+                  ) : null;
+                return (
+                  <div className="space-y-3">
+                    {renderSug(
+                      "overallTopic",
+                      "Overall Topic",
+                      t(s.overallTopic),
+                    )}
+                    {renderSug("subTopic", "Subtopic", t(s.subTopic))}
+                    {renderSug("strandSummary", "Strand", t(s.strandSummary))}
+                    {renderSug(
+                      "loSummary",
+                      "Learning Objectives",
+                      t(s.learningObjectiveSummary),
+                    )}
+                    {renderSug(
+                      "success",
+                      "Success Criteria",
+                      t(s.successCriteria),
+                    )}
+                    {renderSug(
+                      "essential",
+                      "Essential Questions",
+                      t(s.essentialQuestions),
+                    )}
+                    {renderSug(
+                      "keyComp",
+                      "Key Competencies",
+                      t(s.keyCompetencies),
+                    )}
+                    {renderSug(
+                      "portfolio",
+                      "Portfolio Evidence",
+                      t(s.portfolioEvidence),
+                    )}
+                    {(s.weeklyBreakdown || []).map((w, i) => (
+                      <div
+                        key={i}
+                        className="border border-[#D1FAE5] rounded-lg p-3 bg-white/70 space-y-2"
+                      >
+                        <div className="font-black text-[#064E3B] text-[12px]">
+                          Week {w.week}
+                          {w.topic ? ` · ${w.topic}` : ""}
+                        </div>
+                        {renderSug(`w${i}-topic`, "Topic", t(w.topic))}
+                        {renderSug(
+                          `w${i}-subtopic`,
+                          "Subtopic",
+                          t((w as any).subTopic),
+                        )}
+                        {renderSug(`w${i}-unit`, "Unit", t(w.unit))}
+                        {renderSug(
+                          `w${i}-lo`,
+                          "Learning Objective",
+                          t(w.learningObjective),
+                        )}
+                        {renderSug(
+                          `w${i}-strand`,
+                          "Curriculum Link",
+                          t(w.strand),
+                        )}
+                        {renderSug(
+                          `w${i}-intro`,
+                          "Introduction / Do Now",
+                          t(w.introduction),
+                        )}
+                        {renderSug(`w${i}-act`, "Activities", t(w.activities))}
+                        {renderSug(
+                          `w${i}-assess`,
+                          "Assessment",
+                          t(w.assessment),
+                        )}
+                        {renderSug(`w${i}-res`, "Resources", t(w.resources))}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </aside>
+          )}
         </div>
       </div>
     );
@@ -32182,6 +36014,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             exit={{ opacity: 0, x: -20 }}
             className="flex-1 flex overflow-hidden"
           >
+            {renderWorkspaceFlowNavigator()}
             {renderLessonPlanView()}
           </motion.div>
         )}
@@ -32193,6 +36026,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             exit={{ opacity: 0, x: -20 }}
             className="flex-1 flex overflow-hidden"
           >
+            {renderWorkspaceFlowNavigator()}
             {renderSlidesView()}
           </motion.div>
         )}
@@ -32204,6 +36038,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             exit={{ opacity: 0, x: -20 }}
             className="flex-1 flex overflow-hidden"
           >
+            {renderWorkspaceFlowNavigator()}
             {renderWorksheetView()}
           </motion.div>
         )}
@@ -32215,6 +36050,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             exit={{ opacity: 0, x: -20 }}
             className="flex-1 flex overflow-hidden"
           >
+            {renderWorkspaceFlowNavigator()}
             {renderReadingProgramView()}
           </motion.div>
         )}
@@ -32226,6 +36062,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             exit={{ opacity: 0, x: -20 }}
             className="flex-1 flex overflow-hidden"
           >
+            {renderWorkspaceFlowNavigator()}
             {renderNotesView()}
           </motion.div>
         )}

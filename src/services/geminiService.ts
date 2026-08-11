@@ -1587,6 +1587,7 @@ export async function generateSessionPlan(topic: string, subtopics: string, week
         - "week": number (1-${weeks})
         - "unit": string (The Cambridge curriculum unit number and title)
         - "topic": string (A specific focus for this week)
+        - "subTopic": string (ONE narrower slice of that week's topic — teachable in a lesson or two, e.g. topic "Electricity" -> subTopic "Series and parallel circuits")
         - "strand": string (the curriculum strand)
         - "learningObjective": string (one clear, numbered learning objective)
         - "introduction": string (detailed overview)
@@ -1612,6 +1613,13 @@ export async function generateSessionPlan(topic: string, subtopics: string, week
             preparedBy: { type: Type.STRING },
             checkedBy: { type: Type.STRING },
             overallTopic: { type: Type.STRING },
+            subTopic: { type: Type.STRING },
+            strandSummary: { type: Type.STRING },
+            learningObjectiveSummary: { type: Type.ARRAY, items: { type: Type.STRING } },
+            successCriteria: { type: Type.ARRAY, items: { type: Type.STRING } },
+            essentialQuestions: { type: Type.ARRAY, items: { type: Type.STRING } },
+            keyCompetencies: { type: Type.ARRAY, items: { type: Type.STRING } },
+            portfolioEvidence: { type: Type.ARRAY, items: { type: Type.STRING } },
             weeklyBreakdown: {
               type: Type.ARRAY,
               items: {
@@ -1620,6 +1628,7 @@ export async function generateSessionPlan(topic: string, subtopics: string, week
                   week: { type: Type.NUMBER },
                   unit: { type: Type.STRING },
                   topic: { type: Type.STRING },
+                  subTopic: { type: Type.STRING },
                   strand: { type: Type.STRING },
                   learningObjective: { type: Type.STRING },
                   introduction: { type: Type.STRING },
@@ -1627,7 +1636,7 @@ export async function generateSessionPlan(topic: string, subtopics: string, week
                   assessment: { type: Type.STRING },
                   resources: { type: Type.STRING }
                 },
-                required: ["week", "unit", "topic", "strand", "learningObjective", "introduction", "activities", "assessment", "resources"]
+                required: ["week", "unit", "topic", "subTopic", "strand", "learningObjective", "introduction", "activities", "assessment", "resources"]
               }
             }
           },
@@ -1702,10 +1711,18 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
       - "preparedBy": "${options.preparedBy || ''}"
       - "checkedBy": "${options.checkedBy || ''}"
       - "overallTopic": A comprehensive title for the ${weekCount}-week term unit
+      - "subTopic": string (a short sub-topic / focus for this unit, e.g. "All About Me")
+      - "strandSummary": string (the main strand(s) this whole unit develops, comma-separated${isLifeCompetencies ? '; use the Cambridge Life Competencies areas' : ''})
+      - "learningObjectiveSummary": array of 2-4 short strings (the overarching learning objectives for the whole unit, plain language${isLifeCompetencies ? ', NO codes' : ''})
+      - "successCriteria": array of 2-4 short strings phrased as "I can..." statements (child-friendly)
+      - "essentialQuestions": array of 4-6 short big-picture questions that frame the unit
+      - "keyCompetencies": array of 6-10 short competency words/phrases developed across the unit (e.g. Self-awareness, Communication, Collaboration)
+      - "portfolioEvidence": array of 6-12 short suggested pieces of student evidence for a portfolio
       - "weeklyBreakdown": Array of exactly ${weekCount} objects, each with:
         - "week": number (1-${weekCount})
         - "unit": string (The Cambridge curriculum unit number and title)
         - "topic": string (based on the weekly topics provided)
+        - "subTopic": string (ONE narrower slice of that week's topic — teachable in a lesson or two)
         - "strand": string (the curriculum strand)
         - "learningObjective": string (one clear, numbered learning objective, e.g., "1. Identify the parts of a plant")
         - "introduction": string (detailed overview of what this topic is about)
@@ -1731,6 +1748,13 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
             preparedBy: { type: Type.STRING },
             checkedBy: { type: Type.STRING },
             overallTopic: { type: Type.STRING },
+            subTopic: { type: Type.STRING },
+            strandSummary: { type: Type.STRING },
+            learningObjectiveSummary: { type: Type.ARRAY, items: { type: Type.STRING } },
+            successCriteria: { type: Type.ARRAY, items: { type: Type.STRING } },
+            essentialQuestions: { type: Type.ARRAY, items: { type: Type.STRING } },
+            keyCompetencies: { type: Type.ARRAY, items: { type: Type.STRING } },
+            portfolioEvidence: { type: Type.ARRAY, items: { type: Type.STRING } },
             weeklyBreakdown: {
               type: Type.ARRAY,
               items: {
@@ -1739,6 +1763,7 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
                   week: { type: Type.NUMBER },
                   unit: { type: Type.STRING },
                   topic: { type: Type.STRING },
+                  subTopic: { type: Type.STRING },
                   strand: { type: Type.STRING },
                   learningObjective: { type: Type.STRING },
                   introduction: { type: Type.STRING },
@@ -1746,7 +1771,7 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
                   assessment: { type: Type.STRING },
                   resources: { type: Type.STRING }
                 },
-                required: ["week", "unit", "topic", "strand", "learningObjective", "introduction", "activities", "assessment", "resources"]
+                required: ["week", "unit", "topic", "subTopic", "strand", "learningObjective", "introduction", "activities", "assessment", "resources"]
               }
             }
           },
@@ -1766,7 +1791,7 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
   }
 }
 
-export async function suggestWeeklyInput(type: 'unit' | 'topic' | 'activity', options: EduOptions, weekNum: number): Promise<string> {
+export async function suggestWeeklyInput(type: 'unit' | 'topic' | 'subtopic' | 'activity', options: EduOptions, weekNum: number): Promise<string> {
   const prompt = `As an expert Cambridge Educator, suggest a creative and curriculum-aligned ${type.toUpperCase()} for Week ${weekNum} of a ${options.yearGroup} ${options.subject} class.
     
     CONTEXT:
@@ -1782,6 +1807,7 @@ export async function suggestWeeklyInput(type: 'unit' | 'topic' | 'activity', op
     TASK:
     Return ONLY a single concise ${type} suggestion. No explanation, no quotes.
     ${type === 'activity' ? 'Ensure the activity is hands-on or highly engaging for this age group.' : ''}
+    ${type === 'subtopic' ? 'A subtopic is one focused slice of the week\'s topic — narrower than the topic itself, teachable in a lesson or two (e.g. topic "Electricity" → subtopic "Series and parallel circuits").' : ''}
   `;
 
   try {
@@ -1823,6 +1849,7 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
       - "week": ${weekNum}
       - "unit": string (${unit ? `Return exactly or expand upon: ${unit}` : 'The Cambridge curriculum unit number and title'})
       - "topic": string (${topic ? `Return exactly or expand upon: ${topic}` : 'A concise title for the week\'s lesson'})
+      - "subTopic": string (ONE narrower slice of the week's topic — teachable in a lesson or two)
       - "strand": string (the curriculum strand)
       - "learningObjective": string (one clear, numbered learning objective)
       - "introduction": string (detailed overview of what this topic is about)
@@ -1842,6 +1869,7 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
             week: { type: Type.NUMBER },
             unit: { type: Type.STRING },
             topic: { type: Type.STRING },
+            subTopic: { type: Type.STRING },
             strand: { type: Type.STRING },
             learningObjective: { type: Type.STRING },
             introduction: { type: Type.STRING },
@@ -1849,7 +1877,7 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
             assessment: { type: Type.STRING },
             resources: { type: Type.STRING }
           },
-          required: ["week", "unit", "topic", "strand", "learningObjective", "introduction", "activities", "assessment", "resources"]
+          required: ["week", "unit", "topic", "subTopic", "strand", "learningObjective", "introduction", "activities", "assessment", "resources"]
         }
       }
     });
