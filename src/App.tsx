@@ -3286,6 +3286,163 @@ const LpSection = ({
   </div>
 );
 
+// The downloadable lesson plan: the same sheet as the shared page, but every
+// value is editable in the browser and the page can save an updated copy of
+// itself. No server, no add-ins — just the file and a browser.
+const buildLessonPlanEditableHTML = (lp: any, title: string): string => {
+  const esc = (v: any) =>
+    (v ?? "")
+      .toString()
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  const lines = (v: any): string[] =>
+    Array.isArray(v)
+      ? v.map((x) => (x ?? "").toString().trim()).filter(Boolean)
+      : ((v as string) || "")
+          .split("\n")
+          .map((x) => x.trim())
+          .filter(Boolean);
+
+  const cell = (v: any) =>
+    `<td contenteditable="true">${esc(v) || ""}</td>`;
+  const detail = (label: string, value: any) =>
+    `<tr><th>${esc(label)}</th>${cell(value)}</tr>`;
+
+  const listBlock = (label: string, value: any) => {
+    const items = lines(value);
+    return `<section><h2>${esc(label)}</h2><ul contenteditable="true">${
+      items.length
+        ? items.map((i) => `<li>${esc(i)}</li>`).join("")
+        : "<li></li>"
+    }</ul></section>`;
+  };
+
+  const weeks = (lp?.weeklyBreakdown || [])
+    .map(
+      (w: any, i: number) => `
+      <section class="week">
+        <h2 contenteditable="true">Week ${esc(w?.week ?? i + 1)}${
+          w?.unit ? ` — ${esc(w.unit)}` : ""
+        }</h2>
+        <table>
+          <tr><th>Topic</th>${cell(w?.topic)}</tr>
+          ${w?.subTopic !== undefined ? `<tr><th>Subtopic</th>${cell(w?.subTopic)}</tr>` : ""}
+          <tr><th>Learning Objective</th>${cell(w?.learningObjective)}</tr>
+          <tr><th>Strand</th>${cell(w?.strand)}</tr>
+          <tr><th>Introduction</th>${cell(w?.introduction)}</tr>
+          <tr><th>Activities</th>${cell(w?.activities)}</tr>
+          <tr><th>Assessment</th>${cell(w?.assessment)}</tr>
+          <tr><th>Resources</th>${cell(w?.resources)}</tr>
+        </table>
+      </section>`,
+    )
+    .join("");
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)}</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;padding:28px 18px 90px;background:#F0FDF4;color:#111827;
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.5}
+  .sheet{max-width:900px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;
+         box-shadow:0 18px 40px rgba(6,78,59,.12)}
+  header{background:#064E3B;color:#fff;padding:26px 32px}
+  header h1{margin:0;font-size:24px;letter-spacing:-.4px}
+  header p{margin:6px 0 0;color:#FACC15;font-size:12px;font-weight:700;
+           text-transform:uppercase;letter-spacing:.18em}
+  main{padding:28px 32px}
+  section{margin-bottom:28px}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.18em;color:#064E3B;
+     margin:0 0 10px;padding-bottom:6px;border-bottom:2px solid #D1FAE5}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{border:1px solid #E5E7EB;padding:9px 12px;text-align:left;vertical-align:top}
+  th{background:#F0FDF4;color:#064E3B;font-weight:700;width:26%;white-space:nowrap}
+  ul{margin:0;padding-left:20px;font-size:13px}
+  li{margin-bottom:4px}
+  [contenteditable="true"]{outline:none;transition:background .15s}
+  [contenteditable="true"]:hover{background:#F9FEFB}
+  [contenteditable="true"]:focus{background:#FFFDEB;box-shadow:inset 0 0 0 2px #FACC15}
+  .bar{position:fixed;left:0;right:0;bottom:0;background:#064E3B;color:#fff;
+       padding:12px 18px;display:flex;gap:10px;align-items:center;justify-content:center;
+       box-shadow:0 -6px 20px rgba(0,0,0,.15);z-index:10}
+  .bar span{font-size:11px;opacity:.75;margin-right:auto}
+  .bar button{font:inherit;font-size:12px;font-weight:800;text-transform:uppercase;
+              letter-spacing:.08em;border:0;border-radius:10px;padding:9px 16px;cursor:pointer}
+  .save{background:#FACC15;color:#064E3B}
+  .print{background:rgba(255,255,255,.15);color:#fff}
+  @media print{body{background:#fff;padding:0}.sheet{box-shadow:none}
+    .bar{display:none}.week{page-break-inside:avoid}
+    [contenteditable="true"]:hover{background:none}}
+</style>
+</head>
+<body>
+  <div class="sheet">
+    <header>
+      <h1 contenteditable="true">${esc(lp?.overallTopic || title || "Lesson Plan")}</h1>
+      <p contenteditable="true">${esc(lp?.subject || "")}${
+        lp?.class ? ` • ${esc(lp.class)}` : ""
+      }</p>
+    </header>
+    <main>
+      <section>
+        <h2>Details</h2>
+        <table>
+          ${detail("Term", lp?.term)}
+          ${detail("Subject", lp?.subject)}
+          ${detail("Academic Year", lp?.academicYear)}
+          ${detail("Class / Year Group", lp?.class)}
+          ${detail("Duration", lp?.duration)}
+          ${detail("Date", lp?.date)}
+          ${detail("Prepared By", lp?.preparedBy)}
+          ${detail("Checked By", lp?.checkedBy)}
+        </table>
+      </section>
+      ${listBlock("Learning Objectives", lp?.learningObjectiveSummary)}
+      ${listBlock("Success Criteria", lp?.successCriteria)}
+      ${listBlock("Essential Questions", lp?.essentialQuestions)}
+      ${listBlock("Key Competencies", lp?.keyCompetencies)}
+      ${listBlock("Portfolio Evidence", lp?.portfolioEvidence)}
+      ${weeks}
+    </main>
+  </div>
+
+  <div class="bar">
+    <span>Click any field to edit • changes are kept when you save a copy</span>
+    <button class="print" onclick="window.print()">Print / PDF</button>
+    <button class="save" onclick="saveCopy()">Save Changes</button>
+  </div>
+
+<script>
+  // Serialise the page as it currently stands — including every edit — and
+  // hand it back as a fresh download.
+  function saveCopy() {
+    var doc = '<!doctype html>\\n' + document.documentElement.outerHTML;
+    var blob = new Blob([doc], { type: 'text/html;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = (document.title || 'Lesson Plan') + '.html';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+  // Warn before losing unsaved edits.
+  var dirty = false;
+  document.addEventListener('input', function () { dirty = true; });
+  window.addEventListener('beforeunload', function (e) {
+    if (dirty) { e.preventDefault(); e.returnValue = ''; }
+  });
+</script>
+</body>
+</html>`;
+};
+
 // ---------------------------------------------------------------------------
 // Lesson plan approval workflow.
 //   teacher submits → Head of Department → Coordinator → back to the teacher.
@@ -7985,6 +8142,34 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     } finally {
       setIsSuggesting(null);
     }
+  };
+
+  // Download the plan as a self-contained HTML file that stays editable: every
+  // field is contenteditable and the page can save an updated copy of itself,
+  // so it works offline with nothing but a browser.
+  const downloadLessonPlanHTML = () => {
+    if (!content?.lessonPlan) {
+      alert("No lesson plan data to export.");
+      return;
+    }
+    const lp = content.lessonPlan;
+    const title = lp.overallTopic || content.lessonTitle || "Lesson Plan";
+    const fileName =
+      buildSubmissionTitle(content, selectedWeekForSubmission)
+        .replace(/[^\w\s•—-]/g, "")
+        .replace(/\s*[•—]\s*/g, " - ")
+        .trim() || "Lesson Plan";
+
+    const html = buildLessonPlanEditableHTML(lp, title);
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${fileName}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const downloadLessonPlanExcel = () => {
@@ -32688,11 +32873,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           <div className="flex items-center justify-end gap-2 min-w-[150px]">
             {isReviewMode && content?.lessonPlan && (
               <button
-                onClick={downloadLessonPlanExcel}
-                title="Download as Excel"
+                onClick={downloadLessonPlanHTML}
+                title="Download as an editable HTML file"
                 className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all active:scale-95 bg-white text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] shadow-sm"
               >
-                <FileSpreadsheet size={16} /> Excel
+                <FileCode size={16} /> HTML
               </button>
             )}
             {/* All Plans now lives in the left pane's Lesson group; only the
@@ -32742,11 +32927,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     )}
                   </button>
                   <button
-                    onClick={downloadLessonPlanExcel}
-                    title="Download as Excel"
+                    onClick={downloadLessonPlanHTML}
+                    title="Download as an editable HTML file"
                     className="p-2 rounded-xl text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] transition-colors"
                   >
-                    <FileSpreadsheet size={16} />
+                    <FileCode size={16} />
                   </button>
                   <button
                     onClick={() =>
@@ -32861,11 +33046,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           Email
                         </button>
                         <button
-                          onClick={downloadLessonPlanExcel}
-                          title="Download as Excel"
+                          onClick={downloadLessonPlanHTML}
+                          title="Download as an editable HTML file"
                           className="inline-flex flex-col items-center justify-center gap-1 px-2 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all active:scale-95 bg-white text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] shadow-sm"
                         >
-                          <FileSpreadsheet size={16} /> Excel
+                          <FileCode size={16} /> HTML
                         </button>
                         <button
                           onClick={() =>
