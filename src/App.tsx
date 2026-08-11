@@ -20190,39 +20190,109 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         )}
 
                         {isPlanReviewer &&
-                          project.category === "lesson-plan" && (
-                            <div className="flex flex-wrap gap-2">
-                              {getReviewStage(project) === "pending_hod" &&
-                                canReviewAsHod && (
+                          project.category === "lesson-plan" &&
+                          (() => {
+                            // Both approvals are always visible so the order is
+                            // obvious: step 1 the Head of Department, step 2 the
+                            // Coordinator, who returns it to the teacher.
+                            const stage = getReviewStage(project);
+                            const hodDone =
+                              stage === "pending_coordinator" ||
+                              stage === "approved";
+                            const coordDone = stage === "approved";
+                            const hodTurn = stage === "pending_hod";
+                            const coordTurn = stage === "pending_coordinator";
+                            return (
+                              <div className="space-y-2">
+                                <div className="grid grid-cols-2 gap-2">
                                   <button
                                     onClick={() => hodApprovePlan(project)}
-                                    className="flex-1 min-w-[130px] inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-[#059669] text-white text-[10px] font-black uppercase tracking-widest hover:bg-[#047857] transition-all shadow-sm active:scale-95"
+                                    disabled={!hodTurn || !canReviewAsHod}
+                                    title={
+                                      hodDone
+                                        ? `Approved by the Head of Department${
+                                            project.hodApprovedBy
+                                              ? ` — ${project.hodApprovedBy}`
+                                              : ""
+                                          }`
+                                        : !canReviewAsHod
+                                          ? "Only the Head of Department can approve this step"
+                                          : "Step 1 — Head of Department approval"
+                                    }
+                                    className={cn(
+                                      "inline-flex flex-col items-center justify-center gap-0.5 px-2 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm",
+                                      hodDone
+                                        ? "bg-emerald-50 text-emerald-700 border-2 border-emerald-200 cursor-default"
+                                        : hodTurn && canReviewAsHod
+                                          ? "bg-[#059669] text-white hover:bg-[#047857] active:scale-95"
+                                          : "bg-gray-100 text-gray-400 cursor-not-allowed",
+                                    )}
                                   >
-                                    <CheckCircle size={12} /> Approve → Coord.
+                                    <span className="flex items-center gap-1.5">
+                                      <CheckCircle size={12} />
+                                      {hodDone ? "HOD Approved" : "1 · HOD"}
+                                    </span>
+                                    {!hodDone && (
+                                      <span className="text-[8px] opacity-70 normal-case tracking-normal">
+                                        Head of Department
+                                      </span>
+                                    )}
                                   </button>
-                                )}
-                              {getReviewStage(project) ===
-                                "pending_coordinator" &&
-                                canReviewAsCoordinator && (
+
                                   <button
                                     onClick={() =>
                                       coordinatorApprovePlan(project)
                                     }
-                                    className="flex-1 min-w-[130px] inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-[#064E3B] text-white text-[10px] font-black uppercase tracking-widest hover:bg-[#0B6B4F] transition-all shadow-sm active:scale-95"
+                                    disabled={
+                                      !coordTurn || !canReviewAsCoordinator
+                                    }
+                                    title={
+                                      coordDone
+                                        ? `Approved by the Coordinator${
+                                            project.approvedBy
+                                              ? ` — ${project.approvedBy}`
+                                              : ""
+                                          }`
+                                        : !hodDone
+                                          ? "Waiting for the Head of Department to approve first"
+                                          : !canReviewAsCoordinator
+                                            ? "Only the Coordinator can approve this step"
+                                            : "Step 2 — Coordinator approves and returns it to the teacher"
+                                    }
+                                    className={cn(
+                                      "inline-flex flex-col items-center justify-center gap-0.5 px-2 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm",
+                                      coordDone
+                                        ? "bg-emerald-50 text-emerald-700 border-2 border-emerald-200 cursor-default"
+                                        : coordTurn && canReviewAsCoordinator
+                                          ? "bg-[#064E3B] text-white hover:bg-[#0B6B4F] active:scale-95"
+                                          : "bg-gray-100 text-gray-400 cursor-not-allowed",
+                                    )}
                                   >
-                                    <CheckCircle size={12} /> Approve & Return
+                                    <span className="flex items-center gap-1.5">
+                                      <CheckCircle size={12} />
+                                      {coordDone
+                                        ? "Approved"
+                                        : "2 · Coordinator"}
+                                    </span>
+                                    {!coordDone && (
+                                      <span className="text-[8px] opacity-70 normal-case tracking-normal">
+                                        Approve &amp; return
+                                      </span>
+                                    )}
+                                  </button>
+                                </div>
+
+                                {stage !== "approved" && (
+                                  <button
+                                    onClick={() => openFeedbackModal(project)}
+                                    className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-amber-400 text-amber-950 text-[10px] font-black uppercase tracking-widest hover:bg-amber-300 transition-all shadow-sm active:scale-95"
+                                  >
+                                    <MessageSquare size={12} /> Request Changes
                                   </button>
                                 )}
-                              {getReviewStage(project) !== "approved" && (
-                                <button
-                                  onClick={() => openFeedbackModal(project)}
-                                  className="flex-1 min-w-[130px] inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-amber-400 text-amber-950 text-[10px] font-black uppercase tracking-widest hover:bg-amber-300 transition-all shadow-sm active:scale-95"
-                                >
-                                  <MessageSquare size={12} /> Request Changes
-                                </button>
-                              )}
-                            </div>
-                          )}
+                              </div>
+                            );
+                          })()}
 
                         {/* When it was submitted, and when each step signed off */}
                         <div className="pt-3 border-t border-gray-50 space-y-1">
