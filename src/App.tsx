@@ -11020,6 +11020,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   ]);
 
   const [teacherSearchQuery, setTeacherSearchQuery] = useState("");
+  // Merging duplicate directory records: which one survives per group.
+  const [mergeDupesOpen, setMergeDupesOpen] = useState(false);
+  const [mergeKeepIds, setMergeKeepIds] = useState<Record<number, string>>({});
+  const [isMerging, setIsMerging] = useState(false);
 
   const [subjects, setSubjects] = useState<string[]>(() => {
     return [
@@ -11246,6 +11250,100 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   // "Year 1", "Year 3" → "Y1, Y3"
   const shortYearList = (ygs: string[]) =>
     ygs.map((y) => y.replace(/^Year\s*/i, "Y")).join(", ");
+
+  // Records that look like the same person filed more than once — one name is
+  // a prefix of another once punctuation and spacing are stripped, so
+  // "SHA", "SHAHIDAH" and "Shahidah.A" group together. Prefix (not any-substring)
+  // keeps unrelated staff apart.
+  const duplicateTeacherGroups = (): any[][] => {
+    const active = getActiveStaffList(teachers);
+    const used = new Set<string>();
+    const groups: any[][] = [];
+    active.forEach((t: any) => {
+      if (used.has(t.id)) return;
+      const a = normalizeTeacherName(t.name || "");
+      if (!a) return;
+      const group = [t];
+      active.forEach((o: any) => {
+        if (o.id === t.id || used.has(o.id)) return;
+        const b = normalizeTeacherName(o.name || "");
+        if (!b) return;
+        if (a.startsWith(b) || b.startsWith(a)) group.push(o);
+      });
+      if (group.length > 1) {
+        group.forEach((g) => used.add(g.id));
+        groups.push(group);
+      }
+    });
+    return groups;
+  };
+
+  // Fold duplicate records into one, moving every reference across first so no
+  // subject assignment, quota, timetable slot or duty is orphaned.
+  const mergeTeacherRecords = async (
+    survivorId: string,
+    duplicateIds: string[],
+  ) => {
+    const drop = duplicateIds.filter((id) => id && id !== survivorId);
+    if (drop.length === 0) return;
+    const remap = (id: string) => (drop.includes(id) ? survivorId : id);
+
+    const nextAssignments: Record<string, string> = {};
+    Object.entries(staffAssignments || {}).forEach(([key, ids]) => {
+      const mapped = Array.from(
+        new Set(
+          (ids || "")
+            .split(",")
+            .map((i) => i.trim())
+            .filter(Boolean)
+            .map(remap),
+        ),
+      );
+      nextAssignments[key] = mapped.join(",");
+    });
+
+    const nextQuotas = assignmentQuotas.map((q: any) => ({
+      ...q,
+      teacherId: remap(q.teacherId),
+    }));
+
+    const nextGrid: any = {};
+    Object.entries(timetableGrid || {}).forEach(([yg, days]: any) => {
+      nextGrid[yg] = {};
+      Object.entries(days || {}).forEach(([day, slots]: any) => {
+        nextGrid[yg][day] = (slots || []).map((slot: any) =>
+          Array.isArray(slot)
+            ? slot.map((a: any) => ({ ...a, teacherId: remap(a.teacherId) }))
+            : slot
+              ? { ...slot, teacherId: remap(slot.teacherId) }
+              : slot,
+        );
+      });
+    });
+
+    const nextDuties: any = {};
+    Object.entries(teacherDuties || {}).forEach(([tId, days]: any) => {
+      const target = remap(tId);
+      nextDuties[target] = { ...(nextDuties[target] || {}), ...days };
+    });
+
+    const nextTeachers = teachers.filter((t) => !drop.includes(t.id));
+
+    setTeachers(nextTeachers);
+    setStaffAssignments(nextAssignments);
+    setAssignmentQuotas(nextQuotas);
+    setTimetableGrid(nextGrid);
+    setTeacherDuties(nextDuties);
+    setHasUnsavedTimetableChanges(true);
+
+    await saveTimetableDataToFirestore(
+      nextTeachers,
+      nextAssignments,
+      nextQuotas,
+      nextGrid,
+      nextDuties,
+    );
+  };
 
   // One search predicate for the directory — used by both the result count and
   // the list, so they can never disagree. Matches the subjects a teacher is
@@ -11901,6 +11999,50 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         p?.folderId === teacherFolderId(n) || sameTeacherName(p?.teacherName, n),
     );
   };
+
+  // One-off cleanup: "SHA", "SHAHIDAH" and "Shahidah.A" are the same person.
+  // Fold them into the record named SHA, moving every subject, quota, timetable
+  // slot and duty across first. Deliberately narrow — it matches only SHA and
+  // SHAHIDAH* so a name like SHARON is never caught — and becomes a no-op once
+  // a single record remains.
+  const shaMergeRun = useRef(false);
+  useEffect(() => {
+    if (!user || !userRoles.includes("admin")) return;
+    if (shaMergeRun.current) return;
+
+    const family = getActiveStaffList(teachers).filter((t: any) => {
+      const n = normalizeTeacherName(t.name || "");
+      return n === "SHA" || n.startsWith("SHAHIDAH");
+    });
+    if (family.length < 2) return;
+
+    // Keep the one actually called SHA; otherwise the shortest name.
+    const survivor =
+      family.find((t: any) => normalizeTeacherName(t.name || "") === "SHA") ||
+      [...family].sort(
+        (a: any, b: any) => (a.name || "").length - (b.name || "").length,
+      )[0];
+    const others = family
+      .filter((t: any) => t.id !== survivor.id)
+      .map((t: any) => t.id);
+    if (others.length === 0) return;
+
+    shaMergeRun.current = true;
+    mergeTeacherRecords(survivor.id, others)
+      .then(() => {
+        // Make sure the surviving record carries the short name.
+        if (normalizeTeacherName(survivor.name || "") !== "SHA") {
+          setTeachers((prev) =>
+            prev.map((t) => (t.id === survivor.id ? { ...t, name: "SHA" } : t)),
+          );
+          setHasUnsavedTimetableChanges(true);
+        }
+        console.log(
+          `Merged ${others.length} duplicate record(s) into "${survivor.name}".`,
+        );
+      })
+      .catch((err) => console.warn("SHA merge:", err));
+  }, [user, userRoles, teachers]);
 
   // Every teacher in the directory gets their own submissions folder, created
   // automatically so the folders are already waiting before anyone submits.
@@ -20743,6 +20885,16 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
+                  {duplicateTeacherGroups().length > 0 && (
+                    <button
+                      onClick={() => setMergeDupesOpen(true)}
+                      title="Fold records that look like the same teacher into one"
+                      className="bg-red-50 text-red-600 px-6 py-3 rounded-2xl font-bold flex items-center gap-2 border-2 border-red-100 hover:border-red-400 transition-all"
+                    >
+                      <Users size={18} /> Merge Duplicates (
+                      {duplicateTeacherGroups().length})
+                    </button>
+                  )}
                   <button
                     onClick={() => syncTeacherSubjectsFromAssignments()}
                     title="Copy each teacher's assigned subjects from the lesson plan mapping into their directory record"
@@ -21056,6 +21208,135 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   ));
                 })()}
               </div>
+
+              {/* Merge duplicate teacher records */}
+              {mergeDupesOpen && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4">
+                  <motion.div
+                    initial={{ scale: 0.95, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="bg-white rounded-[2.5rem] w-full max-w-2xl p-8 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto custom-scrollbar"
+                  >
+                    <div className="flex justify-between items-start gap-4">
+                      <div>
+                        <h4 className="text-2xl font-black text-[#064E3B]">
+                          Merge Duplicate Teachers
+                        </h4>
+                        <p className="text-xs font-bold text-[#064E3B]/50 mt-1 max-w-lg">
+                          These records look like the same person. Pick the name
+                          to keep — every subject, quota, timetable slot and duty
+                          moves onto it, and the others are removed.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setMergeDupesOpen(false)}
+                        className="p-2 hover:bg-gray-100 rounded-full shrink-0"
+                      >
+                        <X size={18} />
+                      </button>
+                    </div>
+
+                    {(() => {
+                      const groups = duplicateTeacherGroups();
+                      if (groups.length === 0)
+                        return (
+                          <p className="text-sm font-bold text-[#064E3B]/40 py-6 text-center">
+                            No duplicate records found.
+                          </p>
+                        );
+                      return (
+                        <div className="space-y-4">
+                          {groups.map((group, gi) => {
+                            const keepId = mergeKeepIds[gi] || group[0].id;
+                            return (
+                              <div
+                                key={gi}
+                                className="rounded-2xl border-2 border-[#D1FAE5] p-4 space-y-3"
+                              >
+                                <p className="text-[10px] font-black uppercase tracking-widest text-[#064E3B]/40">
+                                  {group.length} records — keep which name?
+                                </p>
+                                <div className="flex flex-wrap gap-2">
+                                  {group.map((t: any) => {
+                                    const subjectCount = Object.keys(
+                                      subjectsForTeacher(t),
+                                    ).length;
+                                    return (
+                                      <button
+                                        key={t.id}
+                                        onClick={() =>
+                                          setMergeKeepIds((prev) => ({
+                                            ...prev,
+                                            [gi]: t.id,
+                                          }))
+                                        }
+                                        className={cn(
+                                          "px-4 py-2.5 rounded-xl border-2 text-left transition-all",
+                                          keepId === t.id
+                                            ? "bg-[#059669] border-[#059669] text-white"
+                                            : "bg-white border-[#D1FAE5] text-[#064E3B] hover:border-[#059669]",
+                                        )}
+                                      >
+                                        <span className="block text-xs font-black uppercase tracking-wider">
+                                          {t.name}
+                                        </span>
+                                        <span
+                                          className={cn(
+                                            "block text-[9px] font-bold",
+                                            keepId === t.id
+                                              ? "text-white/70"
+                                              : "text-[#064E3B]/40",
+                                          )}
+                                        >
+                                          {subjectCount} subject
+                                          {subjectCount === 1 ? "" : "s"}
+                                          {t.email ? ` • ${t.email}` : ""}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                <button
+                                  onClick={async () => {
+                                    const others = group
+                                      .filter((t: any) => t.id !== keepId)
+                                      .map((t: any) => t.id);
+                                    const keepName = group.find(
+                                      (t: any) => t.id === keepId,
+                                    )?.name;
+                                    if (
+                                      !window.confirm(
+                                        `Keep "${keepName}" and merge ${others.length} other record(s) into it?`,
+                                      )
+                                    )
+                                      return;
+                                    setIsMerging(true);
+                                    try {
+                                      await mergeTeacherRecords(keepId, others);
+                                    } finally {
+                                      setIsMerging(false);
+                                    }
+                                  }}
+                                  disabled={isMerging}
+                                  className="w-full py-2.5 rounded-xl bg-[#064E3B] text-white text-[11px] font-black uppercase tracking-widest hover:bg-[#0B6B4F] transition-all disabled:opacity-50 inline-flex items-center justify-center gap-2"
+                                >
+                                  {isMerging ? (
+                                    <Loader2 size={14} className="animate-spin" />
+                                  ) : (
+                                    <Users size={14} />
+                                  )}
+                                  Merge Into{" "}
+                                  {group.find((t: any) => t.id === keepId)?.name}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </motion.div>
+                </div>
+              )}
 
               {/* Edit Teacher Modal */}
               {editingTeacher && (
@@ -27083,7 +27364,27 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     )
                   )}
 
-                  <div className="p-12 pt-6 flex flex-col gap-6 flex-1 relative pointer-events-none select-text">
+                  {/* The "band" theme paints a solid header across the top 23%
+                      of the slide; the title sits inside it, so reserve that
+                      height or the body text runs underneath the band. */}
+                  <div
+                    className="p-12 pt-6 flex flex-col gap-6 flex-1 relative pointer-events-none select-text"
+                    style={
+                      activeTheme.designType === "band" &&
+                      !currentSlide.backgroundWallpaper
+                        ? { paddingTop: "3.5%" }
+                        : undefined
+                    }
+                  >
+                    <div
+                      className="flex flex-col gap-6 shrink-0"
+                      style={
+                        activeTheme.designType === "band" &&
+                        !currentSlide.backgroundWallpaper
+                          ? { minHeight: "23%", justifyContent: "center" }
+                          : undefined
+                      }
+                    >
                     <h3
                       dangerouslySetInnerHTML={{ __html: currentSlide.title }}
                       contentEditable={true}
@@ -27142,6 +27443,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       className="h-1 w-20"
                       style={{ backgroundColor: activeTheme.accentColor }}
                     />
+                    </div>
 
                     {!currentSlide.layoutType ||
                     currentSlide.layoutType === "standard" ? (
