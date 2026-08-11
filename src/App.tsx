@@ -9071,17 +9071,46 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     }
   };
 
+  // "SHA", "SHAHIDAH", "NUR SHAHIDAH" and "Shahidah.A" are one person. Matching
+  // on "contains SHAHIDAH" (or the exact short name) keeps SHARON and SHAFIQ out.
+  const isShaFamilyName = (name: string): boolean => {
+    const n = normalizeTeacherName(name || "");
+    return n === "SHA" || n.includes("SHAHIDAH");
+  };
+
+  // The directory's spelling of a name, so folders and submissions always use
+  // one canonical form instead of whatever the submitter happened to be called.
+  const canonicalTeacherName = (name: string): string => {
+    const raw = (name || "").trim();
+    if (!raw) return raw;
+    if (isShaFamilyName(raw)) {
+      const sha = getActiveStaffList(teachers).find(
+        (t: any) => normalizeTeacherName(t.name || "") === "SHA",
+      );
+      return sha?.name || "SHA";
+    }
+    const norm = normalizeTeacherName(raw);
+    const exact = getActiveStaffList(teachers).find(
+      (t: any) => normalizeTeacherName(t.name || "") === norm,
+    );
+    if (exact) return exact.name;
+    const byToken = getActiveStaffList(teachers).find((t: any) =>
+      sameTeacherName(t.name, raw),
+    );
+    return byToken?.name || raw;
+  };
+
   // Every teacher gets one folder in the submissions area, with a deterministic
   // id so a submission can be filed into it without a lookup — and so the same
   // teacher never ends up with two folders.
   const teacherFolderId = (name: string): string =>
-    `teacher_${normalizeTeacherName(name).toLowerCase()}`;
+    `teacher_${normalizeTeacherName(canonicalTeacherName(name)).toLowerCase()}`;
 
   // Best effort: teachers may not have permission to create folders, in which
   // case the plan still records the folder id and drops in once an admin has
   // run "Folders For All Teachers".
   const ensureTeacherFolder = async (name: string): Promise<string> => {
-    const trimmed = (name || "").trim();
+    const trimmed = canonicalTeacherName((name || "").trim());
     if (!trimmed) return "";
     const id = teacherFolderId(trimmed);
     if (submittedFolders.some((f) => f.id === id)) return id;
@@ -12010,10 +12039,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     if (!user || !userRoles.includes("admin")) return;
     if (shaMergeRun.current) return;
 
-    const family = getActiveStaffList(teachers).filter((t: any) => {
-      const n = normalizeTeacherName(t.name || "");
-      return n === "SHA" || n.startsWith("SHAHIDAH");
-    });
+    const family = getActiveStaffList(teachers).filter((t: any) =>
+      isShaFamilyName(t.name),
+    );
     if (family.length < 2) return;
 
     // Keep the one actually called SHA; otherwise the shortest name.
@@ -12043,6 +12071,64 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       })
       .catch((err) => console.warn("SHA merge:", err));
   }, [user, userRoles, teachers]);
+
+  // Consolidate the SHA folders: submissions filed under SHAHIDAH or
+  // NUR SHAHIDAH move into SHA's folder and the empty duplicates go.
+  const shaFolderRun = useRef(false);
+  useEffect(() => {
+    if (!user || !userRoles.includes("admin")) return;
+    if (isFetchingSubmittedFolders || isFetchingSubmitted) return;
+    if (shaFolderRun.current) return;
+
+    const target = teacherFolderId("SHA");
+    const strays = submittedFolders.filter(
+      (f: any) => isShaFamilyName(f.name) && f.id !== target,
+    );
+    if (strays.length === 0) return;
+
+    shaFolderRun.current = true;
+    const strayIds = strays.map((f: any) => f.id);
+    (async () => {
+      try {
+        // The folder everything lands in.
+        await setDoc(
+          doc(db, "submitted_folders", target),
+          {
+            name: "SHA",
+            teacherFolder: true,
+            createdAt: Date.now(),
+            createdBy: user.email || "",
+          },
+          { merge: true },
+        );
+        // Re-file the submissions sitting in the duplicates.
+        const moving = submittedProjects.filter((p: any) =>
+          strayIds.includes(p.folderId),
+        );
+        await Promise.all(
+          moving.map((p: any) =>
+            updateDoc(doc(db, "submitted_plans", p.id), { folderId: target }),
+          ),
+        );
+        // Then drop the now-empty duplicates.
+        await Promise.all(
+          strayIds.map((id) => deleteDoc(doc(db, "submitted_folders", id))),
+        );
+        console.log(
+          `Merged ${strayIds.length} folder(s) into SHA, moving ${moving.length} submission(s).`,
+        );
+      } catch (err) {
+        console.warn("SHA folder merge:", err);
+      }
+    })();
+  }, [
+    user,
+    userRoles,
+    submittedFolders,
+    submittedProjects,
+    isFetchingSubmittedFolders,
+    isFetchingSubmitted,
+  ]);
 
   // Every teacher in the directory gets their own submissions folder, created
   // automatically so the folders are already waiting before anyone submits.
