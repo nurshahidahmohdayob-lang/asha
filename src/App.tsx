@@ -20865,8 +20865,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           No staff matches found
                         </p>
                         <p className="text-xs font-bold text-[#064E3B]/60">
-                          Try searching for a different name, role, email, phone
-                          number, or subject.
+                          Try searching for a different name, role, email, or
+                          subject.
                         </p>
                         <button
                           onClick={() => setTeacherSearchQuery("")}
@@ -20910,7 +20910,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                               </div>
 
                               {(teacher.email ||
-                                teacher.phone ||
                                 teacher.nricName ||
                                 teacher.preferredName) && (
                                 <div className="text-[10px] space-y-1 mt-2 pt-2 border-t border-gray-100 text-gray-500 leading-normal text-left">
@@ -20950,79 +20949,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                       </a>
                                     </p>
                                   )}
-                                  {teacher.phone && (
-                                    <p className="flex items-center gap-1.5">
-                                      <span className="text-gray-400 shrink-0 text-xs">
-                                        📞
-                                      </span>
-                                      <span className="text-gray-600 font-bold font-mono text-[9px]">
-                                        {teacher.phone}
-                                      </span>
-                                    </p>
-                                  )}
                                 </div>
                               )}
-                              <div className="space-y-2 mt-2 pt-2 border-t border-gray-100/60 border-dashed">
-                                <div className="space-y-1">
-                                  <div className="flex justify-between text-[8px] font-black uppercase tracking-widest text-[#064E3B]/40">
-                                    <span>Quota Load:</span>
-                                    <span
-                                      className={cn(
-                                        (teacherPlannedLoads[teacher.id] || 0) >
-                                          teacher.maxPeriods
-                                          ? "text-red-500 font-bold"
-                                          : "text-[#064E3B]",
-                                      )}
-                                    >
-                                      {teacherPlannedLoads[teacher.id] || 0} /{" "}
-                                      {teacher.maxPeriods} Pds
-                                    </span>
-                                  </div>
-                                  <div className="w-full h-1 bg-gray-100 rounded-full overflow-hidden">
-                                    <div
-                                      className={cn(
-                                        "h-full transition-all",
-                                        (teacherPlannedLoads[teacher.id] || 0) >
-                                          teacher.maxPeriods
-                                          ? "bg-red-500"
-                                          : "bg-[#FACC15]",
-                                      )}
-                                      style={{
-                                        width: `${Math.min(100, ((teacherPlannedLoads[teacher.id] || 0) / teacher.maxPeriods) * 100)}%`,
-                                      }}
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="flex gap-1.5 flex-wrap items-center mt-1 pt-1.5 border-t border-gray-100 border-dashed">
-                                <span className="text-[8px] font-black uppercase text-gray-400">
-                                  Works On:
-                                </span>
-                                {[
-                                  "Monday",
-                                  "Tuesday",
-                                  "Wednesday",
-                                  "Thursday",
-                                  "Friday",
-                                ].map((day) => {
-                                  const isWorking =
-                                    !teacher.workingDays ||
-                                    teacher.workingDays.includes(day);
-                                  return (
-                                    <span
-                                      key={day}
-                                      className={cn(
-                                        "text-[8px] font-extrabold px-1 py-0.5 rounded uppercase tracking-tight",
-                                        isWorking
-                                          ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
-                                          : "bg-gray-50 text-gray-300 line-through",
-                                      )}
-                                    >
-                                      {day.substring(0, 3)}
-                                    </span>
-                                  );
-                                })}
-                              </div>
                             </div>
                           </div>
                         </div>
