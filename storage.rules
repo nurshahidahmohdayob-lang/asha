@@ -1,3 +1,9 @@
+// NOT DEPLOYED. Lesson plan attachments are share links (Drive, OneDrive),
+// so no bucket is needed on the free Spark plan. Kept for the day the project
+// moves to Blaze: create the bucket in the console, add
+//   "storage": { "rules": "storage.rules" }
+// back to firebase.json, then `firebase deploy --only storage`.
+
 rules_version = '2';
 
 // Cloud Storage rules for lesson plan resource attachments.

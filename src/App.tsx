@@ -3045,13 +3045,6 @@ const getSubjectAbbreviation = (subject: string): string => {
 // Firebase
 import { initializeApp } from "firebase/app";
 import {
-  getStorage,
-  ref as storageRef,
-  uploadBytes,
-  getDownloadURL,
-  deleteObject,
-} from "firebase/storage";
-import {
   getAuth,
   onAuthStateChanged,
   signInWithEmailAndPassword,
@@ -3118,8 +3111,6 @@ import type { ChatTurn } from "./services/geminiService";
 // Initialize Firebase
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
-// Lesson plan resource attachments live in Cloud Storage.
-const storage = getStorage(firebaseApp);
 // Using initializeFirestore with long polling to avoid WebSocket issues in some environments
 const db = initializeFirestore(
   firebaseApp,
@@ -7662,103 +7653,79 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
   // --- Resource attachments -------------------------------------------------
   // Files a teacher attaches to a week's resources: pictures, PDFs,
-  // spreadsheets, Word documents, slides. They go to Cloud Storage and the
-  // week keeps a link, so the plan document stays small.
-  const ATTACHMENT_ACCEPT =
-    "image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.txt,.rtf,.odt,.ods";
-  const ATTACHMENT_MAX_MB = 25;
-
-  const [uploadingWeekIdx, setUploadingWeekIdx] = useState<number | null>(null);
+  // spreadsheets, Word documents, slides. They are linked rather than uploaded
+  // — a Drive, OneDrive or any other share link — so nothing has to be hosted.
+  const [linkingWeekIdx, setLinkingWeekIdx] = useState<number | null>(null);
+  const [linkLabel, setLinkLabel] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
 
   const attachmentIcon = (contentType: string, name: string) => {
     const ext = (name.split(".").pop() || "").toLowerCase();
     if (contentType.startsWith("image/")) return ImageIcon;
-    if (contentType === "application/pdf" || ext === "pdf") return FileText;
+    if (["jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "svg"].includes(ext))
+      return ImageIcon;
     if (["xls", "xlsx", "csv", "ods"].includes(ext)) return FileSpreadsheet;
     if (["ppt", "pptx"].includes(ext)) return Presentation;
+    if (["mp4", "mov", "avi", "webm"].includes(ext)) return Play;
     return FileText;
   };
 
-  const formatBytes = (bytes: number) =>
-    bytes >= 1024 * 1024
-      ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-      : `${Math.max(1, Math.round(bytes / 1024))} KB`;
-
-  const uploadWeekAttachments = async (weekIdx: number, files: FileList) => {
-    if (!user) {
-      alert("Sign in before attaching files.");
-      return;
-    }
-    const chosen = Array.from(files);
-    const tooBig = chosen.filter(
-      (f) => f.size > ATTACHMENT_MAX_MB * 1024 * 1024,
-    );
-    if (tooBig.length) {
-      alert(
-        `${tooBig.map((f) => f.name).join(", ")} — each file must be ${ATTACHMENT_MAX_MB} MB or smaller.`,
-      );
-      return;
-    }
-
-    setUploadingWeekIdx(weekIdx);
+  // Work out a sensible label and type from the link itself.
+  const describeLink = (url: string) => {
+    let name = "";
+    let kind = "";
     try {
-      const uploaded = await Promise.all(
-        chosen.map(async (file) => {
-          const id = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-          // Keep the original name readable in the path but strip anything
-          // that would upset Storage.
-          const safeName = file.name.replace(/[^\w.\-() ]/g, "_");
-          const path = `lesson-plan-attachments/${user.uid}/${id}-${safeName}`;
-          const fileRef = storageRef(storage, path);
-          await uploadBytes(fileRef, file, {
-            contentType: file.type || "application/octet-stream",
-          });
-          const url = await getDownloadURL(fileRef);
-          return {
-            id,
-            name: file.name,
-            url,
-            path,
-            contentType: file.type || "application/octet-stream",
-            size: file.size,
-            uploadedAt: Date.now(),
-          };
-        }),
-      );
-
-      const existing =
-        (content?.lessonPlan?.weeklyBreakdown?.[weekIdx] as any)?.attachments ||
-        [];
-      updateWeeklyBreakdown(weekIdx, "attachments", [...existing, ...uploaded]);
-    } catch (err: any) {
-      console.error("Attachment upload failed:", err);
-      alert(
-        `Couldn't upload: ${err?.message || err}\n\nIf this says permission denied, the storage rules still need deploying.`,
-      );
-    } finally {
-      setUploadingWeekIdx(null);
+      const u = new URL(url);
+      const last = decodeURIComponent(u.pathname.split("/").filter(Boolean).pop() || "");
+      const host = u.hostname.replace(/^www\./, "");
+      if (host.includes("drive.google")) kind = "Google Drive";
+      else if (host.includes("docs.google")) kind = "Google Docs";
+      else if (host.includes("sharepoint") || host.includes("1drv") || host.includes("onedrive"))
+        kind = "OneDrive";
+      else if (host.includes("dropbox")) kind = "Dropbox";
+      name = /\.[a-z0-9]{2,5}$/i.test(last) ? last : kind || host;
+    } catch {
+      name = url;
     }
+    return { name: name || url, kind };
   };
 
-  const removeWeekAttachment = async (weekIdx: number, attachmentId: string) => {
+  const addWeekAttachmentLink = (weekIdx: number) => {
+    const url = linkUrl.trim();
+    if (!/^https?:\/\//i.test(url)) {
+      alert("Paste a full link starting with http:// or https://");
+      return;
+    }
+    const described = describeLink(url);
+    const attachment = {
+      id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+      name: linkLabel.trim() || described.name,
+      url,
+      path: "",
+      contentType: described.kind,
+      size: 0,
+      uploadedAt: Date.now(),
+    };
+    const existing =
+      (content?.lessonPlan?.weeklyBreakdown?.[weekIdx] as any)?.attachments || [];
+    updateWeeklyBreakdown(weekIdx, "attachments", [...existing, attachment]);
+    setLinkLabel("");
+    setLinkUrl("");
+    setLinkingWeekIdx(null);
+  };
+
+  const removeWeekAttachment = (weekIdx: number, attachmentId: string) => {
     const week: any = content?.lessonPlan?.weeklyBreakdown?.[weekIdx];
     const target = (week?.attachments || []).find(
       (a: any) => a.id === attachmentId,
     );
     if (!target) return;
     if (!window.confirm(`Remove "${target.name}" from this week?`)) return;
-
     updateWeeklyBreakdown(
       weekIdx,
       "attachments",
       (week.attachments || []).filter((a: any) => a.id !== attachmentId),
     );
-    // Best effort — the plan is already updated either way.
-    try {
-      if (target.path) await deleteObject(storageRef(storage, target.path));
-    } catch (err) {
-      console.warn("Could not delete the stored file:", err);
-    }
   };
 
   const removeWeek = (index: number) => {
@@ -34650,16 +34617,16 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                                       href={att.url}
                                                       target="_blank"
                                                       rel="noreferrer"
-                                                      title={`${att.name} — ${formatBytes(att.size || 0)}`}
+                                                      title={`${att.name} — opens ${att.url}`}
                                                       className="text-[10px] font-bold text-[#064E3B] truncate max-w-[180px] hover:underline"
                                                     >
                                                       {att.name}
                                                     </a>
-                                                    <span className="text-[9px] font-bold text-[#064E3B]/40 shrink-0">
-                                                      {formatBytes(
-                                                        att.size || 0,
-                                                      )}
-                                                    </span>
+                                                    {att.contentType && (
+                                                      <span className="text-[9px] font-bold text-[#064E3B]/40 shrink-0">
+                                                        {att.contentType}
+                                                      </span>
+                                                    )}
                                                     <button
                                                       type="button"
                                                       onClick={() =>
@@ -34668,7 +34635,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                                           att.id,
                                                         )
                                                       }
-                                                      title="Remove this file"
+                                                      title="Remove this attachment"
                                                       className="p-0.5 rounded text-[#064E3B]/30 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0"
                                                     >
                                                       <X size={11} />
@@ -34679,45 +34646,87 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                             </div>
                                           )}
 
-                                          <div className="flex flex-wrap gap-2 mt-2">
-                                            <label
-                                              title="Attach pictures, PDF, Word, Excel or PowerPoint files"
-                                              className={cn(
-                                                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all shadow-sm active:scale-95 border-2",
-                                                uploadingWeekIdx === idx
-                                                  ? "bg-gray-100 text-gray-400 border-gray-200 cursor-wait"
-                                                  : "bg-white text-[#064E3B] border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] cursor-pointer",
-                                              )}
-                                            >
-                                              {uploadingWeekIdx === idx ? (
-                                                <Loader2
-                                                  size={12}
-                                                  className="animate-spin"
-                                                />
-                                              ) : (
-                                                <FileUp size={12} />
-                                              )}
-                                              {uploadingWeekIdx === idx
-                                                ? "Uploading…"
-                                                : "Attach File"}
+                                          {/* Paste a share link to a picture,
+                                              PDF, Word, Excel or slides */}
+                                          {linkingWeekIdx === idx && (
+                                            <div className="mt-2 p-3 rounded-xl border-2 border-[#D1FAE5] bg-[#F0FDF4] space-y-2">
                                               <input
-                                                type="file"
-                                                multiple
-                                                accept={ATTACHMENT_ACCEPT}
-                                                disabled={
-                                                  uploadingWeekIdx !== null
+                                                type="url"
+                                                autoFocus
+                                                value={linkUrl}
+                                                onChange={(e) =>
+                                                  setLinkUrl(e.target.value)
                                                 }
-                                                onChange={(e) => {
-                                                  if (e.target.files?.length)
-                                                    uploadWeekAttachments(
-                                                      idx,
-                                                      e.target.files,
-                                                    );
-                                                  e.target.value = "";
+                                                onKeyDown={(e) => {
+                                                  if (e.key === "Enter")
+                                                    addWeekAttachmentLink(idx);
+                                                  if (e.key === "Escape")
+                                                    setLinkingWeekIdx(null);
                                                 }}
-                                                className="hidden"
+                                                placeholder="Paste the share link — https://drive.google.com/..."
+                                                className="w-full p-2 bg-white border-2 border-[#D1FAE5] rounded-lg text-[11px] font-bold outline-none focus:border-[#059669]"
                                               />
-                                            </label>
+                                              <div className="flex gap-2">
+                                                <input
+                                                  type="text"
+                                                  value={linkLabel}
+                                                  onChange={(e) =>
+                                                    setLinkLabel(e.target.value)
+                                                  }
+                                                  onKeyDown={(e) => {
+                                                    if (e.key === "Enter")
+                                                      addWeekAttachmentLink(idx);
+                                                  }}
+                                                  placeholder="Name it (optional)"
+                                                  className="flex-1 p-2 bg-white border-2 border-[#D1FAE5] rounded-lg text-[11px] font-bold outline-none focus:border-[#059669]"
+                                                />
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    addWeekAttachmentLink(idx)
+                                                  }
+                                                  className="px-4 py-2 rounded-lg bg-[#059669] text-white text-[10px] font-black uppercase tracking-wider hover:bg-[#047857] transition-all active:scale-95"
+                                                >
+                                                  Add
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    setLinkingWeekIdx(null);
+                                                    setLinkUrl("");
+                                                    setLinkLabel("");
+                                                  }}
+                                                  className="px-3 py-2 rounded-lg bg-white text-[#064E3B]/60 border-2 border-[#D1FAE5] text-[10px] font-black uppercase tracking-wider hover:border-[#059669]"
+                                                >
+                                                  Cancel
+                                                </button>
+                                              </div>
+                                              <p className="text-[9px] font-bold text-[#064E3B]/45">
+                                                Any file type — JPEG, PNG, PDF,
+                                                Word, Excel, slides. Upload it to
+                                                Google Drive or OneDrive, set
+                                                sharing to anyone with the link,
+                                                then paste that link here.
+                                              </p>
+                                            </div>
+                                          )}
+
+                                          <div className="flex flex-wrap gap-2 mt-2">
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                setLinkingWeekIdx(
+                                                  linkingWeekIdx === idx
+                                                    ? null
+                                                    : idx,
+                                                )
+                                              }
+                                              title="Attach a picture, PDF, Word, Excel or slides link — from Drive, OneDrive or anywhere"
+                                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all shadow-sm active:scale-95 border-2 bg-white text-[#064E3B] border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] cursor-pointer"
+                                            >
+                                              <FileUp size={12} />
+                                              Attach File
+                                            </button>
                                             <button
                                               onClick={() =>
                                                 generateSlidesForWeek(idx)
