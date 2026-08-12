@@ -145,12 +145,25 @@ export interface ReadingProgram {
   oneDayPlan?: OneDayPlan;
 }
 
+export interface LessonResourceAttachment {
+  id: string;
+  name: string;
+  url: string;
+  /** Storage path, kept so the file can be deleted when removed. */
+  path: string;
+  contentType: string;
+  size: number;
+  uploadedAt: number;
+}
+
 export interface WeeklyPlan {
   week: number;
   unit: string;
   topic: string;
   /** A narrower slice of the week's topic. */
   subTopic?: string;
+  /** Files attached to this week's resources. */
+  attachments?: LessonResourceAttachment[];
   learningObjective: string;
   strand: string;
   introduction: string;

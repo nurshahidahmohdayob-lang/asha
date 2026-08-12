@@ -3045,6 +3045,13 @@ const getSubjectAbbreviation = (subject: string): string => {
 // Firebase
 import { initializeApp } from "firebase/app";
 import {
+  getStorage,
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+  deleteObject,
+} from "firebase/storage";
+import {
   getAuth,
   onAuthStateChanged,
   signInWithEmailAndPassword,
@@ -3111,6 +3118,8 @@ import type { ChatTurn } from "./services/geminiService";
 // Initialize Firebase
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
+// Lesson plan resource attachments live in Cloud Storage.
+const storage = getStorage(firebaseApp);
 // Using initializeFirestore with long polling to avoid WebSocket issues in some environments
 const db = initializeFirestore(
   firebaseApp,
@@ -3334,6 +3343,16 @@ const buildLessonPlanEditableHTML = (lp: any, title: string): string => {
           <tr><th>Activities</th>${cell(w?.activities)}</tr>
           <tr><th>Assessment</th>${cell(w?.assessment)}</tr>
           <tr><th>Resources</th>${cell(w?.resources)}</tr>
+          ${
+            (w?.attachments || []).length
+              ? `<tr><th>Attachments</th><td>${(w.attachments || [])
+                  .map(
+                    (a: any) =>
+                      `<a href="${esc(a.url)}" target="_blank" rel="noreferrer">${esc(a.name)}</a>`,
+                  )
+                  .join(" &middot; ")}</td></tr>`
+              : ""
+          }
         </table>
       </section>`,
     )
@@ -3574,6 +3593,16 @@ const buildLessonPlanShareHTML = (lp: any, title: string): string => {
           ${weekRow("Activities", w?.activities)}
           ${weekRow("Assessment", w?.assessment)}
           ${weekRow("Resources", w?.resources)}
+          ${
+            (w?.attachments || []).length
+              ? `<tr><th>Attachments</th><td>${(w.attachments || [])
+                  .map(
+                    (a: any) =>
+                      `<a href="${esc(a.url)}" target="_blank" rel="noreferrer">${esc(a.name)}</a>`,
+                  )
+                  .join(" &middot; ")}</td></tr>`
+              : ""
+          }
         </table>
       </section>`,
     )
@@ -7615,7 +7644,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const updateWeeklyBreakdown = (
     index: number,
     field: string,
-    value: string,
+    value: any,
   ) => {
     setContent((prev) => {
       if (!prev || !prev.lessonPlan) return prev;
@@ -7629,6 +7658,107 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         },
       };
     });
+  };
+
+  // --- Resource attachments -------------------------------------------------
+  // Files a teacher attaches to a week's resources: pictures, PDFs,
+  // spreadsheets, Word documents, slides. They go to Cloud Storage and the
+  // week keeps a link, so the plan document stays small.
+  const ATTACHMENT_ACCEPT =
+    "image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.txt,.rtf,.odt,.ods";
+  const ATTACHMENT_MAX_MB = 25;
+
+  const [uploadingWeekIdx, setUploadingWeekIdx] = useState<number | null>(null);
+
+  const attachmentIcon = (contentType: string, name: string) => {
+    const ext = (name.split(".").pop() || "").toLowerCase();
+    if (contentType.startsWith("image/")) return ImageIcon;
+    if (contentType === "application/pdf" || ext === "pdf") return FileText;
+    if (["xls", "xlsx", "csv", "ods"].includes(ext)) return FileSpreadsheet;
+    if (["ppt", "pptx"].includes(ext)) return Presentation;
+    return FileText;
+  };
+
+  const formatBytes = (bytes: number) =>
+    bytes >= 1024 * 1024
+      ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+      : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+
+  const uploadWeekAttachments = async (weekIdx: number, files: FileList) => {
+    if (!user) {
+      alert("Sign in before attaching files.");
+      return;
+    }
+    const chosen = Array.from(files);
+    const tooBig = chosen.filter(
+      (f) => f.size > ATTACHMENT_MAX_MB * 1024 * 1024,
+    );
+    if (tooBig.length) {
+      alert(
+        `${tooBig.map((f) => f.name).join(", ")} — each file must be ${ATTACHMENT_MAX_MB} MB or smaller.`,
+      );
+      return;
+    }
+
+    setUploadingWeekIdx(weekIdx);
+    try {
+      const uploaded = await Promise.all(
+        chosen.map(async (file) => {
+          const id = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+          // Keep the original name readable in the path but strip anything
+          // that would upset Storage.
+          const safeName = file.name.replace(/[^\w.\-() ]/g, "_");
+          const path = `lesson-plan-attachments/${user.uid}/${id}-${safeName}`;
+          const fileRef = storageRef(storage, path);
+          await uploadBytes(fileRef, file, {
+            contentType: file.type || "application/octet-stream",
+          });
+          const url = await getDownloadURL(fileRef);
+          return {
+            id,
+            name: file.name,
+            url,
+            path,
+            contentType: file.type || "application/octet-stream",
+            size: file.size,
+            uploadedAt: Date.now(),
+          };
+        }),
+      );
+
+      const existing =
+        (content?.lessonPlan?.weeklyBreakdown?.[weekIdx] as any)?.attachments ||
+        [];
+      updateWeeklyBreakdown(weekIdx, "attachments", [...existing, ...uploaded]);
+    } catch (err: any) {
+      console.error("Attachment upload failed:", err);
+      alert(
+        `Couldn't upload: ${err?.message || err}\n\nIf this says permission denied, the storage rules still need deploying.`,
+      );
+    } finally {
+      setUploadingWeekIdx(null);
+    }
+  };
+
+  const removeWeekAttachment = async (weekIdx: number, attachmentId: string) => {
+    const week: any = content?.lessonPlan?.weeklyBreakdown?.[weekIdx];
+    const target = (week?.attachments || []).find(
+      (a: any) => a.id === attachmentId,
+    );
+    if (!target) return;
+    if (!window.confirm(`Remove "${target.name}" from this week?`)) return;
+
+    updateWeeklyBreakdown(
+      weekIdx,
+      "attachments",
+      (week.attachments || []).filter((a: any) => a.id !== attachmentId),
+    );
+    // Best effort — the plan is already updated either way.
+    try {
+      if (target.path) await deleteObject(storageRef(storage, target.path));
+    } catch (err) {
+      console.warn("Could not delete the stored file:", err);
+    }
   };
 
   const removeWeek = (index: number) => {
@@ -34496,7 +34626,98 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                             }
                                             className={taCls}
                                           />
+                                          {/* Files attached to this week */}
+                                          {((week as any).attachments || [])
+                                            .length > 0 && (
+                                            <div className="flex flex-wrap gap-2 mt-2">
+                                              {(
+                                                (week as any).attachments || []
+                                              ).map((att: any) => {
+                                                const AttIcon = attachmentIcon(
+                                                  att.contentType || "",
+                                                  att.name || "",
+                                                );
+                                                return (
+                                                  <span
+                                                    key={att.id}
+                                                    className="group/att inline-flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-lg border border-[#D1FAE5] bg-[#F0FDF4] max-w-full"
+                                                  >
+                                                    <AttIcon
+                                                      size={12}
+                                                      className="text-[#059669] shrink-0"
+                                                    />
+                                                    <a
+                                                      href={att.url}
+                                                      target="_blank"
+                                                      rel="noreferrer"
+                                                      title={`${att.name} — ${formatBytes(att.size || 0)}`}
+                                                      className="text-[10px] font-bold text-[#064E3B] truncate max-w-[180px] hover:underline"
+                                                    >
+                                                      {att.name}
+                                                    </a>
+                                                    <span className="text-[9px] font-bold text-[#064E3B]/40 shrink-0">
+                                                      {formatBytes(
+                                                        att.size || 0,
+                                                      )}
+                                                    </span>
+                                                    <button
+                                                      type="button"
+                                                      onClick={() =>
+                                                        removeWeekAttachment(
+                                                          idx,
+                                                          att.id,
+                                                        )
+                                                      }
+                                                      title="Remove this file"
+                                                      className="p-0.5 rounded text-[#064E3B]/30 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0"
+                                                    >
+                                                      <X size={11} />
+                                                    </button>
+                                                  </span>
+                                                );
+                                              })}
+                                            </div>
+                                          )}
+
                                           <div className="flex flex-wrap gap-2 mt-2">
+                                            <label
+                                              title="Attach pictures, PDF, Word, Excel or PowerPoint files"
+                                              className={cn(
+                                                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all shadow-sm active:scale-95 border-2",
+                                                uploadingWeekIdx === idx
+                                                  ? "bg-gray-100 text-gray-400 border-gray-200 cursor-wait"
+                                                  : "bg-white text-[#064E3B] border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] cursor-pointer",
+                                              )}
+                                            >
+                                              {uploadingWeekIdx === idx ? (
+                                                <Loader2
+                                                  size={12}
+                                                  className="animate-spin"
+                                                />
+                                              ) : (
+                                                <FileUp size={12} />
+                                              )}
+                                              {uploadingWeekIdx === idx
+                                                ? "Uploading…"
+                                                : "Attach File"}
+                                              <input
+                                                type="file"
+                                                multiple
+                                                accept={ATTACHMENT_ACCEPT}
+                                                disabled={
+                                                  uploadingWeekIdx !== null
+                                                }
+                                                onChange={(e) => {
+                                                  if (e.target.files?.length)
+                                                    uploadWeekAttachments(
+                                                      idx,
+                                                      e.target.files,
+                                                    );
+                                                  e.target.value = "";
+                                                }}
+                                                className="hidden"
+                                              />
+                                            </label>
                                             <button
                                               onClick={() =>
                                                 generateSlidesForWeek(idx)

@@ -1,0 +1,35 @@
+rules_version = '2';
+
+// Cloud Storage rules for lesson plan resource attachments.
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Default deny.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Staff on the school domain, the named owner account, or anyone holding
+    // the admin role — mirrors isAdmin() in firestore.rules.
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.get('email', '').lower().matches('.*@zera[.]edu[.]my') ||
+        request.auth.token.get('email', '').lower() == 'nurshahidahmohdayob@gmail.com'
+      );
+    }
+
+    // Files a teacher attaches to a week of their lesson plan.
+    //   lesson-plan-attachments/{uid}/{fileName}
+    // Any signed-in member of staff can read them, because a plan is reviewed
+    // by a Head of Department and a Coordinator, and may be shared with the
+    // class. Only the owner (or an admin) can add or remove them.
+    match /lesson-plan-attachments/{userId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if (isSignedIn() && request.auth.uid == userId) || isAdmin();
+      allow delete: if (isSignedIn() && request.auth.uid == userId) || isAdmin();
+    }
+  }
+}
