@@ -10,6 +10,152 @@
   --font-bungee: "Bungee", cursive;
   --font-chewy: "Chewy", cursive;
   --font-pacifico: "Pacifico", cursive;
+
+  /* ── Teaching-deck palette ──
+     The projected deck (TeachingDeck.tsx) uses the Zera brand kit rather than
+     this app's own greens, so a lesson looks the same here as it does in the
+     Life Competencies app. Bare names only (bg-teal, not bg-teal-500), so the
+     numbered Tailwind scales this app already uses are untouched. */
+  --color-brand-50: #eef5f0;
+  --color-brand-100: #d3e6db;
+  --color-brand-200: #a7cdb7;
+  --color-brand-300: #72ab8c;
+  --color-brand-400: #3f8a64;
+  --color-brand-500: #1c6b45;
+  --color-brand-600: #0a4f29;
+  --color-brand-700: #0a4324;
+  --color-brand-800: #0a371f;
+  --color-brand-900: #082b19;
+
+  --color-ink: #0d0d0d;
+  --color-silver: #dfdfe7;
+  --color-sun-soft: #fef9c3;
+
+  /* Sub-brand accents — one per kind of slide. */
+  --color-sunny: #f7b917; /* msc  — Do Now, celebration */
+  --color-sky: #27829e;   /* plus — sharing, speaking */
+  --color-leaf: #668c4a;  /* intl — activities, doing */
+  --color-teal: #3a7a5e;  /* pre  — learning, thinking */
+}
+
+/* ───────── Teaching-deck motion (projected for young children) ─────────
+   Big, friendly, short. All disabled under prefers-reduced-motion below. */
+@keyframes deck-pop-in {
+  0%   { opacity: 0; transform: scale(0.86) translateY(14px); }
+  60%  { opacity: 1; transform: scale(1.03) translateY(0); }
+  100% { transform: scale(1) translateY(0); }
+}
+.anim-pop { animation: deck-pop-in 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+
+/* Staggered entrance for step lists — set --i on each child. */
+.anim-stagger > * {
+  animation: deck-pop-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+
+@keyframes deck-tick-pop {
+  0%   { transform: scale(1); }
+  45%  { transform: scale(1.28) rotate(-8deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+.anim-tick { animation: deck-tick-pop 0.36s ease-out; }
+
+@keyframes deck-wiggle {
+  0%, 100% { transform: rotate(0); }
+  25%      { transform: rotate(-5deg); }
+  75%      { transform: rotate(5deg); }
+}
+.anim-wiggle { animation: deck-wiggle 0.5s ease-in-out; }
+
+@keyframes deck-float-soft {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-7px); }
+}
+.anim-float { animation: deck-float-soft 3.4s ease-in-out infinite; }
+
+/* Timer finishing / correct-answer celebration. */
+@keyframes deck-cheer {
+  0%   { transform: scale(1); }
+  30%  { transform: scale(1.14) rotate(-3deg); }
+  60%  { transform: scale(0.97) rotate(2deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+.anim-cheer { animation: deck-cheer 0.7s ease-out infinite; }
+
+/* Soft pulsing halo behind an element that wants attention. */
+@keyframes deck-halo {
+  0%   { box-shadow: 0 0 0 0 rgba(247, 185, 23, 0.55); }
+  70%  { box-shadow: 0 0 0 22px rgba(247, 185, 23, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(247, 185, 23, 0); }
+}
+.anim-halo { animation: deck-halo 1.6s ease-out infinite; }
+
+/* Slide-stage backdrops. Each week gets one so two weeks don't look alike. */
+.deck-dots {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.34) 2px, transparent 2px);
+  background-size: 30px 30px;
+}
+.deck-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.16) 1.5px, transparent 1.5px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.16) 1.5px, transparent 1.5px);
+  background-size: 46px 46px;
+}
+.deck-rings {
+  background-image: radial-gradient(
+    circle at center,
+    transparent 12px,
+    rgba(255, 255, 255, 0.16) 12px,
+    rgba(255, 255, 255, 0.16) 14px,
+    transparent 14px
+  );
+  background-size: 64px 64px;
+}
+.deck-waves {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.13) 0 3px,
+    transparent 3px 22px
+  );
+}
+.deck-checks {
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.1) 25%, transparent 25% 75%, rgba(255, 255, 255, 0.1) 75%),
+    linear-gradient(45deg, rgba(255, 255, 255, 0.1) 25%, transparent 25% 75%, rgba(255, 255, 255, 0.1) 75%);
+  background-size: 56px 56px;
+  background-position: 0 0, 28px 28px;
+}
+.deck-confetti {
+  background-image:
+    radial-gradient(rgba(255, 255, 255, 0.28) 3px, transparent 3px),
+    radial-gradient(rgba(255, 255, 255, 0.16) 2px, transparent 2px);
+  background-size: 70px 70px, 45px 45px;
+  background-position: 0 0, 22px 30px;
+}
+/* A soft light bloom behind the slide content, on any backdrop. */
+.deck-glow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(60% 55% at 50% 42%, rgba(255, 255, 255, 0.18), transparent 70%);
+  pointer-events: none;
+}
+
+/* Torn-paper / sticky-note feel for reflection strips. */
+.tilt-a { transform: rotate(-1.2deg); }
+.tilt-b { transform: rotate(0.9deg); }
+.tilt-c { transform: rotate(-0.6deg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-pop,
+  .anim-tick,
+  .anim-wiggle,
+  .anim-float,
+  .anim-cheer,
+  .anim-halo,
+  .anim-stagger > * {
+    animation: none;
+  }
 }
 
 /* ZeraBot acorn mascot — give the flat illustration a 3D, lifted feel. */

@@ -35,6 +35,7 @@ import {
   Scissors,
   Library,
   FileUp,
+  Upload,
   Info,
   Search,
   Target,
@@ -127,6 +128,7 @@ import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { ZeraBrandLogo } from "./components/ZeraBrandLogo";
 import { InteractiveOrganizerWorksheet } from "./components/InteractiveOrganizerWorksheet";
+import TeachingDeck from "./components/TeachingDeck";
 import mammoth from "mammoth";
 import JSZip from "jszip";
 
@@ -3090,6 +3092,8 @@ import {
   FontSettings,
   HandoutMetadata,
   WorksheetSection,
+  LessonPlan,
+  WeeklyPlan,
 } from "./types";
 import {
   generateSlides,
@@ -7653,11 +7657,182 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
   // --- Resource attachments -------------------------------------------------
   // Files a teacher attaches to a week's resources: pictures, PDFs,
-  // spreadsheets, Word documents, slides. They are linked rather than uploaded
-  // — a Drive, OneDrive or any other share link — so nothing has to be hosted.
+  // spreadsheets, Word documents, slides. Two ways in — upload one straight
+  // from the device (it goes to the share host and comes back as a link), or
+  // paste a Drive/OneDrive share link. Either way the week only stores a link.
   const [linkingWeekIdx, setLinkingWeekIdx] = useState<number | null>(null);
   const [linkLabel, setLinkLabel] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
+  const [uploadingWeekIdx, setUploadingWeekIdx] = useState<number | null>(null);
+  const [uploadProgress, setUploadProgress] = useState("");
+
+  // --- Teaching deck -------------------------------------------------------
+  // The ready-to-project lesson for one week of the plan: do-now, learning
+  // goals, an activity slide each, share back, check, exit ticket. Built from
+  // the week's own fields, so there is nothing to generate or save.
+  const [teachWeekIdx, setTeachWeekIdx] = useState<number | null>(null);
+  const [pickingTeachWeek, setPickingTeachWeek] = useState(false);
+  // Slides but no lesson plan — still one deck, just without a week's fields.
+  const [teachSlidesOnly, setTeachSlidesOnly] = useState(false);
+
+  const teachWeeks = content?.lessonPlan?.weeklyBreakdown || [];
+
+  // Slide Studio's slides ride inside the deck rather than being projected
+  // separately, so a class only ever sees one thing on the board.
+  const studioSlides = content?.slides || [];
+
+  const soloDeckPlan: LessonPlan = {
+    term: "",
+    subject: content?.subject || subject,
+    duration: "",
+    date: "",
+    academicYear: "",
+    class: content?.gradeLevel || yearGroup,
+    preparedBy: "",
+    checkedBy: "",
+    overallTopic: "",
+    weeklyBreakdown: [],
+  };
+  const soloDeckWeek: WeeklyPlan = {
+    week: 1,
+    unit: "",
+    topic: content?.lessonTitle || lessonInput || "Today's lesson",
+    learningObjective: "",
+    strand: "",
+    introduction: "",
+    activities: "",
+    assessment: "",
+    resources: "",
+  };
+
+  // Discussion prompts and the mini quiz have to be about THIS week, so they
+  // are built from the week's own plan before it goes on the board. Without
+  // this the deck falls back to generic prompts, which is not a lesson.
+  const ensureActivitiesForWeek = async (
+    week: WeeklyPlan,
+    force = false,
+    /** Called the moment there is enough to teach from. The rest of the lesson
+     *  keeps loading behind the open deck. */
+    onReady?: () => void,
+  ) => {
+    if (
+      !force &&
+      content?.lessonPack?.week === week.week &&
+      content.lessonPack.questions.length > 0
+    ) {
+      onReady?.();
+      return; // Already built for this week — don't pay for it twice.
+    }
+    const planCtx = {
+      subject: content?.lessonPlan?.subject || subject,
+      class: content?.lessonPlan?.class || yearGroup,
+      overallTopic: content?.lessonPlan?.overallTopic || week.topic || "",
+    };
+    const aiCtx = {
+      yearGroup: content?.lessonPlan?.class || yearGroup,
+      lexileLevel,
+      subject: content?.lessonPlan?.subject || subject,
+      numSlides: 0,
+      numQuestions: 3,
+      questionTypes: [],
+    };
+    setGeneratingMessage(`Writing the Week ${week.week} lesson…`);
+    setIsGenerating(true);
+    try {
+      const { generateLessonTeaching, generateLessonGames } = await import(
+        "./services/geminiService"
+      );
+      // Halve the wait before anything is on the board: project as soon as the
+      // teaching slides exist, then keep writing the story, games and quiz
+      // while the class is still looking at slide one. They are near the end
+      // of the deck, so they land long before the teacher reaches them.
+      const teaching = await generateLessonTeaching(week, planCtx, aiCtx);
+      setContent((prev) => (prev ? { ...prev, lessonPack: teaching } : prev));
+      setIsGenerating(false);
+      onReady?.();
+
+      const games = await generateLessonGames(week, planCtx, aiCtx).catch((e) => {
+        console.error("Lesson games failed:", e);
+        return null;
+      });
+      if (games) {
+        // Merge rather than replace — the teaching half is already on screen.
+        setContent((prev) =>
+          prev
+            ? {
+                ...prev,
+                lessonPack: { ...games, ...teaching, week: week.week },
+              }
+            : prev,
+        );
+      }
+    } catch (e: any) {
+      console.error("Lesson generation failed:", e);
+      alert(
+        `Could not build the Week ${week.week} lesson:\n\n${
+          e?.message || e
+        }\n\nTry again, or check the AI key in Settings.`,
+      );
+      onReady?.();
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // Used by every "generate slides" button that isn't tied to a plan week.
+  // Slides alone are not a lesson, so this builds the class-facing activities
+  // for the topic and puts the finished deck on the board.
+  const buildAndProjectLesson = async (topic: string) => {
+    const planWeeks = content?.lessonPlan?.weeklyBreakdown || [];
+    // If the topic matches a week of the open plan, teach that week properly.
+    const match = planWeeks.find(
+      (w) =>
+        w.topic?.trim() &&
+        topic.toLowerCase().includes(w.topic.trim().toLowerCase()),
+    );
+    if (match && content?.lessonPlan) {
+      await ensureActivitiesForWeek(match, false, () =>
+        setTeachWeekIdx(planWeeks.indexOf(match)),
+      );
+      return;
+    }
+    // Otherwise treat the topic itself as the lesson. Forced, because a
+    // cached pack for "week 1" belongs to whatever topic was projected last.
+    await ensureActivitiesForWeek(
+      {
+        week: 1,
+        unit: "",
+        topic,
+        learningObjective: "",
+        strand: "",
+        introduction: "",
+        activities: "",
+        assessment: "",
+        resources: "",
+      },
+      true,
+      () => setTeachSlidesOnly(true),
+    );
+  };
+
+  const openTeachingDeck = async () => {
+    if (!content?.lessonPlan || teachWeeks.length === 0) {
+      // No plan is fine as long as there are slides to teach from.
+      if (studioSlides.length > 0) {
+        setTeachSlidesOnly(true);
+        return;
+      }
+      alert(
+        "Nothing to project yet — generate some slides, or open a lesson plan and the deck will be built from one of its weeks.",
+      );
+      return;
+    }
+    if (teachWeeks.length === 1) {
+      await ensureActivitiesForWeek(teachWeeks[0], false, () => setTeachWeekIdx(0));
+    } else {
+      setPickingTeachWeek(true);
+    }
+  };
 
   const attachmentIcon = (contentType: string, name: string) => {
     const ext = (name.split(".").pop() || "").toLowerCase();
@@ -7712,6 +7887,91 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     setLinkLabel("");
     setLinkUrl("");
     setLinkingWeekIdx(null);
+  };
+
+  // Upload files the teacher picked from their device. Each one is stored on
+  // the share host and recorded on the week as a link, exactly like a pasted
+  // one — so printing, exporting and sharing all keep working unchanged.
+  const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+  const uploadWeekFiles = async (
+    weekIdx: number,
+    fileList: FileList | null,
+  ) => {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    setUploadingWeekIdx(weekIdx);
+    const added: any[] = [];
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setUploadProgress(
+          files.length > 1 ? `${i + 1} of ${files.length}` : "",
+        );
+        if (file.size > MAX_ATTACHMENT_BYTES) {
+          alert(
+            `"${file.name}" is bigger than 20 MB. Put it in Google Drive or OneDrive and paste the share link instead.`,
+          );
+          continue;
+        }
+        const form = new FormData();
+        form.append("file", file);
+        let res: Response;
+        try {
+          res = await fetch(`${WORKSHEET_HOST_DEFAULT}/file`, {
+            method: "POST",
+            body: form,
+          });
+        } catch {
+          // A blocked or refused request — almost always the share host not yet
+          // running a build with the /file endpoint.
+          throw new Error(
+            "Couldn't reach the file store. File uploads aren't switched on for the share host yet — deploy the latest worker, or use Paste Link with a Drive or OneDrive share link instead.",
+          );
+        }
+        const data = await res.json().catch(() => null);
+        if (!data && res.ok) {
+          // The host answered, but not with JSON — it's still running a build
+          // without the /file endpoint.
+          throw new Error(
+            "File uploads aren't switched on for the share host yet. Deploy the latest worker, or paste a Drive or OneDrive share link instead.",
+          );
+        }
+        if (!res.ok || !data?.url) {
+          throw new Error(
+            data?.error ||
+              `Upload failed (HTTP ${res.status}). If this keeps happening, paste a Drive or OneDrive share link instead.`,
+          );
+        }
+        added.push({
+          id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+          name: file.name,
+          url: data.url as string,
+          path: String(data.code || ""),
+          contentType: file.type || "",
+          size: file.size,
+          uploadedAt: Date.now(),
+        });
+      }
+      if (added.length) {
+        const existing =
+          (content?.lessonPlan?.weeklyBreakdown?.[weekIdx] as any)
+            ?.attachments || [];
+        updateWeeklyBreakdown(weekIdx, "attachments", [...existing, ...added]);
+      }
+    } catch (e: any) {
+      // Keep whatever did upload before the failure.
+      if (added.length) {
+        const existing =
+          (content?.lessonPlan?.weeklyBreakdown?.[weekIdx] as any)
+            ?.attachments || [];
+        updateWeeklyBreakdown(weekIdx, "attachments", [...existing, ...added]);
+      }
+      alert(`Couldn't upload: ${e?.message || e}`);
+    } finally {
+      setUploadingWeekIdx(null);
+      setUploadProgress("");
+    }
   };
 
   const removeWeekAttachment = (weekIdx: number, attachmentId: string) => {
@@ -8022,42 +8282,19 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     const week = content?.lessonPlan?.weeklyBreakdown[weekIdx];
     if (!week) return;
 
-    setGeneratingMessage(`Generating Slides for Week ${weekIdx + 1}...`);
+    setGeneratingMessage(`Building the Week ${weekIdx + 1} lesson…`);
     setIsGeneratingWeek({ index: weekIdx, type: "slides" });
     setIsGenerating(true);
     try {
-      const topic =
-        !week.topic || week.topic.toLowerCase().includes("auto-assign")
-          ? `${content?.lessonPlan?.overallTopic} - Week ${week.week}: ${week.learningObjective}`
-          : week.topic;
-
-      const result = await generateSlides(topic, {
-        yearGroup: content?.lessonPlan?.class || yearGroup,
-        lexileLevel,
-        subject: content?.lessonPlan?.subject || subject,
-        numSlides: numSlides,
-        numQuestions: 8,
-        questionTypes: selectedQuestionTypes,
-      });
-
-      if (result && result.slides.length > 0) {
-        setContent((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            slides: convertSlidesToMovable(result.slides),
-            slidesMetadata: result.metadata,
-            lessonTitle: topic,
-          };
-        });
-        setCurrentSlideIdx(0);
-        setWorkspaceMode("slides");
-        setCurrentView("slides");
-      } else {
-        alert("Generated slides were empty. Please try again.");
-      }
+      // Only the lesson pack is generated now. The deck used to also call
+      // generateSlides, but those bullet slides duplicated the pack's own
+      // teaching slides and were then hidden — a whole AI round trip spent on
+      // something the class never saw. Dropping it makes this roughly a third
+      // faster. Slide Studio still generates editable slides when you want
+      // them for PowerPoint.
+      await ensureActivitiesForWeek(week, true, () => setTeachWeekIdx(weekIdx));
     } catch (err: any) {
-      handleEduError(err, "Generate slides");
+      handleEduError(err, "Build lesson");
     } finally {
       setIsGeneratingWeek(null);
       setIsGenerating(false);
@@ -8117,18 +8354,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   };
 
   const generateSpecificWeek = async (index: number) => {
-    const activity = lpActivities[index];
+    // Every input here is optional. A teacher who fills nothing in still gets
+    // a week planned from the subject and year group alone; anything they do
+    // type simply steers it.
+    const activity = (lpActivities[index] || "").trim();
     const unit = lpUnit[index];
     const topic = lpWeeklyTopics[index];
     const weekNum = index + 1;
-
-    if (!activity.trim()) {
-      alert(
-        "Please enter an activity description for " +
-          (lpWeekLabels[index] || `Week ${weekNum}`),
-      );
-      return;
-    }
 
     setGeneratingMessage(
       `Generating Weekly Plan for ${lpWeekLabels[index] || `Week ${weekNum}`}...`,
@@ -9922,6 +10154,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       setWorkspaceMode("slides");
       setSidebarTab("slides");
       setCurrentView("slides");
+
+      // Build the class-facing half too, and project it. Without this the
+      // teacher lands in the slide editor and sees the old bullet slides —
+      // the deck is the thing meant to go in front of children.
+      await buildAndProjectLesson(topic);
     }
     } catch (err: any) {
       // Without this, a failed generation (timeout, rate limit, 503…) would
@@ -26574,6 +26811,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             {!isReviewMode && (
               <>
                 <button
+                  onClick={openTeachingDeck}
+                  title="Project the whole lesson as one deck — your slides sit inside the do now, learning goals, activities, share back, check and exit ticket, with a timer, picker and poll built in"
+                  className="px-4 py-2 bg-[#064E3B] text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#0B6B4F] transition-all shadow-sm flex items-center gap-2"
+                >
+                  <Presentation size={14} /> Project Lesson
+                </button>
+                <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
+                <button
                   onClick={() => generateOnlyWorksheet(true)}
                   disabled={isGenerating}
                   className={cn(
@@ -33958,7 +34203,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           <div className="space-y-1">
                             <div className="flex items-center justify-between">
                               <label className="text-[9px] font-black uppercase text-[#064E3B]/40">
-                                Activities & Focus
+                                Activities & Focus (optional)
                               </label>
                               <button
                                 onClick={() =>
@@ -33982,7 +34227,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                 next[i] = e.target.value;
                                 setLpActivities(next);
                               }}
-                              placeholder="Describe activities (e.g., 'Hands-on experiment with circuits')..."
+                              placeholder="Leave blank to let the AI choose, or describe activities (e.g., 'Hands-on experiment with circuits')..."
                               className="w-full h-20 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold resize-none outline-none focus:border-[#059669]"
                             />
                           </div>
@@ -34098,7 +34343,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   >
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                      Lesson Focus / Methodology
+                      Lesson Focus / Methodology (optional)
                     </label>
                     <textarea
                       value={lpDescription}
@@ -34622,11 +34867,18 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                                     >
                                                       {att.name}
                                                     </a>
-                                                    {att.contentType && (
-                                                      <span className="text-[9px] font-bold text-[#064E3B]/40 shrink-0">
-                                                        {att.contentType}
-                                                      </span>
-                                                    )}
+                                                    {/* Show the friendly kind
+                                                        of a pasted link, not
+                                                        an uploaded file's raw
+                                                        MIME type. */}
+                                                    {att.contentType &&
+                                                      !att.contentType.includes(
+                                                        "/",
+                                                      ) && (
+                                                        <span className="text-[9px] font-bold text-[#064E3B]/40 shrink-0">
+                                                          {att.contentType}
+                                                        </span>
+                                                      )}
                                                     <button
                                                       type="button"
                                                       onClick={() =>
@@ -34712,6 +34964,43 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                           )}
 
                                           <div className="flex flex-wrap gap-2 mt-2">
+                                            <label
+                                              title="Upload a picture, PDF, Word, Excel or slides file straight from this device"
+                                              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all shadow-sm active:scale-95 border-2 bg-white text-[#064E3B] border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] ${
+                                                uploadingWeekIdx === null
+                                                  ? "cursor-pointer"
+                                                  : "opacity-50 cursor-not-allowed"
+                                              }`}
+                                            >
+                                              {uploadingWeekIdx === idx ? (
+                                                <Loader2
+                                                  size={12}
+                                                  className="animate-spin"
+                                                />
+                                              ) : (
+                                                <Upload size={12} />
+                                              )}
+                                              {uploadingWeekIdx === idx
+                                                ? `Uploading${uploadProgress ? ` ${uploadProgress}` : ""}…`
+                                                : "Upload File"}
+                                              <input
+                                                type="file"
+                                                multiple
+                                                disabled={
+                                                  uploadingWeekIdx !== null
+                                                }
+                                                className="hidden"
+                                                onChange={(e) => {
+                                                  uploadWeekFiles(
+                                                    idx,
+                                                    e.target.files,
+                                                  );
+                                                  // Let the same file be picked
+                                                  // again later.
+                                                  e.target.value = "";
+                                                }}
+                                              />
+                                            </label>
                                             <button
                                               type="button"
                                               onClick={() =>
@@ -34725,7 +35014,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all shadow-sm active:scale-95 border-2 bg-white text-[#064E3B] border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] cursor-pointer"
                                             >
                                               <FileUp size={12} />
-                                              Attach File
+                                              Paste Link
                                             </button>
                                             <button
                                               onClick={() =>
@@ -34734,6 +35023,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                               disabled={
                                                 isGeneratingWeek !== null
                                               }
+                                              title="Build this week's slides and project the whole lesson — do now, learning goals, activities, share back, check and exit ticket, with the slides inside it"
                                               className="flex items-center gap-1.5 px-3 py-1.5 bg-[#064E3B] text-white rounded-lg text-[10px] font-black uppercase hover:bg-[#0B6B4F] transition-all disabled:opacity-50 cursor-pointer shadow-sm active:scale-95"
                                             >
                                               {isGeneratingWeek?.index ===
@@ -34747,7 +35037,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                               ) : (
                                                 <Presentation size={12} />
                                               )}
-                                              Slides
+                                              Project Lesson
                                             </button>
                                             <button
                                               onClick={() =>
@@ -38110,6 +38400,71 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           />
         )}
       </AnimatePresence>
+
+      {/* Which week are we teaching? Skipped when the plan has only one. */}
+      {pickingTeachWeek && (
+        <div
+          className="fixed inset-0 z-[95] bg-[#064E3B]/50 backdrop-blur-sm flex items-center justify-center p-6"
+          onClick={() => setPickingTeachWeek(false)}
+        >
+          <div
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 max-h-[80vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-black text-[#064E3B]">Which week are you teaching?</h3>
+            <p className="mt-1 text-xs font-bold text-[#064E3B]/50">
+              The deck is built from that week's do now, objectives, activities and assessment.
+            </p>
+            <div className="mt-4 space-y-2">
+              {teachWeeks.map((w, idx) => (
+                <button
+                  key={idx}
+                  onClick={async () => {
+                    setPickingTeachWeek(false);
+                    await ensureActivitiesForWeek(w, false, () =>
+                      setTeachWeekIdx(idx),
+                    );
+                  }}
+                  className="w-full text-left p-3 rounded-2xl border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] transition-all"
+                >
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[#059669]">
+                    Week {w.week}
+                  </span>
+                  <span className="block text-sm font-bold text-[#064E3B]">
+                    {w.topic?.trim() || w.subTopic?.trim() || w.unit?.trim() || "Untitled week"}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setPickingTeachWeek(false)}
+              className="mt-4 w-full py-2.5 rounded-xl bg-[#F0FDF4] text-[#064E3B]/60 font-black text-[10px] uppercase tracking-widest hover:bg-[#D1FAE5]"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {teachWeekIdx !== null && content?.lessonPlan && teachWeeks[teachWeekIdx] && (
+        <TeachingDeck
+          plan={content.lessonPlan}
+          week={teachWeeks[teachWeekIdx]}
+          studioSlides={studioSlides}
+          pack={content?.lessonPack}
+          onClose={() => setTeachWeekIdx(null)}
+        />
+      )}
+
+      {teachSlidesOnly && (
+        <TeachingDeck
+          plan={soloDeckPlan}
+          week={soloDeckWeek}
+          studioSlides={studioSlides}
+          pack={content?.lessonPack}
+          onClose={() => setTeachSlidesOnly(false)}
+        />
+      )}
     </div>
   );
 }

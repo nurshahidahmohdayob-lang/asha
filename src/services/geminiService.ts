@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { EduContent, SlideContent, WorksheetSection, ReadingProgram, LessonPlan, WeeklyPlan } from "../types";
+import { EduContent, SlideContent, WorksheetSection, ReadingProgram, LessonPlan, WeeklyPlan, LessonActivityPack } from "../types";
 
 // The platform injects GEMINI_API_KEY into the process.env at runtime.
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY as string });
@@ -213,6 +213,73 @@ CRITICAL — DO NOT INVENT LEARNING OBJECTIVE CODES:
 - When you do cite a code, use the exact strand capitalisation shown above (e.g. "Ps", "Rf", "TC" — never "PS"). Make sure the strand matches the subject (a Science code on a Wellbeing topic is invalid).
 `;
 
+/* ── Writing for the age in front of you ─────────────────────────────────
+   A Year 1 class and a Year 9 class cannot be handed the same sentence. The
+   year group is already known from the lesson plan, so it is turned into
+   explicit, checkable writing rules rather than left as a hint the model may
+   or may not act on. Anything projected to children goes through this. */
+
+/** Pull the school year out of "Year 3", "Grade 4", "Y5", "Stage 2"… */
+export function yearNumberOf(yearGroup?: string): number | null {
+  if (!yearGroup) return null;
+  const m = String(yearGroup).match(/(\d{1,2})/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return n >= 1 && n <= 13 ? n : null;
+}
+
+/** Explicit rules for writing to a year group — dropped into every prompt
+ *  whose output a class will actually read. */
+export function ageGuidance(yearGroup?: string): string {
+  const y = yearNumberOf(yearGroup);
+  const label = yearGroup || "this year group";
+  // Unknown year group: stay deliberately plain rather than guess upward.
+  if (y === null) {
+    return `AGE-APPROPRIATE LANGUAGE (${label}):
+- Write in plain, concrete language. Short sentences, one idea each.
+- Explain any subject term the first time it appears.`;
+  }
+  if (y <= 2) {
+    return `AGE-APPROPRIATE LANGUAGE — THIS IS ${label.toUpperCase()} (children aged about ${y + 4}–${y + 5}). THIS IS THE MOST IMPORTANT CONSTRAINT:
+- Many children this age are still learning to read. Sentences MUST be 8 words or fewer, one idea per line, and readable aloud by the teacher.
+- Use only everyday words a young child already says. No subject jargon, no abstract nouns ("process", "system", "factor", "represents"), no passive voice.
+- Talk about things children can see, touch, or do — objects, animals, family, play, the classroom. Never hypothetical or historical reasoning.
+- Ask "what", "which", "who" and "what happens if". Avoid "explain why", "compare", "evaluate", "justify" — these are beyond this age.
+- Counting and numbers stay within 20 unless the plan says otherwise.
+- Each slide holds at most 3 short lines. A wall of text is a failure at this age.`;
+  }
+  if (y <= 4) {
+    return `AGE-APPROPRIATE LANGUAGE — THIS IS ${label.toUpperCase()} (children aged about ${y + 4}–${y + 5}):
+- Sentences of 12 words or fewer, one idea each. Familiar everyday vocabulary.
+- Introduce a subject word only when the plan uses it, and gloss it in plain words the first time.
+- One-step reasoning only ("what happens if…", "which one and why"). No multi-step or abstract argument.
+- Keep examples concrete and close to a child's own experience.
+- At most 4 short lines on a slide.`;
+  }
+  if (y <= 6) {
+    return `AGE-APPROPRIATE LANGUAGE — THIS IS ${label.toUpperCase()} (children aged about ${y + 4}–${y + 5}):
+- Sentences of 16 words or fewer. Clear, direct, active voice.
+- Subject vocabulary is expected, but define each new term in plain language when it first appears.
+- Two-step reasoning is fine ("compare these two and say which works better, and why").
+- At most 5 lines on a slide.`;
+  }
+  if (y <= 9) {
+    return `AGE-APPROPRIATE LANGUAGE — THIS IS ${label.toUpperCase()} (students aged about ${y + 4}–${y + 5}):
+- Full sentences and correct subject terminology, used precisely.
+- Multi-step reasoning, comparison and justification are appropriate.
+- Keep slide text tight — phrases, not paragraphs.`;
+  }
+  return `AGE-APPROPRIATE LANGUAGE — THIS IS ${label.toUpperCase()} (students aged about ${y + 4}–${y + 5}):
+- Exam-standard precision and terminology; expect extended reasoning and evaluation.
+- Keep projected text concise — the depth belongs in what is said, not on the slide.`;
+}
+
+/** Younger classes cope with fewer choices on the board. */
+function quizOptionCount(yearGroup?: string): number {
+  const y = yearNumberOf(yearGroup);
+  return y !== null && y <= 2 ? 3 : 4;
+}
+
 export async function generateSlides(lessonInput: string, options: EduOptions): Promise<{ slides: SlideContent[], metadata: { description: string, methodology: string } }> {
   try {
     const contents: any[] = [];
@@ -223,6 +290,11 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
     let mainPrompt = options.templateMode === 'strict'
       ? `As an expert Cambridge Educator, generate educational slides for the topic: "${lessonInput}". Subject: ${options.subject}, Year Group: ${options.yearGroup}.`
       : `As an expert Cambridge Educator, generate exactly ${options.numSlides} educational slides for: "${lessonInput}". Subject: ${options.subject}, Year Group: ${options.yearGroup}, ${options.lexileLevel !== 'None' ? `Lexile: ${options.lexileLevel}` : ''}.`;
+
+    // The year group is not a hint — these slides go on a wall in front of
+    // children of a specific age, so the rules are stated outright.
+    mainPrompt += `\n\n${ageGuidance(options.yearGroup)}
+    - Every slide title, bullet, activity and question below must obey these rules. Re-read them before writing each slide.`;
 
     mainPrompt += `\n\nCURRICULUM ALIGNMENT:
     - Align with Cambridge International Framework, Scheme of Work, and official textbooks/references.
@@ -1839,12 +1911,15 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
       
       ${unit ? `TARGET UNIT: "${unit}"` : ''}
       ${topic ? `TARGET TOPIC: "${topic}"` : ''}
-      PRIMARY ACTIVITY PROVIDED BY TEACHER:
-      "${activity}"
+      ${activity.trim()
+        ? `PRIMARY ACTIVITY PROVIDED BY TEACHER:\n      "${activity}"`
+        : `The teacher has not described an activity — choose activities yourself that suit ${unit || topic ? 'this unit/topic' : `${options.subject} at ${options.yearGroup}`}.`}
 
       YOUR TASK:
-      Based on the teacher's input${unit || topic ? ` (especially the specific unit/topic provided)` : ''}, generate a complete weekly plan entry.
-      
+      ${activity.trim()
+        ? `Based on the teacher's input${unit || topic ? ` (especially the specific unit/topic provided)` : ''}, generate`
+        : `${unit || topic ? 'Working from the unit/topic above, generate' : `Choose a sensible next topic for ${options.subject} at ${options.yearGroup} and generate`}`} a complete weekly plan entry.
+
       Format the response as a JSON object with:
       - "week": ${weekNum}
       - "unit": string (${unit ? `Return exactly or expand upon: ${unit}` : 'The Cambridge curriculum unit number and title'})
@@ -1853,7 +1928,7 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
       - "strand": string (the curriculum strand)
       - "learningObjective": string (one clear, numbered learning objective)
       - "introduction": string (detailed overview of what this topic is about)
-      - "activities": string (incorporate the teacher's activity "${activity}" and expand on it)
+      - "activities": string (${activity.trim() ? `incorporate the teacher's activity "${activity}" and expand on it` : 'suitable classroom activities for this week'})
       - "assessment": string (what worksheet, quiz, or exam activity for this topic)
       - "resources": string (Unit #, Learning Standard code, etc.)
     `;
@@ -1891,6 +1966,424 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
     }
     throw err;
   }
+}
+
+/** The whole class-facing lesson for ONE week of a plan: talk prompts, a story,
+ *  things to do, a matching game, something to draw, and a quiz to check it
+ *  landed. Everything is drawn from what the teacher actually wrote in that
+ *  week — its topic, objective, activities and assessment — so the class is
+ *  taught and quizzed on that lesson and nothing else. */
+export async function generateLessonActivities(
+  week: WeeklyPlan,
+  plan: Pick<LessonPlan, "subject" | "class" | "overallTopic">,
+  options: EduOptions,
+  half: "teaching" | "games" | "both" = "both",
+): Promise<LessonActivityPack> {
+  try {
+    return await generateLessonActivitiesDirect(week, plan, options, half);
+  } catch (err: any) {
+    // In the browser there is no API key — Vite only injects GEMINI_API_KEY,
+    // and the wrapper needs GROQ_API_KEY — so the call is made server side
+    // instead, exactly as every other generator here does.
+    if (
+      typeof window !== "undefined" &&
+      (err?.message?.includes("API Key") || err?.message?.includes("configured"))
+    ) {
+      return callAiProxy("lessonActivities", JSON.stringify(week), { ...options, plan, half });
+    }
+    throw err;
+  }
+}
+
+/** The teaching slides only — what the lesson cannot start without. Roughly
+ *  half the wait, so the class can be looking at slide one while the games
+ *  are still being written. */
+export const generateLessonTeaching = (
+  week: WeeklyPlan,
+  plan: Pick<LessonPlan, "subject" | "class" | "overallTopic">,
+  options: EduOptions,
+) => generateLessonActivities(week, plan, options, "teaching");
+
+/** The story, games, quiz and review — everything that comes after the
+ *  teaching, fetched while the teacher is still on the early slides. */
+export const generateLessonGames = (
+  week: WeeklyPlan,
+  plan: Pick<LessonPlan, "subject" | "class" | "overallTopic">,
+  options: EduOptions,
+) => generateLessonActivities(week, plan, options, "games");
+
+async function generateLessonActivitiesDirect(
+  week: WeeklyPlan,
+  plan: Pick<LessonPlan, "subject" | "class" | "overallTopic">,
+  options: EduOptions,
+  /** Generate only part of the lesson, so the deck can open on the first half
+   *  while the second is still being written. */
+  half: "teaching" | "games" | "both" = "both",
+): Promise<LessonActivityPack> {
+  // What is this lesson ABOUT? Not the school subject — "Life Competencies"
+  // is a timetable label, and a lesson generated about it teaches nothing.
+  // The thing being taught is the week's topic, and the plan hides it in
+  // whichever field the teacher happened to fill in.
+  const placeholder = /^(introduction|intro|topic|untitled|tbd|n\/?a|auto[- ]?assign(ed)?|week\s*\d+|lesson\s*\d+|-+)$/i;
+  // "Unit 1 – Introduction" names a position in the scheme, not a topic;
+  // strip the numbering and see whether anything real is left.
+  const unitTopic = (week.unit || "")
+    .replace(/^\s*(unit|chapter|module|topic)\s*\d+\s*[-–—:.]?\s*/i, "")
+    .trim();
+  const pick = (...xs: (string | undefined)[]) =>
+    xs.map((x) => x?.trim()).find((x) => x && !placeholder.test(x)) || "";
+  const focus =
+    pick(
+      // Most specific first: a subtopic beats a topic beats a unit heading.
+      week.subTopic,
+      week.topic,
+      plan.overallTopic,
+      unitTopic,
+      week.learningObjective,
+    ) ||
+    // Deliberately NOT plan.subject. If the plan says nothing about what is
+    // being taught, the objective is still closer to a lesson than the name
+    // of the subject is.
+    week.learningObjective?.trim() ||
+    plan.overallTopic ||
+    plan.subject;
+  const source = [
+    week.unit && `UNIT: ${week.unit}`,
+    `TOPIC: ${focus}`,
+    week.learningObjective && `LEARNING OBJECTIVE: ${week.learningObjective}`,
+    week.introduction && `INTRODUCTION / DO NOW: ${week.introduction}`,
+    week.activities && `ACTIVITIES: ${week.activities}`,
+    week.assessment && `ASSESSMENT: ${week.assessment}`,
+  ].filter(Boolean).join("\n");
+
+  const yearGroup = plan.class || options.yearGroup;
+  const optionCount = quizOptionCount(yearGroup);
+  const young = (yearNumberOf(yearGroup) ?? 99) <= 2;
+
+  // The lesson is generated in two halves. One request for all of it exceeds
+  // the model's output ceiling and comes back as truncated, invalid JSON —
+  // so the teaching content and the activities are asked for separately and
+  // merged. They also run in parallel, so it is no slower.
+  const preamble = `You are preparing the on-screen part of a lesson that will be projected to a ${yearGroup} class.
+
+★★★ THIS LESSON IS ABOUT: ${focus} ★★★
+
+Every slide, sentence, picture, question and game must be about ${focus} and nothing else.
+
+The class's timetable subject is "${plan.subject}". That is only the name of the lesson slot — it is NOT what you are teaching. Do not write about ${plan.subject} as a subject, do not define it, do not name it on a slide, and do not produce content that would suit any other week of ${plan.subject}. A child leaving this lesson should be able to say what they learned about ${focus}.
+
+THE TEACHER'S OWN PLAN FOR THIS WEEK:
+"""
+${source}
+"""
+
+${ageGuidance(yearGroup)}
+
+You are building a real classroom lesson that will be taught from the board for the whole period — not a summary of the plan and not a set of bullet-point slides. The class should SEE, THINK, TALK, MOVE, ACT, DRAW and REFLECT.
+
+Produce JSON only. Everything must be strictly about that topic — never general knowledge, never anything the plan does not cover — and must obey the age rules above.
+
+BE SPECIFIC TO THIS LESSON — this is what most often goes wrong:
+- Every question must name something concrete from the plan above: the actual thing being studied, an object, an action the children will do, a word from the objective.
+- A question that would still make sense in a completely different lesson is WRONG. "What do you know about this topic?", "What would you like to find out?", "Tell your partner one thing you noticed" are all FAILURES — they say nothing about ${focus}.
+- Never use the words "Introduction", "topic", "this lesson" or "the activity" as if they were the thing being studied. Name the thing itself.
+- Write as if the children have just been taught this specific content and you are checking that exact learning.
+
+- Write as if the children have just been taught this specific content.
+`;
+
+  const activityPrompt = `${preamble}
+
+1. "discussion": 3 things one child SAYS TO THEIR PARTNER, turning to the person sitting next to them.
+   - These are spoken to a real person, in the second person, and are about that person: "How are you feeling today?", "Are you okay?", "What made you smile today?"
+   - They are NOT questions about the topic in the abstract. "What do you know about feelings?" or "What would you like to find out?" are FAILURES — those talk ABOUT the lesson instead of using it to talk TO each other.
+   - Use what has just been taught as the reason to ask. The partner answers, and the asker listens and can answer back.
+   - Where the topic is not about people, still address the partner directly and make it about them and their work: "Show me your triangle — how many corners can you count?", "Which one did you choose, and why that one?"
+   - NEVER put a child's name in them ("Are you okay, Emma?" is WRONG). The same words are on the board for every pair in the room, and each child's partner is someone different.
+   - ${young ? "Each one 8 words or fewer, and easy to say out loud." : "Each one short enough to say in one breath."} A ${yearGroup} child must be able to read them off the board and say them to a friend.
+
+2. "questions": 3 mini-quiz questions checking whether the class understood THIS lesson.
+   - Each has "text", "options" (exactly ${optionCount} short choices), "correctIndex" (0-${optionCount - 1}, the index of the correct choice — vary its position across the three questions), and "why" (one short sentence explaining the answer, for the teacher to read out).
+   - Exactly one option is correct; the others must be clearly wrong to someone who understood the lesson, but plausible to someone who did not.
+   - Never put the answer in the question text. ${
+     young
+       ? "Each question 8 words or fewer; each option 3 words or fewer."
+       : "Keep every option under 10 words."
+   }
+   - Order the three from easiest to hardest.
+
+3. "story": a very short story that carries the idea, told in 4 scenes. Give it a "title", 4 "scenes", and 3 "questions" (each a "q" the teacher asks and a short "a" revealed after the class answers).
+   - Each scene's "label" MUST be a complete sentence the teacher reads aloud, about 8-12 words. A title or caption like "Sunny Day" or "Happy Emily" is WRONG — write "Emily walks to school and smiles at her friend."
+   - The four scenes must run in order and tell one continuous story: something happens, it causes a difficulty, someone helps, and it ENDS WELL. Never finish on the sad or unresolved scene.
+   - Name a child and let what happens to them show ${focus} in action. Keep it warm and safe — nothing frightening.
+
+4. "matching": a tap-the-pair game. "title", a one-line "instruction", and 4-5 "pairs" of emoji + label drawn from this lesson's content.
+
+5. "actOut": something the children perform. "title", 3 short "steps", and 4-5 "items" (emoji + label) for the spinner to land on. If performing makes no sense for this topic, make it a "show me with your hands / your body" task instead.
+
+6. "draw": "title", one "instruction" sentence telling them what to draw, and 3-4 "examples" — single emoji only — to show round the edge.
+
+7. "strategies": 3-4 things the children can DO with what they have learned — "title" plus "items" of emoji + label. For a feelings lesson these are calming strategies; for a science lesson they are steps to try; for a language lesson they are ways to practise.
+
+8. "review": 3 short closing questions for the whole class, each answerable out loud in a few words.
+
+EMOJI RULES: exactly one emoji per tile, and it must genuinely depict the label — a child pointing at the picture must be able to say the label. 👍 for "Surprised" is WRONG (use 😲); 🌿 for "Deep breaths" is WRONG (use 🫁). Never use a letter, digit, or punctuation as an emoji. If no emoji truly fits a label, choose a different label.
+
+LABEL RULES: a label names the thing itself — "Happy", not "Happy Face". Do not append "face", "picture" or "icon" to every label.
+
+If a section genuinely cannot be made to fit this topic, omit that whole section rather than padding it with something generic.`;
+
+  const teachPrompt = `${preamble}
+
+You are writing the TEACHING slides — the part the teacher actually teaches from, standing at the board. Not activities, not questions: the content itself.
+
+1. "keyIdeas": 3-5 picture tiles naming the things this lesson teaches — the emotions, the shapes, the materials, whatever ${focus} is made of. Each is one emoji plus a label of 1-3 words.
+
+2. "bigIdea": the whole idea said once, plainly, before any detail — a "title" (e.g. "What Are Feelings?") and one "explain" sentence a child would understand (e.g. "Feelings are how we feel inside.").
+
+3. "teach": THE MOST IMPORTANT SECTION. One entry for EACH thing in keyIdeas — so 3-5 entries, in the same order. Each entry has:
+   - "emoji": the big picture for that concept.
+   - "title": what the slide is called, in the child's own voice where it suits — "I Feel Happy!", "This Is A Triangle", "Water Turns To Ice".
+   - "lines": 1-3 short sentences that TEACH the point with a concrete example from a child's life — "I may feel happy when I play with my friends." Not a definition of the word; a real example a 6-year-old recognises.
+   - "tiles": 0-4 supporting pictures where they help — what to DO about it, or more examples. For a difficult feeling these are the coping strategies; for a shape they are things of that shape.
+   - "ask": one question that turns the slide over to the class — "What makes YOU happy?"
+   Do not skip this section and do not merge the concepts into one slide. A lesson with five concepts needs five teaching slides.
+
+4. "sequence": ONLY if this topic has a natural order or change — feelings changing, a life cycle, steps of a method. Give a "title", 3-4 ordered "steps" (emoji + short label) and one "line" explaining it. Omit entirely if the topic has no sequence.
+
+5. "celebrate": the slide the lesson ends on — a "title" like "Great job! 🌟" and one "line" telling the children what they can now do, naming the actual learning.
+
+EMOJI RULES: exactly one emoji per tile, and it must genuinely depict the label. 👍 for "Surprised" is WRONG (use 😲); 🌿 for "Deep breaths" is WRONG (use 🫁). Never use a letter, digit, or punctuation as an emoji.
+
+LABEL RULES: a label names the thing itself — "Happy", not "Happy Face". Do not append "face", "picture" or "icon" to every label.`;
+
+  const tileSchema = {
+    type: Type.OBJECT,
+    properties: { emoji: { type: Type.STRING }, label: { type: Type.STRING } },
+    required: ["emoji", "label"],
+  };
+
+  const teachSchema = {
+    type: Type.OBJECT,
+    properties: {
+      keyIdeas: { type: Type.ARRAY, items: tileSchema },
+      bigIdea: {
+        type: Type.OBJECT,
+        properties: { title: { type: Type.STRING }, explain: { type: Type.STRING } },
+        required: ["title", "explain"],
+      },
+      teach: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            emoji: { type: Type.STRING },
+            title: { type: Type.STRING },
+            lines: { type: Type.ARRAY, items: { type: Type.STRING } },
+            tiles: { type: Type.ARRAY, items: tileSchema },
+            ask: { type: Type.STRING },
+          },
+          required: ["emoji", "title", "lines"],
+        },
+      },
+      sequence: {
+        type: Type.OBJECT,
+        properties: {
+          title: { type: Type.STRING },
+          steps: { type: Type.ARRAY, items: tileSchema },
+          line: { type: Type.STRING },
+        },
+        required: ["title", "steps"],
+      },
+      celebrate: {
+        type: Type.OBJECT,
+        properties: { title: { type: Type.STRING }, line: { type: Type.STRING } },
+        required: ["title", "line"],
+      },
+    },
+    required: ["keyIdeas", "teach"],
+  };
+
+  const activitySchema = {
+        type: Type.OBJECT,
+        properties: {
+          discussion: { type: Type.ARRAY, items: { type: Type.STRING } },
+          questions: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                text: { type: Type.STRING },
+                options: { type: Type.ARRAY, items: { type: Type.STRING } },
+                correctIndex: { type: Type.NUMBER },
+                why: { type: Type.STRING },
+              },
+              required: ["text", "options", "correctIndex"],
+            },
+          },
+          story: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              scenes: { type: Type.ARRAY, items: tileSchema },
+              questions: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: { q: { type: Type.STRING }, a: { type: Type.STRING } },
+                  required: ["q", "a"],
+                },
+              },
+            },
+            required: ["title", "scenes", "questions"],
+          },
+          matching: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              instruction: { type: Type.STRING },
+              pairs: { type: Type.ARRAY, items: tileSchema },
+            },
+            required: ["title", "pairs"],
+          },
+          actOut: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              steps: { type: Type.ARRAY, items: { type: Type.STRING } },
+              items: { type: Type.ARRAY, items: tileSchema },
+            },
+            required: ["title", "items"],
+          },
+          draw: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              instruction: { type: Type.STRING },
+              examples: { type: Type.ARRAY, items: { type: Type.STRING } },
+            },
+            required: ["title", "instruction"],
+          },
+          strategies: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              items: { type: Type.ARRAY, items: tileSchema },
+            },
+            required: ["title", "items"],
+          },
+          review: { type: Type.ARRAY, items: { type: Type.STRING } },
+        },
+        required: ["discussion", "questions"],
+  };
+
+  const ask = async (text: string, schema: any) => {
+    const r = await generateContentWithRetry({
+      contents: { parts: [{ text }] },
+      config: { responseMimeType: "application/json", responseSchema: schema },
+    });
+    if (!r.text) throw new Error("Empty response");
+    return JSON.parse(r.text);
+  };
+
+  // Deliberately sequential. Run in parallel these two blow through Groq's
+  // per-minute token budget, the call falls back to the 8B model, and that
+  // 429s as well ("Limit 6000, Used 4501, Requested 4383") — which shows up
+  // as a lesson with teaching slides but no story, games or quiz. Teaching
+  // content goes first because it is the half the lesson cannot do without.
+  const teachPart = half === "games" ? {} : await ask(teachPrompt, teachSchema);
+  const activityPart =
+    half === "teaching"
+      ? { discussion: [], questions: [] }
+      : await ask(activityPrompt, activitySchema).catch((e) => {
+          console.error("Lesson activities half failed:", e);
+          return { discussion: [], questions: [] };
+        });
+  const parsed = { ...activityPart, ...teachPart } as Omit<LessonActivityPack, "week">;
+
+  // Everything below is defensive. A malformed section is dropped rather than
+  // projected: a quiz that cannot be marked, or a tile with a letter where the
+  // picture should be, is worse in front of a class than one slide fewer.
+  const okTile = (t: any) =>
+    t && typeof t.emoji === "string" && typeof t.label === "string" && t.label.trim() &&
+    // One picture, not a letter or a word. Emoji are outside the BMP or in the
+    // symbol blocks; anything ASCII is a mistake.
+    t.emoji.trim().length > 0 && !/^[\w\d.,!?'"()-]+$/.test(t.emoji.trim());
+  const tiles = (xs: any): LessonActivityPack["keyIdeas"] =>
+    Array.isArray(xs) ? xs.filter(okTile).map((t: any) => ({ emoji: t.emoji.trim(), label: t.label.trim() })) : [];
+  const strings = (xs: any) =>
+    Array.isArray(xs) ? xs.filter((s: any) => typeof s === "string" && s.trim()).map((s: string) => s.trim()) : [];
+
+  const questions = (parsed.questions || []).filter(
+    (q) =>
+      q &&
+      typeof q.text === "string" &&
+      Array.isArray(q.options) &&
+      q.options.length >= 2 &&
+      Number.isInteger(q.correctIndex) &&
+      q.correctIndex >= 0 &&
+      q.correctIndex < q.options.length,
+  );
+
+  const story = parsed.story && tiles(parsed.story.scenes).length >= 2
+    ? {
+        title: parsed.story.title || "Story time",
+        scenes: tiles(parsed.story.scenes)!,
+        questions: (parsed.story.questions || []).filter(
+          (x: any) => x && typeof x.q === "string" && typeof x.a === "string" && x.q.trim(),
+        ),
+      }
+    : undefined;
+
+  const matchPairs = tiles(parsed.matching?.pairs) || [];
+  const actItems = tiles(parsed.actOut?.items) || [];
+  const strategyItems = tiles(parsed.strategies?.items) || [];
+
+  return {
+    week: week.week,
+    discussion: strings(parsed.discussion),
+    questions,
+    keyIdeas: tiles(parsed.keyIdeas),
+    bigIdea: parsed.bigIdea?.explain?.trim()
+      ? { title: parsed.bigIdea.title?.trim() || `What is ${focus}?`, explain: parsed.bigIdea.explain.trim() }
+      : undefined,
+    // The teaching slides. A point with no sentences teaches nothing, so it
+    // is dropped rather than projected as a bare heading.
+    teach: (parsed.teach || [])
+      .filter((p: any) => p && p.title?.trim() && strings(p.lines).length > 0)
+      .map((p: any) => ({
+        emoji: okTile({ emoji: p.emoji, label: p.title }) ? p.emoji.trim() : "•",
+        title: p.title.trim(),
+        lines: strings(p.lines).slice(0, 3),
+        tiles: tiles(p.tiles)?.slice(0, 4),
+        ask: typeof p.ask === "string" && p.ask.trim() ? p.ask.trim() : undefined,
+      })),
+    sequence: tiles(parsed.sequence?.steps)!.length >= 2
+      ? {
+          title: parsed.sequence!.title || "How it changes",
+          steps: tiles(parsed.sequence!.steps)!.slice(0, 4),
+          line: parsed.sequence!.line?.trim(),
+        }
+      : undefined,
+    celebrate: parsed.celebrate?.line?.trim()
+      ? { title: parsed.celebrate.title?.trim() || "Great job! 🌟", line: parsed.celebrate.line.trim() }
+      : undefined,
+    story,
+    // A matching game needs at least two pairs to be a game at all.
+    matching: matchPairs.length >= 2
+      ? { title: parsed.matching!.title || "Match it", instruction: parsed.matching!.instruction || "Tap a word, then tap its picture.", pairs: matchPairs }
+      : undefined,
+    actOut: actItems.length >= 2
+      ? { title: parsed.actOut!.title || "Act it out", steps: strings(parsed.actOut!.steps), items: actItems }
+      : undefined,
+    draw: parsed.draw?.instruction
+      ? { title: parsed.draw.title || "Draw it", instruction: parsed.draw.instruction, examples: strings(parsed.draw.examples).slice(0, 4) }
+      : undefined,
+    strategies: strategyItems.length >= 2
+      ? { title: parsed.strategies!.title || "What can I do?", items: strategyItems }
+      : undefined,
+    review: strings(parsed.review).slice(0, 3),
+  };
 }
 
 export async function generateEduContent(lessonInput: string, options: EduOptions): Promise<EduContent | null> {
@@ -2307,6 +2800,22 @@ async function groqGenerate(
   return { text };
 }
 
+/** How long to wait before retrying a transient failure.
+ *
+ *  Groq's 429 says exactly how long to wait ("Please try again in 28.84s").
+ *  The old fixed 4s/8s backoff ignored that, so every retry fired while still
+ *  limited, both models 429'd, and the caller got nothing — which showed up as
+ *  a projected lesson with teaching slides but no quiz or games. */
+function backoffMs(message: string, isRateLimit: boolean, attempt: number): number {
+  const asked = /try again in ([\d.]+)\s*s/i.exec(message || "");
+  if (isRateLimit && asked) {
+    const wait = Math.ceil(parseFloat(asked[1]) * 1000) + 500;
+    // Cap it: a minute-long stall in front of a class is worse than failing.
+    return Math.min(Math.max(wait, 1000), 35000);
+  }
+  return Math.min((isRateLimit ? 4000 : 800) * (attempt + 1), 8000);
+}
+
 async function generateContentWithRetry(
   request: { contents: any; config?: any },
   models: string[] = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
@@ -2344,9 +2853,7 @@ async function generateContentWithRetry(
           lower.includes("fetch failed") ||
           lower.includes("econnreset");
         if (!transient) throw err;
-        await sleep(
-          Math.min((isRateLimit ? 4000 : 800) * (attempt + 1), 8000),
-        );
+        await sleep(backoffMs(msg, isRateLimit, attempt));
       }
     }
   }
@@ -2423,7 +2930,7 @@ async function groqChat(
           lower.includes("fetch failed") ||
           lower.includes("econnreset");
         if (!transient) throw lastErr;
-        await sleep(Math.min((isRateLimit ? 4000 : 800) * (attempt + 1), 8000));
+        await sleep(backoffMs(msg, isRateLimit, attempt));
       } finally {
         clearTimeout(timer);
       }

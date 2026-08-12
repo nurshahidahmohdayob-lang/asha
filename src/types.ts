@@ -25,6 +25,78 @@ export interface SlideContent {
   images?: SlideImage[];
 }
 
+/** One question in the projected mini quiz. Unlike worksheet questions these
+ *  record which option is right, so the class can be marked on the board. */
+export interface QuizQuestion {
+  text: string;
+  options: string[];
+  /** Index into `options` of the correct choice. */
+  correctIndex: number;
+  /** One line the teacher can read out after the answer is revealed. */
+  why?: string;
+}
+
+/** A labelled picture tile — the deck's unit of "show, don't write". */
+export interface LessonTile {
+  /** A single emoji. Read from the back of a classroom; never fails to load. */
+  emoji: string;
+  label: string;
+}
+
+/** One concept, taught on its own slide — the substance of the lesson. This
+ *  is what makes the deck teachable rather than a list of games: a big
+ *  picture, the point in child's words, examples, and a question to the class. */
+export interface LessonTeachPoint {
+  emoji: string;
+  /** "I Feel Happy!" — spoken in the child's own voice where it suits. */
+  title: string;
+  /** 1-3 sentences that actually teach the point. */
+  lines: string[];
+  /** Optional supporting pictures: what to do, examples, non-examples. */
+  tiles?: LessonTile[];
+  /** "What makes YOU happy?" — turns the slide over to the class. */
+  ask?: string;
+}
+
+/** Everything class-facing for one week of the plan: what to discuss, a story
+ *  to tell, things to do, and a quiz to check it landed. Generated once and
+ *  kept with the project, so the same lesson projects the same way twice.
+ *  Every part is optional except the quiz and discussion — a lesson that
+ *  suits no story simply gets no story slide. */
+export interface LessonActivityPack {
+  /** Which week of the plan this was built for. */
+  week: number;
+  discussion: string[];
+  questions: QuizQuestion[];
+  /** The handful of things being taught, as picture tiles. */
+  keyIdeas?: LessonTile[];
+  /** "What are feelings?" — the idea stated once, plainly, before the detail. */
+  bigIdea?: { title: string; explain: string };
+  /** The teaching itself: one slide per concept. */
+  teach?: LessonTeachPoint[];
+  /** An ordered change or process — "sad → calm → happy", "seed → sprout → tree". */
+  sequence?: { title: string; steps: LessonTile[]; line?: string };
+  /** The well-done slide the lesson ends on. */
+  celebrate?: { title: string; line: string };
+  /** A short story that carries the idea, told a scene at a time. */
+  story?: {
+    title: string;
+    scenes: LessonTile[];
+    /** Asked after the story; answers revealed on tap. */
+    questions: { q: string; a: string }[];
+  };
+  /** Tap a word, tap its picture. */
+  matching?: { title: string; instruction: string; pairs: LessonTile[] };
+  /** Something to perform, picked at random by the spinner. */
+  actOut?: { title: string; steps: string[]; items: LessonTile[] };
+  /** Draw it — a prompt plus a few example pictures round the edge. */
+  draw?: { title: string; instruction: string; examples: string[] };
+  /** "What can I do" — strategies the class can practise together. */
+  strategies?: { title: string; items: LessonTile[] };
+  /** Three closing recall questions for the review slide. */
+  review?: string[];
+}
+
 export interface WorksheetSection {
   title: string;
   instructions: string;
@@ -252,6 +324,8 @@ export interface EduContent {
   };
   readingProgram?: ReadingProgram;
   lessonPlan?: LessonPlan;
+  /** Class-facing activities for the week being projected. */
+  lessonPack?: LessonActivityPack;
   teachingJournal?: string;
   studentNotes?: string;
   handoutMetadata?: HandoutMetadata;

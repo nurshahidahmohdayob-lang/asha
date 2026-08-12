@@ -55,6 +55,7 @@ export default async function handler(req: any, res: any) {
       generateLessonPlan,
       generateSessionPlan,
       generateWeeklyPlan,
+      generateLessonActivities,
       generateEduContent,
       suggestWeeklyInput,
       generateEduNotes,
@@ -102,6 +103,14 @@ export default async function handler(req: any, res: any) {
           options,
           options.unit,
           options.topic,
+        );
+        break;
+      case "lessonActivities":
+        result = await generateLessonActivities(
+          JSON.parse(lessonInput),
+          options.plan,
+          options,
+          options.half || "both",
         );
         break;
       case "notes":

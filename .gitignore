@@ -10,3 +10,6 @@ coverage/
 
 # Generated: esbuild bundle of geminiService for Vercel functions
 api/_lib/
+
+# Local wrangler state from `wrangler pages dev`
+.wrangler/

@@ -62,7 +62,7 @@ async function startServer() {
       const gsPath = "./src/services/geminiService.ts";
       const gsSpecifier =
         process.env.NODE_ENV === "production" ? gsPath : `${gsPath}?t=${Date.now()}`;
-      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateEduContent, suggestWeeklyInput, generateEduNotes, relevelReadingPassage, generateInteractiveSortingGame, askAI, generatePosterImage, generateLeveledQuestions, relevelWorksheet } = await import(gsSpecifier);
+      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateLessonActivities, generateEduContent, suggestWeeklyInput, generateEduNotes, relevelReadingPassage, generateInteractiveSortingGame, askAI, generatePosterImage, generateLeveledQuestions, relevelWorksheet } = await import(gsSpecifier);
       
       let result;
       switch (type) {
@@ -73,6 +73,7 @@ async function startServer() {
         case 'sessionPlan': result = await generateSessionPlan(lessonInput, options.subtopics, options.weeks, options); break;
         case 'lessonPlan': result = await generateLessonPlan(lessonInput, options); break;
         case 'weeklyPlan': result = await generateWeeklyPlan(lessonInput, options.weekNum, options, options.unit, options.topic); break;
+        case 'lessonActivities': result = await generateLessonActivities(JSON.parse(lessonInput), options.plan, options, options.half || 'both'); break;
         case 'notes': result = await generateEduNotes(lessonInput, options); break;
         case 'suggest': result = await suggestWeeklyInput(lessonInput as any, options, options.weekNum); break;
         case 'all': result = await generateEduContent(lessonInput, options); break;
