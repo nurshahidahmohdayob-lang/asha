@@ -36,6 +36,7 @@ import {
   Library,
   FileUp,
   Upload,
+  Award,
   Info,
   Search,
   Target,
@@ -129,6 +130,7 @@ import html2canvas from "html2canvas";
 import { ZeraBrandLogo } from "./components/ZeraBrandLogo";
 import { InteractiveOrganizerWorksheet } from "./components/InteractiveOrganizerWorksheet";
 import TeachingDeck from "./components/TeachingDeck";
+import ProfessionalDevelopment from "./components/ProfessionalDevelopment";
 import mammoth from "mammoth";
 import JSZip from "jszip";
 
@@ -1823,6 +1825,50 @@ const renderSlideDecor = (
       className="absolute inset-0 overflow-hidden pointer-events-none select-none"
       aria-hidden="true"
     >
+      {/* The projected Project Lesson look. A slide is a white card floating
+          on a Zera sub-brand colour, and the colour rotates by slide so no two
+          in a row look alike — the same signal the deck gives a class about
+          which part of the lesson they are in. */}
+      {design === "deck" &&
+        (() => {
+          const TONES = ["#0A4F29", "#3A7A5E", "#668C4A", "#27829E", "#F7B917"];
+          const tone = TONES[slideIdx % TONES.length];
+          // A title slide has no card in the deck — the words sit straight on
+          // the colour, like a curtain going up.
+          const isOpener = slideIdx === 0;
+          return (
+            <>
+              <div className="absolute inset-0" style={{ backgroundColor: tone }} />
+              {/* Painted dots, not an asset: nothing to load or fail. */}
+              <div
+                className="absolute inset-0"
+                style={{
+                  backgroundImage:
+                    "radial-gradient(rgba(255,255,255,.30) 2px, transparent 2px)",
+                  backgroundSize: "30px 30px",
+                }}
+              />
+              {/* Soft bloom behind the content, as on the projected deck. */}
+              <div
+                className="absolute inset-0"
+                style={{
+                  background:
+                    "radial-gradient(60% 55% at 50% 42%, rgba(255,255,255,.18), transparent 70%)",
+                }}
+              />
+              {!isOpener && (
+                <div
+                  className="absolute rounded-[2.25rem] bg-white"
+                  style={{
+                    inset: "5%",
+                    boxShadow: "0 22px 50px rgba(0,0,0,.22)",
+                  }}
+                />
+              )}
+            </>
+          );
+        })()}
+
       {design === "band" && (
         <>
           <div
@@ -3094,6 +3140,7 @@ import {
   WorksheetSection,
   LessonPlan,
   WeeklyPlan,
+  PDLog,
 } from "./types";
 import {
   generateSlides,
@@ -7666,6 +7713,56 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const [uploadingWeekIdx, setUploadingWeekIdx] = useState<number | null>(null);
   const [uploadProgress, setUploadProgress] = useState("");
 
+  // --- Professional development -------------------------------------------
+  // A teacher's own training record, kept per user rather than per project —
+  // it follows the teacher, not the lesson they happen to have open.
+  const [pdLog, setPdLog] = useState<PDLog>({
+    targetHours: 30,
+    cycle: String(new Date().getFullYear()),
+    records: [],
+  });
+  const [pdLoaded, setPdLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setPdLoaded(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, "professional_development", user.uid));
+        if (cancelled) return;
+        const data = snap.data() as PDLog | undefined;
+        if (data?.records) setPdLog({ targetHours: 30, cycle: String(new Date().getFullYear()), ...data });
+      } catch (e) {
+        console.error("Couldn't load the professional development record:", e);
+      } finally {
+        if (!cancelled) setPdLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid]);
+
+  const savePdLog = async (next: PDLog) => {
+    setPdLog(next);
+    if (!user?.uid) return;
+    try {
+      await setDoc(doc(db, "professional_development", user.uid), {
+        ...next,
+        updatedAt: Date.now(),
+        teacherEmail: user.email || "",
+      });
+    } catch (e: any) {
+      console.error("Couldn't save the professional development record:", e);
+      alert(
+        `Your training record could not be saved:\n\n${e?.message || e}\n\nThe change is still on screen — try again in a moment.`,
+      );
+    }
+  };
+
   // --- Teaching deck -------------------------------------------------------
   // The ready-to-project lesson for one week of the plan: do-now, learning
   // goals, an activity slide each, share back, check, exit ticket. Built from
@@ -7894,6 +7991,42 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   // one — so printing, exporting and sharing all keep working unchanged.
   const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 
+  /** Put one file on the share host and return its public link. Shared by the
+   *  lesson-plan attachments and the pictures a teacher adds to a projected
+   *  lesson, so both report the same problems the same way. */
+  const uploadFileToHost = async (file: File): Promise<string> => {
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      throw new Error(
+        `"${file.name}" is bigger than 20 MB. Put it in Google Drive or OneDrive and paste the share link instead.`,
+      );
+    }
+    const form = new FormData();
+    form.append("file", file);
+    let res: Response;
+    try {
+      res = await fetch(`${WORKSHEET_HOST_DEFAULT}/file`, { method: "POST", body: form });
+    } catch {
+      // A blocked or refused request — almost always the share host not yet
+      // running a build with the /file endpoint.
+      throw new Error(
+        "Couldn't reach the file store. File uploads aren't switched on for the share host yet — deploy the latest worker, or use a Drive or OneDrive share link instead.",
+      );
+    }
+    const data = await res.json().catch(() => null);
+    if (!data && res.ok) {
+      throw new Error(
+        "File uploads aren't switched on for the share host yet. Deploy the latest worker, or paste a Drive or OneDrive share link instead.",
+      );
+    }
+    if (!res.ok || !data?.url) {
+      throw new Error(
+        data?.error ||
+          `Upload failed (HTTP ${res.status}). If this keeps happening, paste a Drive or OneDrive share link instead.`,
+      );
+    }
+    return data.url as string;
+  };
+
   const uploadWeekFiles = async (
     weekIdx: number,
     fileList: FileList | null,
@@ -7914,40 +8047,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           );
           continue;
         }
-        const form = new FormData();
-        form.append("file", file);
-        let res: Response;
-        try {
-          res = await fetch(`${WORKSHEET_HOST_DEFAULT}/file`, {
-            method: "POST",
-            body: form,
-          });
-        } catch {
-          // A blocked or refused request — almost always the share host not yet
-          // running a build with the /file endpoint.
-          throw new Error(
-            "Couldn't reach the file store. File uploads aren't switched on for the share host yet — deploy the latest worker, or use Paste Link with a Drive or OneDrive share link instead.",
-          );
-        }
-        const data = await res.json().catch(() => null);
-        if (!data && res.ok) {
-          // The host answered, but not with JSON — it's still running a build
-          // without the /file endpoint.
-          throw new Error(
-            "File uploads aren't switched on for the share host yet. Deploy the latest worker, or paste a Drive or OneDrive share link instead.",
-          );
-        }
-        if (!res.ok || !data?.url) {
-          throw new Error(
-            data?.error ||
-              `Upload failed (HTTP ${res.status}). If this keeps happening, paste a Drive or OneDrive share link instead.`,
-          );
-        }
+        const url = await uploadFileToHost(file);
         added.push({
           id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
           name: file.name,
-          url: data.url as string,
-          path: String(data.code || ""),
+          url,
+          // The code is recoverable from the link; the helper returns just the
+          // link, and nothing reads `path` for host-uploaded files.
+          path: "",
           contentType: file.type || "",
           size: file.size,
           uploadedAt: Date.now(),
@@ -10841,6 +10948,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     | "reading-program"
     | "poster"
     | "html-host"
+    | "professional-development"
     | "admin"
   >("home");
   const [previousView, setPreviousView] = useState<
@@ -26554,6 +26662,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       { id: "worksheet", label: "Assessment Hub", icon: FileText },
       { id: "reading-program", label: "Reading Program", icon: Book },
       { id: "notes", label: "Journal & Handouts", icon: Edit2 },
+      { id: "professional-development", label: "Professional Development", icon: Award },
     ];
 
     const currentIdx = steps.findIndex((s) => s.id === currentView);
@@ -26703,6 +26812,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   };
 
   const renderSlidesView = () => {
+    // Teaching Deck design: slide 1 sits straight on the colour, every other
+    // slide on a white card. Text has to flip with it, or the opener is ink on
+    // dark green and unreadable.
+    const isDeckDesign = activeTheme.designType === "deck";
+    const deckOnColour = isDeckDesign && currentSlideIdx === 0;
+    const deckTextColor = deckOnColour ? "#FFFFFF" : "#12140F";
+    const deckAccentColor = deckOnColour ? "#F7B917" : "#0A4F29";
+
     if (!content || !content.slides || content.slides.length === 0) {
       return (
         <div className="flex-1 flex flex-col bg-[#F0FDF4] overflow-hidden">
@@ -27763,7 +27880,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     boxShadow: `0 0 0 1px ${activeTheme.accentColor}55, 0 25px 50px -12px rgb(0 0 0 / 0.25)`,
                     backgroundColor:
                       currentSlide.backgroundColor || activeTheme.bgColor,
-                    color: activeTheme.textColor,
+                    color: isDeckDesign ? deckTextColor : activeTheme.textColor,
                     backgroundImage: currentSlide.backgroundWallpaper
                       ? `url("${getProxiedUrl(currentSlide.backgroundWallpaper)}")`
                       : currentSlide.backgroundWallpaper === ""
@@ -27855,8 +27972,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       style={{
                         color:
                           currentSlide.titleSettings?.color ||
-                          activeTheme.titleColor ||
-                          activeTheme.accentColor,
+                          (isDeckDesign
+                            ? deckTextColor
+                            : activeTheme.titleColor || activeTheme.accentColor),
                         fontFamily: currentSlide.titleSettings?.family
                           ? `'${currentSlide.titleSettings.family}', sans-serif`
                           : undefined,
@@ -27868,8 +27986,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       }}
                     />
                     <div
-                      className="h-1 w-20"
-                      style={{ backgroundColor: activeTheme.accentColor }}
+                      className="h-1 w-20 rounded-full"
+                      style={{
+                        backgroundColor: isDeckDesign
+                          ? deckAccentColor
+                          : activeTheme.accentColor,
+                      }}
                     />
                     </div>
 
@@ -27895,7 +28017,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           >
                             <span
                               className="block mt-1.5 flex-shrink-0 animate-pulse pointer-events-none"
-                              style={{ color: activeTheme.accentColor }}
+                              style={{
+                                color: isDeckDesign
+                                  ? deckAccentColor
+                                  : activeTheme.accentColor,
+                              }}
                             >
                               •
                             </span>
@@ -35478,7 +35604,26 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           (slide.backgroundWallpaper !== "" && activeTheme.bgImage)
         );
         const design = activeTheme.designType || "blob";
-        if (!hasWallpaper) {
+        // The deck design is a white card on a rotating sub-brand colour. It
+        // has to be mirrored here or the export is the app's ink text on a
+        // dark green background — unreadable.
+        if (design === "deck") {
+          const TONES = ["0A4F29", "3A7A5E", "668C4A", "27829E", "F7B917"];
+          s.background = { color: TONES[idx % TONES.length] };
+          // Slide 1 has no card, matching the deck's opener.
+          if (idx > 0) {
+            s.addShape(pres.ShapeType.roundRect, {
+              x: 0.45,
+              y: 0.3,
+              w: 9.1,
+              h: 5.03,
+              fill: { color: "FFFFFF" },
+              line: { color: "FFFFFF", width: 0 },
+              rectRadius: 0.22,
+            });
+          }
+        }
+        if (!hasWallpaper && design !== "deck") {
           if (design === "band") {
             s.addShape(pres.ShapeType.roundRect, {
               x: -0.1,
@@ -36029,8 +36174,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
         // Slide Title
         const titleFontSize = slide.title.length > 40 ? 22 : 28;
+        // On the deck design, slide 1 has no white card behind it, so its
+        // text must be white; the rest sit on the card and stay ink.
+        const deckExportText = design === "deck" ? (idx === 0 ? "FFFFFF" : "12140F") : "";
         const slideTitleColor =
           slide.titleSettings?.color?.replace("#", "") ||
+          deckExportText ||
           (activeTheme.titleColor || activeTheme.accentColor).replace("#", "");
         const slideTitleFont = slide.titleSettings?.family || "Arial Black";
 
@@ -36118,7 +36267,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               w: cardW - 0.2,
               h: cardH,
               fontSize: 9,
-              color: textColor,
+              color: deckExportText || textColor,
               align: pres.AlignH.left,
               valign: "middle",
               bold: true,
@@ -36177,7 +36326,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               w: flowW - 0.8,
               h: cardH,
               fontSize: 10,
-              color: textColor,
+              color: deckExportText || textColor,
               align: pres.AlignH.left,
               valign: "middle",
               bold: true,
@@ -36221,7 +36370,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               w: gridW - 0.2,
               h: gridH - 0.1,
               fontSize: 9,
-              color: textColor,
+              color: deckExportText || textColor,
               align: pres.AlignH.center,
               valign: "middle",
               bold: true,
@@ -36254,7 +36403,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               w: bubSize - 0.2,
               h: bubSize - 0.2,
               fontSize: 9,
-              color: textColor,
+              color: deckExportText || textColor,
               align: pres.AlignH.center,
               valign: "middle",
               bold: true,
@@ -37143,6 +37292,29 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           >
             {renderWorkspaceFlowNavigator()}
             {renderReadingProgramView()}
+          </motion.div>
+        )}
+        {currentView === "professional-development" && (
+          <motion.div
+            key="professional-development"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            className="flex-1 flex overflow-hidden"
+          >
+            {renderWorkspaceFlowNavigator()}
+            {pdLoaded || !user ? (
+              <ProfessionalDevelopment
+                log={pdLog}
+                onChange={savePdLog}
+                onUpload={uploadFileToHost}
+                teacherName={user?.displayName || undefined}
+              />
+            ) : (
+              <main className="flex-1 grid place-items-center bg-[#F9F9F4]">
+                <Loader2 className="animate-spin text-[#059669]" size={28} />
+              </main>
+            )}
           </motion.div>
         )}
         {currentView === "notes" && (
@@ -38452,6 +38624,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           week={teachWeeks[teachWeekIdx]}
           studioSlides={studioSlides}
           pack={content?.lessonPack}
+          onPackChange={(next) =>
+            setContent((prev) => (prev ? { ...prev, lessonPack: next } : prev))
+          }
+          onUploadImage={uploadFileToHost}
           onClose={() => setTeachWeekIdx(null)}
         />
       )}
@@ -38462,6 +38638,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           week={soloDeckWeek}
           studioSlides={studioSlides}
           pack={content?.lessonPack}
+          onPackChange={(next) =>
+            setContent((prev) => (prev ? { ...prev, lessonPack: next } : prev))
+          }
+          onUploadImage={uploadFileToHost}
           onClose={() => setTeachSlidesOnly(false)}
         />
       )}

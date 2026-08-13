@@ -12,7 +12,16 @@
    criteria, random picker, thumbs poll and reveal-on-tap prompts. Nothing is
    generated here — every slide comes from what the teacher already wrote. */
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  createElement,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import type {
   LessonActivityPack,
@@ -71,6 +80,12 @@ const I = {
       <path d="M15 11V6.5a1.5 1.5 0 013 0V14a7 7 0 01-7 7h-.5a6 6 0 01-4.6-2.2L3.6 15a1.6 1.6 0 012.3-2.2L9 15" />
     </>
   ),
+  pencil: (
+    <>
+      <path d="M4 20h4l10-10a2.8 2.8 0 10-4-4L4 16v4z" />
+      <path d="M13.5 6.5l4 4" />
+    </>
+  ),
   dice: (
     <>
       <rect x="3" y="3" width="18" height="18" rx="3" />
@@ -80,6 +95,159 @@ const I = {
     </>
   ),
 };
+
+/* ── Editing the lesson on the board ──────────────────────────────────────
+   The generated wording is a first draft, and a teacher knows their class
+   better than the model does. With Edit on, every piece of text on the deck
+   becomes editable in place and the interactive bits stop firing, so tapping
+   a quiz option puts a caret in it instead of marking the class wrong. */
+type DeckEditor = {
+  on: boolean;
+  /** Apply a change to a copy of the pack and hand it back to the app. */
+  edit: (mutate: (draft: LessonActivityPack) => void) => void;
+  /** Put a file on the share host and hand back its link. Absent when the
+   *  app hasn't wired uploading, in which case no picture controls appear. */
+  upload?: (file: File) => Promise<string>;
+};
+
+export const EditCtx = createContext<DeckEditor | null>(null);
+const useEditor = () => useContext(EditCtx);
+
+/** A picture slot: shows the picture if there is one, and while editing lets
+ *  the teacher put one in, swap it, or take it out again. Falls back to the
+ *  slide's emoji so a lesson without pictures still looks finished. */
+function Picture({
+  url,
+  emoji,
+  size = "9rem",
+  apply,
+}: {
+  url?: string;
+  /** Shown when there is no picture. */
+  emoji?: string;
+  size?: string;
+  /** Where this picture lives in the pack — undefined clears it. */
+  apply: (draft: LessonActivityPack, next: string | undefined) => void;
+}) {
+  const editor = useEditor();
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  // An empty slot is only worth space while editing — otherwise a slide with
+  // no picture would reserve a hole where one could go.
+  const showable = Boolean(url || emoji || (editor?.on && editor.upload));
+
+  const pick = async (file?: File | null) => {
+    if (!file || !editor?.upload) return;
+    setBusy(true);
+    try {
+      const link = await editor.upload(file);
+      editor.edit((d) => apply(d, link));
+      setFailed(false);
+    } catch (e) {
+      console.error("Picture upload failed:", e);
+      alert(`That picture could not be uploaded:\n\n${(e as Error)?.message || e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!showable) return null;
+
+  return (
+    <div className="relative shrink-0" style={{ width: size }}>
+      {url && !failed ? (
+        <img
+          src={url}
+          alt=""
+          onError={() => setFailed(true)}
+          className="w-full rounded-[1.5rem] object-cover shadow-lg"
+          style={{ height: size }}
+        />
+      ) : (
+        <span className="grid place-items-center leading-none" style={{ height: size, fontSize: `calc(${size} * 0.8)` }}>
+          {emoji}
+        </span>
+      )}
+
+      {editor?.on && editor.upload && (
+        <div className="mt-2 flex flex-wrap justify-center gap-1.5">
+          <label
+            className={`cursor-pointer rounded-xl bg-brand-600 px-3 py-1.5 text-xs font-bold text-white shadow hover:bg-brand-700 ${
+              busy ? "opacity-60" : ""
+            }`}
+          >
+            {busy ? "Uploading…" : url ? "Change" : "Add picture"}
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              disabled={busy}
+              onChange={(e) => {
+                pick(e.target.files?.[0]);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          {url && (
+            <button
+              onClick={() => editor.edit((d) => apply(d, undefined))}
+              className="rounded-xl bg-white px-3 py-1.5 text-xs font-bold text-red-600 shadow ring-2 ring-silver hover:ring-red-300"
+            >
+              Remove
+            </button>
+          )}
+        </div>
+      )}
+      {url && failed && (
+        <p className="mt-1 text-center text-xs font-bold text-red-500">Picture didn&rsquo;t load</p>
+      )}
+    </div>
+  );
+}
+
+/** Text that can be corrected in place when Edit is on. */
+function Ed({
+  value,
+  apply,
+  as = "span",
+  className = "",
+  multiline = false,
+}: {
+  value: string;
+  /** Where this text lives in the pack. */
+  apply: (draft: LessonActivityPack, text: string) => void;
+  as?: "span" | "p" | "h2" | "h3" | "div";
+  className?: string;
+  multiline?: boolean;
+}) {
+  const editor = useEditor();
+  if (!editor?.on) return createElement(as, { className }, value);
+  return createElement(
+    as,
+    {
+      className: `${className} cursor-text rounded-lg outline-none ring-2 ring-dashed ring-sunny/70 focus:ring-4 focus:ring-sunny`,
+      contentEditable: true,
+      suppressContentEditableWarning: true,
+      spellCheck: true,
+      // Keep the click here — otherwise the slide's own tap handler fires and
+      // the caret never lands.
+      onClick: (e: React.MouseEvent) => e.stopPropagation(),
+      onKeyDown: (e: React.KeyboardEvent) => {
+        // Arrow keys move the caret; they must not turn the slide.
+        e.stopPropagation();
+        if (e.key === "Enter" && !multiline) {
+          e.preventDefault();
+          (e.currentTarget as HTMLElement).blur();
+        }
+      },
+      onBlur: (e: React.FocusEvent<HTMLElement>) => {
+        const text = (e.currentTarget.textContent || "").trim();
+        if (text && text !== value) editor.edit((d) => apply(d, text));
+      },
+    },
+    value,
+  );
+}
 
 function Icon({ d, className = "" }: { d: ReactNode; className?: string }) {
   return (
@@ -475,13 +643,18 @@ function TeachReveal({
   items,
   tilted = false,
   label = "prompt",
+  editItem,
 }: {
   items: string[];
   tilted?: boolean;
   /** What the hidden thing is, so the placeholder reads naturally. */
   label?: string;
+  editItem?: (index: number, text: string, draft: LessonActivityPack) => void;
 }) {
+  const editor = useEditor();
   const [shown, setShown] = useState<boolean[]>(() => items.map(() => false));
+  // Nothing can be corrected while it is still hidden behind a tap.
+  const reveal = (i: number) => editor?.on || shown[i];
   const TILTS = ["tilt-a", "tilt-b", "tilt-c"];
   return (
     <ul className="space-y-4">
@@ -490,15 +663,24 @@ function TeachReveal({
           <button
             onClick={() => setShown((s) => s.map((v, j) => (j === i ? true : v)))}
             className={`w-full rounded-3xl border-4 p-6 text-left transition-all active:scale-[0.98] ${
-              shown[i]
+              reveal(i)
                 ? "border-brand-300 bg-brand-50 shadow-xl"
                 : "border-dashed border-silver bg-white hover:border-brand-400 hover:shadow-md"
             }`}
           >
-            {shown[i] ? (
-              <span className="anim-pop block text-2xl font-semibold leading-snug text-brand-900 sm:text-3xl">
-                {it}
-              </span>
+            {reveal(i) ? (
+              editItem ? (
+                <Ed
+                  className="anim-pop block text-2xl font-semibold leading-snug text-brand-900 sm:text-3xl"
+                  value={it}
+                  multiline
+                  apply={(d, t) => editItem(i, t, d)}
+                />
+              ) : (
+                <span className="anim-pop block text-2xl font-semibold leading-snug text-brand-900 sm:text-3xl">
+                  {it}
+                </span>
+              )
             ) : (
               <span className="flex items-center gap-3 text-xl font-bold text-zinc-400">
                 <Icon d={I.hand} className="h-7 w-7 anim-float" />
@@ -516,7 +698,19 @@ function TeachReveal({
  *  straight away whether it was right. The teacher taps to lock in the class's
  *  choice; wrong answers stay on screen so the misconception can be talked
  *  about rather than skipped past. */
-function QuizCard({ q, index, total }: { q: QuizQuestion; index: number; total: number }) {
+function QuizCard({
+  q,
+  index,
+  total,
+  qi,
+}: {
+  q: QuizQuestion;
+  index: number;
+  total: number;
+  /** Position in pack.questions, so an edit knows what it is changing. */
+  qi: number;
+}) {
+  const editor = useEditor();
   const [picked, setPicked] = useState<number | null>(null);
   const answered = picked !== null;
   const right = picked === q.correctIndex;
@@ -529,7 +723,15 @@ function QuizCard({ q, index, total }: { q: QuizQuestion; index: number; total: 
             <Icon d={I.star} className="h-5 w-5" />
             Quiz {index} of {total}
           </span>
-          <h2 className="mt-4 text-[2.7rem] font-bold leading-[1.08] text-ink">{q.text}</h2>
+          <Ed
+            as="h2"
+            multiline
+            className="mt-4 block text-[2.7rem] font-bold leading-[1.08] text-ink"
+            value={q.text}
+            apply={(d, t) => {
+              if (d.questions?.[qi]) d.questions[qi].text = t;
+            }}
+          />
         </div>
         {answered && (
           <span
@@ -556,7 +758,12 @@ function QuizCard({ q, index, total }: { q: QuizQuestion; index: number; total: 
           return (
             <li key={i} style={{ "--i": i } as React.CSSProperties}>
               <button
-                onClick={() => setPicked((p) => (p === null ? i : p))}
+                onClick={() => {
+                  // While editing, a tap is putting the caret in the option,
+                  // not the class answering.
+                  if (editor?.on) return;
+                  setPicked((p) => (p === null ? i : p));
+                }}
                 className={`flex w-full items-center gap-4 rounded-3xl border-4 p-5 text-left transition-all active:scale-[0.98] ${state}`}
               >
                 <span
@@ -566,19 +773,30 @@ function QuizCard({ q, index, total }: { q: QuizQuestion; index: number; total: 
                 >
                   {answered && isAnswer ? <Icon d={I.check} className="h-7 w-7" /> : LETTERS[i]}
                 </span>
-                <span className="flex-1 text-2xl font-semibold leading-snug text-zinc-700">
-                  {opt}
-                </span>
+                <Ed
+                  className="flex-1 text-2xl font-semibold leading-snug text-zinc-700"
+                  value={opt}
+                  apply={(d, t) => {
+                    const target = d.questions?.[qi];
+                    if (target) target.options[i] = t;
+                  }}
+                />
               </button>
             </li>
           );
         })}
       </ul>
 
-      {answered && q.why?.trim() && (
-        <p className="anim-pop mt-6 rounded-2xl bg-brand-50 px-6 py-4 text-center text-xl leading-snug text-brand-900">
-          {q.why.trim()}
-        </p>
+      {(answered || editor?.on) && q.why?.trim() && (
+        <Ed
+          as="p"
+          multiline
+          className="anim-pop mt-6 block rounded-2xl bg-brand-50 px-6 py-4 text-center text-xl leading-snug text-brand-900"
+          value={q.why.trim()}
+          apply={(d, t) => {
+            if (d.questions?.[qi]) d.questions[qi].why = t;
+          }}
+        />
       )}
       {!answered && (
         <p className="mt-6 text-center text-lg font-bold text-zinc-400">
@@ -597,7 +815,23 @@ function QuizCard({ q, index, total }: { q: QuizQuestion; index: number; total: 
 
 /** A row of labelled pictures — the deck's way of saying "here is what we are
  *  learning" without a paragraph. */
-function TileRow({ tiles, big = false }: { tiles: LessonTile[]; big?: boolean }) {
+function TileRow({
+  tiles,
+  big = false,
+  editLabel,
+  editTile,
+  removeTile,
+}: {
+  tiles: LessonTile[];
+  big?: boolean;
+  /** Where this row's labels live in the pack, when editing is on. */
+  editLabel?: (index: number, text: string, draft: LessonActivityPack) => void;
+  /** Swap a tile's emoji for an uploaded picture, or clear it again. */
+  editTile?: (index: number, image: string | undefined, draft: LessonActivityPack) => void;
+  /** Take this tile off the slide entirely. */
+  removeTile?: (index: number, draft: LessonActivityPack) => void;
+}) {
+  const editor = useEditor();
   const cols = Math.min(tiles.length, 5);
   return (
     <div
@@ -608,12 +842,48 @@ function TileRow({ tiles, big = false }: { tiles: LessonTile[]; big?: boolean })
         <div
           key={i}
           style={{ "--i": i } as React.CSSProperties}
-          className="rounded-[2rem] border-4 border-silver bg-white p-5 text-center shadow-lg"
+          className="relative rounded-[2rem] border-4 border-silver bg-white p-5 text-center shadow-lg"
         >
-          <span className={big ? "block text-8xl leading-tight" : "block text-7xl leading-tight"}>
-            {t.emoji}
-          </span>
-          <span className="mt-2 block text-2xl font-bold leading-tight text-ink">{t.label}</span>
+          {/* Take the whole tile off the slide. Sits on the corner so it is
+              obviously about this one picture and not the row. */}
+          {editor?.on && removeTile && (
+            <button
+              onClick={() => editor.edit((d) => removeTile(i, d))}
+              title="Remove this from the slide"
+              aria-label="Remove this from the slide"
+              className="absolute -right-3 -top-3 z-10 grid h-9 w-9 place-items-center rounded-full bg-red-500 text-white shadow-lg transition-all hover:bg-red-600 active:scale-90"
+            >
+              <Icon d={I.close} className="h-5 w-5" />
+            </button>
+          )}
+          {editTile ? (
+            <Picture
+              url={t.image}
+              emoji={t.emoji}
+              size={big ? "6rem" : "5rem"}
+              apply={(d, next) => editTile(i, next, d)}
+            />
+          ) : t.image ? (
+            <img
+              src={t.image}
+              alt=""
+              className="mx-auto rounded-[1.2rem] object-cover"
+              style={{ height: big ? "6rem" : "5rem", width: big ? "6rem" : "5rem" }}
+            />
+          ) : (
+            <span className={big ? "block text-8xl leading-tight" : "block text-7xl leading-tight"}>
+              {t.emoji}
+            </span>
+          )}
+          {editLabel ? (
+            <Ed
+              className="mt-2 block text-2xl font-bold leading-tight text-ink"
+              value={t.label}
+              apply={(d, text) => editLabel(i, text, d)}
+            />
+          ) : (
+            <span className="mt-2 block text-2xl font-bold leading-tight text-ink">{t.label}</span>
+          )}
         </div>
       ))}
     </div>
@@ -621,8 +891,17 @@ function TileRow({ tiles, big = false }: { tiles: LessonTile[]; big?: boolean })
 }
 
 /** Story told a scene at a time — tap a picture, read that line aloud. */
-function StoryScenes({ scenes }: { scenes: LessonTile[] }) {
+function StoryScenes({
+  scenes,
+  removeScene,
+}: {
+  scenes: LessonTile[];
+  removeScene?: (index: number, draft: LessonActivityPack) => void;
+}) {
+  const editor = useEditor();
   const [open, setOpen] = useState<number | null>(null);
+  // While editing, show the first scene so there is something to correct.
+  const at = editor?.on ? (open ?? 0) : open;
   return (
     <div>
       <div
@@ -630,11 +909,21 @@ function StoryScenes({ scenes }: { scenes: LessonTile[] }) {
         style={{ gridTemplateColumns: `repeat(${Math.min(scenes.length, 4)}, minmax(0, 1fr))` }}
       >
         {scenes.map((s, i) => (
+          <div key={i} className="relative">
+            {editor?.on && removeScene && (
+              <button
+                onClick={() => editor.edit((d) => removeScene(i, d))}
+                title="Remove this scene"
+                aria-label="Remove this scene"
+                className="absolute -right-2.5 -top-2.5 z-10 grid h-8 w-8 place-items-center rounded-full bg-red-500 text-white shadow-lg hover:bg-red-600 active:scale-90"
+              >
+                <Icon d={I.close} className="h-4 w-4" />
+              </button>
+            )}
           <button
-            key={i}
             onClick={() => setOpen(i)}
             className={`rounded-[2rem] border-4 p-5 text-center transition-all active:scale-[0.98] ${
-              open === i
+              at === i
                 ? "border-brand-600 bg-brand-50 shadow-xl"
                 : "border-dashed border-silver bg-white hover:border-brand-400"
             }`}
@@ -642,17 +931,37 @@ function StoryScenes({ scenes }: { scenes: LessonTile[] }) {
             <span className="block text-7xl leading-tight">{s.emoji}</span>
             <span className="mt-1 block text-xl font-bold text-zinc-400">{i + 1}</span>
           </button>
+          </div>
         ))}
       </div>
-      <p className="anim-pop mt-6 min-h-[5rem] rounded-[1.6rem] bg-sun-soft px-8 py-5 text-center text-3xl font-bold leading-snug text-brand-900">
-        {open === null ? "Tap picture 1 to begin the story." : scenes[open].label}
-      </p>
+      {at === null ? (
+        <p className="anim-pop mt-6 min-h-[5rem] rounded-[1.6rem] bg-sun-soft px-8 py-5 text-center text-3xl font-bold leading-snug text-brand-900">
+          Tap picture 1 to begin the story.
+        </p>
+      ) : (
+        <Ed
+          as="p"
+          multiline
+          className="anim-pop mt-6 block min-h-[5rem] rounded-[1.6rem] bg-sun-soft px-8 py-5 text-center text-3xl font-bold leading-snug text-brand-900"
+          value={scenes[at].label}
+          apply={(d, t) => {
+            if (d.story?.scenes?.[at]) d.story.scenes[at].label = t;
+          }}
+        />
+      )}
     </div>
   );
 }
 
 /** Tap a word, then tap its picture. Matches lock in; wrong pairs wobble. */
-function MatchGame({ pairs }: { pairs: LessonTile[] }) {
+function MatchGame({
+  pairs,
+  removePair,
+}: {
+  pairs: LessonTile[];
+  removePair?: (label: string, draft: LessonActivityPack) => void;
+}) {
+  const editor = useEditor();
   const [picked, setPicked] = useState<string | null>(null);
   const [done, setDone] = useState<string[]>([]);
   const [wrong, setWrong] = useState<string | null>(null);
@@ -662,7 +971,7 @@ function MatchGame({ pairs }: { pairs: LessonTile[] }) {
   if (!shuffled.current) shuffled.current = [...pairs].sort(() => Math.random() - 0.5);
 
   const tapFace = (t: LessonTile) => {
-    if (done.includes(t.label)) return;
+    if (editor?.on || done.includes(t.label)) return;
     if (!picked) {
       setMsg("Tap a word first.");
       return;
@@ -687,7 +996,11 @@ function MatchGame({ pairs }: { pairs: LessonTile[] }) {
             return (
               <button
                 key={t.label}
-                onClick={() => !isDone && (setPicked(t.label), setMsg(`Now tap the picture for ${t.label}.`))}
+                onClick={() =>
+                  !editor?.on &&
+                  !isDone &&
+                  (setPicked(t.label), setMsg(`Now tap the picture for ${t.label}.`))
+                }
                 className={`rounded-[1.6rem] border-4 p-4 text-2xl font-bold transition-all active:scale-[0.98] ${
                   isDone
                     ? "border-brand-600 bg-brand-50 text-brand-800"
@@ -696,7 +1009,13 @@ function MatchGame({ pairs }: { pairs: LessonTile[] }) {
                       : "border-dashed border-silver bg-white text-ink hover:border-brand-400"
                 }`}
               >
-                {t.label}
+                <Ed
+                  value={t.label}
+                  apply={(d, text) => {
+                    const target = d.matching?.pairs?.find((x) => x.label === t.label);
+                    if (target) target.label = text;
+                  }}
+                />
               </button>
             );
           })}
@@ -708,7 +1027,7 @@ function MatchGame({ pairs }: { pairs: LessonTile[] }) {
               <button
                 key={t.label}
                 onClick={() => tapFace(t)}
-                className={`rounded-[1.6rem] border-4 p-2 transition-all active:scale-[0.98] ${
+                className={`relative w-full rounded-[1.6rem] border-4 p-2 transition-all active:scale-[0.98] ${
                   wrong === t.label ? "anim-wiggle" : ""
                 } ${
                   isDone
@@ -716,6 +1035,20 @@ function MatchGame({ pairs }: { pairs: LessonTile[] }) {
                     : "border-dashed border-silver bg-white hover:border-brand-400"
                 }`}
               >
+                {editor?.on && removePair && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    title="Remove this pair"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      editor.edit((d) => removePair(t.label, d));
+                    }}
+                    className="absolute -right-2.5 -top-2.5 z-10 grid h-8 w-8 cursor-pointer place-items-center rounded-full bg-red-500 text-white shadow-lg hover:bg-red-600"
+                  >
+                    <Icon d={I.close} className="h-4 w-4" />
+                  </span>
+                )}
                 <span className="block text-6xl leading-tight">{t.emoji}</span>
               </button>
             );
@@ -728,7 +1061,14 @@ function MatchGame({ pairs }: { pairs: LessonTile[] }) {
 }
 
 /** Spinner that lands on one thing to perform. */
-function ActSpinner({ items }: { items: LessonTile[] }) {
+function ActSpinner({
+  items,
+  removeItem,
+}: {
+  items: LessonTile[];
+  removeItem?: (index: number, draft: LessonActivityPack) => void;
+}) {
+  const editor = useEditor();
   const [at, setAt] = useState<LessonTile | null>(null);
   const [spinning, setSpinning] = useState(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -757,6 +1097,28 @@ function ActSpinner({ items }: { items: LessonTile[] }) {
           {at ? at.label : "Tap the button!"}
         </span>
       </div>
+      {/* While editing, the pool is listed so an unwanted one can be taken
+          out — the spinner alone only ever shows one at a time. */}
+      {editor?.on && removeItem && (
+        <div className="mt-4 flex flex-wrap justify-center gap-2">
+          {items.map((it, i) => (
+            <span
+              key={i}
+              className="relative inline-flex items-center gap-2 rounded-xl border-2 border-silver bg-white px-3 py-1.5 text-lg font-bold"
+            >
+              {it.emoji} {it.label}
+              <button
+                onClick={() => editor.edit((d) => removeItem(i, d))}
+                title="Remove this"
+                aria-label={`Remove ${it.label}`}
+                className="grid h-6 w-6 place-items-center rounded-full bg-red-500 text-white hover:bg-red-600"
+              >
+                <Icon d={I.close} className="h-3.5 w-3.5" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <button
         onClick={spin}
         disabled={spinning}
@@ -769,7 +1131,14 @@ function ActSpinner({ items }: { items: LessonTile[] }) {
 }
 
 /** A real drawing area for the board — finger or mouse. */
-function DrawPad({ examples }: { examples: string[] }) {
+function DrawPad({
+  examples,
+  removeExample,
+}: {
+  examples: string[];
+  removeExample?: (index: number, draft: LessonActivityPack) => void;
+}) {
+  const editor = useEditor();
   const ref = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
   const [colour, setColour] = useState("#12140f");
@@ -839,7 +1208,20 @@ function DrawPad({ examples }: { examples: string[] }) {
         {examples.length > 0 && (
           <div className="grid gap-2">
             {examples.slice(0, 4).map((ex, i) => (
-              <div key={i} className="rounded-2xl border-4 border-silver bg-white px-4 py-2 text-center">
+              <div
+                key={i}
+                className="relative rounded-2xl border-4 border-silver bg-white px-4 py-2 text-center"
+              >
+                {editor?.on && removeExample && (
+                  <button
+                    onClick={() => editor.edit((d) => removeExample(i, d))}
+                    title="Remove this picture"
+                    aria-label="Remove this picture"
+                    className="absolute -right-2.5 -top-2.5 z-10 grid h-8 w-8 place-items-center rounded-full bg-red-500 text-white shadow-lg hover:bg-red-600 active:scale-90"
+                  >
+                    <Icon d={I.close} className="h-4 w-4" />
+                  </button>
+                )}
                 <span className="text-5xl leading-tight">{ex}</span>
               </div>
             ))}
@@ -1263,19 +1645,52 @@ function buildSequence(
             <Icon d={I.book} className="h-5 w-5" />
             Let&rsquo;s learn
           </span>
-          <h2 className="mt-4 text-[3rem] font-bold leading-[1.02] text-ink">
-            {pack?.bigIdea?.title || focus}
-          </h2>
+          <Ed
+            as="h2"
+            className="mt-4 block text-[3rem] font-bold leading-[1.02] text-ink"
+            value={pack?.bigIdea?.title || focus}
+            apply={(d, t) => {
+              d.bigIdea = { title: t, explain: d.bigIdea?.explain || "" };
+            }}
+          />
           {pack?.bigIdea?.explain && (
-            <p className="mt-3 text-[2.4rem] font-semibold leading-snug text-zinc-600">
-              {pack.bigIdea.explain}
-            </p>
+            <Ed
+              as="p"
+              className="mt-3 block text-[2.4rem] font-semibold leading-snug text-zinc-600"
+              value={pack.bigIdea.explain}
+              apply={(d, t) => {
+                if (d.bigIdea) d.bigIdea.explain = t;
+              }}
+            />
           )}
+          <div className="mt-6 flex justify-center">
+            <Picture
+              url={pack?.bigIdea?.image}
+              size="14rem"
+              apply={(d, next) => {
+                d.bigIdea = {
+                  title: d.bigIdea?.title || "",
+                  explain: d.bigIdea?.explain || "",
+                  image: next,
+                };
+              }}
+            />
+          </div>
           {/* The tiles are only worth showing here when each one does NOT get
               its own teaching slide next — otherwise it is the same row of
               pictures twice in a row. They come back at review time. */}
           {pack?.keyIdeas?.length && !pack?.teach?.length ? (
-            <TileRow tiles={pack.keyIdeas.slice(0, 5)} big />
+            <TileRow tiles={pack.keyIdeas.slice(0, 5)} big
+              editLabel={(i, t, d) => {
+                if (d.keyIdeas?.[i]) d.keyIdeas[i].label = t;
+              }}
+              editTile={(i, img, d) => {
+                if (d.keyIdeas?.[i]) d.keyIdeas[i].image = img;
+              }}
+              removeTile={(i, d) => {
+                d.keyIdeas = (d.keyIdeas || []).filter((_, n) => n !== i);
+              }}
+            />
           ) : null}
         </div>
       ),
@@ -1285,34 +1700,73 @@ function buildSequence(
   // 3a-ii · THE TEACHING. One slide per concept: a big picture, the point in
   // the child's own words, what to do about it, and a question back to the
   // class. This is what makes the deck teachable straight off the board.
-  (pack?.teach || []).forEach((p) => {
+  (pack?.teach || []).forEach((p, ti) => {
     slides.push({
       kicker: p.title,
       tone: "learn",
       content: (
         <div className="anim-pop rounded-[2.5rem] bg-white p-9 shadow-2xl">
           <div className="grid grid-cols-[auto_1fr] items-center gap-9">
-            <span className="text-[9rem] leading-none">{p.emoji}</span>
+            <Picture
+              url={p.image}
+              emoji={p.emoji}
+              apply={(d, next) => {
+                if (d.teach?.[ti]) d.teach[ti].image = next;
+              }}
+            />
             <div className="min-w-0">
-              <h2 className="text-[3.2rem] font-bold leading-[1.02] text-ink">{p.title}</h2>
+              <Ed
+                as="h2"
+                className="block text-[3.2rem] font-bold leading-[1.02] text-ink"
+                value={p.title}
+                apply={(d, t) => {
+                  if (d.teach?.[ti]) d.teach[ti].title = t;
+                }}
+              />
               <div className="anim-stagger mt-4 grid gap-3">
                 {p.lines.map((l, i) => (
-                  <p
-                    key={i}
-                    style={{ "--i": i } as React.CSSProperties}
-                    className="rounded-[1.4rem] bg-sun-soft px-6 py-4 text-[1.9rem] font-semibold leading-snug text-brand-900"
-                  >
-                    {l}
-                  </p>
+                  <div key={i} style={{ "--i": i } as React.CSSProperties}>
+                    <Ed
+                      as="p"
+                      multiline
+                      className="block rounded-[1.4rem] bg-sun-soft px-6 py-4 text-[1.9rem] font-semibold leading-snug text-brand-900"
+                      value={l}
+                      apply={(d, t) => {
+                        if (d.teach?.[ti]) d.teach[ti].lines[i] = t;
+                      }}
+                    />
+                  </div>
                 ))}
               </div>
             </div>
           </div>
-          {p.tiles && p.tiles.length > 0 && <TileRow tiles={p.tiles} />}
+          {p.tiles && p.tiles.length > 0 && (
+            <TileRow
+              tiles={p.tiles}
+              editLabel={(i, t, d) => {
+                const tiles = d.teach?.[ti]?.tiles;
+                if (tiles?.[i]) tiles[i].label = t;
+              }}
+              editTile={(i, img, d) => {
+                const tiles = d.teach?.[ti]?.tiles;
+                if (tiles?.[i]) tiles[i].image = img;
+              }}
+              removeTile={(i, d) => {
+                const point = d.teach?.[ti];
+                if (point?.tiles) point.tiles = point.tiles.filter((_, n) => n !== i);
+              }}
+            />
+          )}
           {p.ask && (
             <p className="mt-6 text-center">
               <span className="inline-flex items-center gap-3 rounded-full bg-sunny px-8 py-4 text-[1.9rem] font-bold text-brand-900">
-                🙋 {p.ask}
+                🙋{" "}
+                <Ed
+                  value={p.ask}
+                  apply={(d, t) => {
+                    if (d.teach?.[ti]) d.teach[ti].ask = t;
+                  }}
+                />
               </span>
             </p>
           )}
@@ -1395,7 +1849,15 @@ function buildSequence(
           </p>
         </div>
         <div className="mx-auto mt-8 grid max-w-[980px] grid-cols-[1.5fr_1fr] items-start gap-7">
-          <TeachReveal items={discussion} tilted label="question" />
+          <TeachReveal
+            items={discussion}
+            tilted
+            label="question"
+            editItem={(i, t, d) => {
+              d.discussion = [...(d.discussion || [])];
+              d.discussion[i] = t;
+            }}
+          />
           <div className="rounded-[2rem] bg-white/95 p-6 shadow-2xl">
             <p className="mb-4 text-center text-lg font-bold uppercase tracking-wider text-brand-600">
               Talk time
@@ -1419,7 +1881,12 @@ function buildSequence(
             📖 Story time
           </span>
           <h2 className="mt-4 text-[3rem] font-bold leading-[1.02] text-ink">{pack.story.title}</h2>
-          <StoryScenes scenes={pack.story.scenes} />
+          <StoryScenes
+            scenes={pack.story.scenes}
+            removeScene={(i, d) => {
+              if (d.story) d.story.scenes = d.story.scenes.filter((_, n) => n !== i);
+            }}
+          />
         </div>
       ),
     });
@@ -1439,6 +1906,15 @@ function buildSequence(
               <TeachReveal
                 items={pack.story.questions.map((x) => `${x.q}  →  ${x.a}`)}
                 label="question"
+                editItem={(i, t, d) => {
+                  // Kept as one editable line: "question → answer".
+                  const [q, a2] = t.split("→");
+                  const target = d.story?.questions?.[i];
+                  if (target) {
+                    target.q = (q || "").trim();
+                    target.a = (a2 || "").trim();
+                  }
+                }}
               />
             </div>
           </div>
@@ -1507,7 +1983,12 @@ function buildSequence(
               ))}
             </div>
           )}
-          <ActSpinner items={pack.actOut.items} />
+          <ActSpinner
+            items={pack.actOut.items}
+            removeItem={(i, d) => {
+              if (d.actOut) d.actOut.items = d.actOut.items.filter((_, n) => n !== i);
+            }}
+          />
         </div>
       ),
     });
@@ -1524,7 +2005,12 @@ function buildSequence(
           </span>
           <h2 className="mt-4 text-[2.8rem] font-bold leading-[1.02] text-ink">{pack.draw.title}</h2>
           <p className="mt-2 text-2xl leading-snug text-zinc-500">{pack.draw.instruction}</p>
-          <DrawPad examples={pack.draw.examples || []} />
+          <DrawPad
+            examples={pack.draw.examples || []}
+            removeExample={(i, d) => {
+              if (d.draw) d.draw.examples = (d.draw.examples || []).filter((_, n) => n !== i);
+            }}
+          />
         </div>
       ),
     });
@@ -1543,7 +2029,14 @@ function buildSequence(
             {pack.matching.title}
           </h2>
           <p className="mt-2 text-2xl leading-snug text-zinc-500">{pack.matching.instruction}</p>
-          <MatchGame pairs={pack.matching.pairs} />
+          <MatchGame
+            pairs={pack.matching.pairs}
+            removePair={(label, d) => {
+              if (d.matching) {
+                d.matching.pairs = d.matching.pairs.filter((x) => x.label !== label);
+              }
+            }}
+          />
         </div>
       ),
     });
@@ -1561,7 +2054,7 @@ function buildSequence(
     slides.push({
       kicker: `Mini quiz · ${idx + 1} of ${all.length}`,
       tone: "check",
-      content: <QuizCard q={q} index={idx + 1} total={all.length} />,
+      content: <QuizCard q={q} index={idx + 1} total={all.length} qi={idx} />,
     });
   });
 
@@ -1578,7 +2071,22 @@ function buildSequence(
           <h2 className="mt-4 text-[3rem] font-bold leading-[1.02] text-ink">
             {pack.strategies.title}
           </h2>
-          <TileRow tiles={pack.strategies.items.slice(0, 4)} />
+          <TileRow
+            tiles={pack.strategies.items.slice(0, 4)}
+            editLabel={(i, t, d) => {
+              const item = d.strategies?.items?.[i];
+              if (item) item.label = t;
+            }}
+            editTile={(i, img, d) => {
+              const item = d.strategies?.items?.[i];
+              if (item) item.image = img;
+            }}
+            removeTile={(i, d) => {
+              if (d.strategies) {
+                d.strategies.items = d.strategies.items.filter((_, n) => n !== i);
+              }
+            }}
+          />
           <p className="mt-6 text-center text-xl font-bold text-zinc-400">
             Let&rsquo;s practise one together
           </p>
@@ -1601,7 +2109,17 @@ function buildSequence(
           </div>
           {pack.keyIdeas?.length ? (
             <div className="mx-auto max-w-[1000px]">
-              <TileRow tiles={pack.keyIdeas.slice(0, 5)} />
+              <TileRow tiles={pack.keyIdeas.slice(0, 5)}
+              editLabel={(i, t, d) => {
+                if (d.keyIdeas?.[i]) d.keyIdeas[i].label = t;
+              }}
+              editTile={(i, img, d) => {
+                if (d.keyIdeas?.[i]) d.keyIdeas[i].image = img;
+              }}
+              removeTile={(i, d) => {
+                d.keyIdeas = (d.keyIdeas || []).filter((_, n) => n !== i);
+              }}
+            />
             </div>
           ) : null}
           <div
@@ -1609,13 +2127,18 @@ function buildSequence(
             style={{ gridTemplateColumns: `repeat(${Math.min(pack.review.length, 3)}, minmax(0,1fr))` }}
           >
             {pack.review.slice(0, 3).map((q, i) => (
-              <p
-                key={i}
-                style={{ "--i": i } as React.CSSProperties}
-                className="rounded-[1.6rem] bg-white px-6 py-5 text-center text-2xl font-bold leading-snug text-brand-900 shadow-lg"
-              >
-                {q}
-              </p>
+              <div key={i} style={{ "--i": i } as React.CSSProperties}>
+                <Ed
+                  as="p"
+                  multiline
+                  className="block rounded-[1.6rem] bg-white px-6 py-5 text-center text-2xl font-bold leading-snug text-brand-900 shadow-lg"
+                  value={q}
+                  apply={(d, t) => {
+                    d.review = [...(d.review || [])];
+                    d.review[i] = t;
+                  }}
+                />
+              </div>
             ))}
           </div>
         </div>
@@ -1671,12 +2194,23 @@ function buildSequence(
       content: (
         <div className="anim-pop text-center">
           <span className="block text-[8rem] leading-none">🌟</span>
-          <h2 className="mt-4 text-[4rem] font-bold leading-none text-white">
-            {pack.celebrate.title}
-          </h2>
-          <p className="mx-auto mt-6 max-w-4xl text-3xl leading-snug text-white/85">
-            {pack.celebrate.line}
-          </p>
+          <Ed
+            as="h2"
+            className="mt-4 block text-[4rem] font-bold leading-none text-white"
+            value={pack.celebrate.title}
+            apply={(d, t) => {
+              if (d.celebrate) d.celebrate.title = t;
+            }}
+          />
+          <Ed
+            as="p"
+            multiline
+            className="mx-auto mt-6 block max-w-4xl text-3xl leading-snug text-white/85"
+            value={pack.celebrate.line}
+            apply={(d, t) => {
+              if (d.celebrate) d.celebrate.line = t;
+            }}
+          />
         </div>
       ),
     });
@@ -1695,6 +2229,8 @@ export default function TeachingDeck({
   week,
   studioSlides = [],
   pack,
+  onPackChange,
+  onUploadImage,
   onClose,
 }: {
   plan: LessonPlan;
@@ -1703,8 +2239,31 @@ export default function TeachingDeck({
   studioSlides?: SlideContent[];
   /** The class-facing activities built from this week of the plan. */
   pack?: LessonActivityPack;
+  /** Supply this to make the lesson editable on the board. */
+  onPackChange?: (next: LessonActivityPack) => void;
+  /** Supply this to allow pictures to be added to slides while editing. */
+  onUploadImage?: (file: File) => Promise<string>;
   onClose: () => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const canEdit = Boolean(pack && onPackChange);
+  const editor = useMemo<DeckEditor | null>(
+    () =>
+      canEdit
+        ? {
+            on: editing,
+            upload: onUploadImage,
+            edit: (mutate) => {
+              // Work on a copy so React sees a new object and re-renders; the
+              // pack is small and plain, so a structured clone is cheapest.
+              const draft: LessonActivityPack = JSON.parse(JSON.stringify(pack));
+              mutate(draft);
+              onPackChange!(draft);
+            },
+          }
+        : null,
+    [canEdit, editing, pack, onPackChange, onUploadImage],
+  );
   const slides = buildWeekSlides(plan, week, studioSlides, pack);
   const n = slides.length;
   const [i, setI] = useState(0);
@@ -1715,6 +2274,8 @@ export default function TeachingDeck({
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
+      // A space or an arrow key while correcting text belongs to the text.
+      if (el?.isContentEditable) return;
       if (e.key === "Escape" && !document.fullscreenElement) {
         onClose();
       } else if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") {
@@ -1780,6 +2341,22 @@ export default function TeachingDeck({
           <span className="text-base font-bold opacity-70">
             {i + 1} / {n}
           </span>
+          {canEdit && (
+            <button
+              onClick={() => setEditing((e) => !e)}
+              className={`flex h-11 items-center gap-2 rounded-2xl px-4 text-sm font-bold backdrop-blur transition-all active:scale-90 ${
+                editing
+                  ? "bg-sunny text-brand-900"
+                  : onLight
+                    ? "bg-black/10 hover:bg-black/20"
+                    : "bg-white/20 hover:bg-white/30"
+              }`}
+              title={editing ? "Finish editing" : "Edit this lesson"}
+            >
+              <Icon d={I.pencil} className="h-5 w-5" />
+              {editing ? "Done" : "Edit"}
+            </button>
+          )}
           <button
             onClick={toggleFs}
             className={`grid h-11 w-11 place-items-center rounded-2xl backdrop-blur transition-all active:scale-90 ${
@@ -1808,7 +2385,9 @@ export default function TeachingDeck({
       <div
         className={`relative deck-glow ${pattern} flex min-h-0 flex-1 flex-col overflow-hidden px-5 py-4 sm:px-10 sm:py-6`}
       >
-        <FitStage key={i}>{s.content}</FitStage>
+        <EditCtx.Provider value={editor}>
+          <FitStage key={i}>{s.content}</FitStage>
+        </EditCtx.Provider>
       </div>
 
       {/* Controls — big, thumb-friendly, high contrast on any tone */}

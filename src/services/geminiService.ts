@@ -2663,6 +2663,25 @@ async function mapLimit<T, R>(
 // proxy which holds the key.
 const GROQ_API_KEY = (process.env.GROQ_API_KEY as string) || "";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+
+/** British English, everywhere.
+ *
+ *  This is a Cambridge International school: lesson plans, slides, worksheets
+ *  and marking all have to read as UK English, and a stray "color" or
+ *  "memorize" in front of a class undermines the spelling being taught. The
+ *  models default to US English, so the rule is applied at the single point
+ *  every text generation passes through rather than repeated in each prompt,
+ *  where one missed prompt would leak American spelling into a document. */
+const UK_ENGLISH = `WRITE IN BRITISH ENGLISH (UK). This is not optional — the work is for a Cambridge International school and every word is read by children learning to spell.
+- -ise / -isation, never -ize / -ization: organise, recognise, realise, apologise, summarise, categorise, memorise, organisation, visualise. (Exceptions that are correct in UK English: capsize, seize, size.)
+- -our, not -or: colour, behaviour, favourite, neighbour, humour, labour, flavour.
+- -re, not -er: centre, metre, litre, theatre, fibre.
+- -lled / -lling / -ller: travelled, labelled, modelling, cancelled, marvellous, skilful (one l), fulfil (one l).
+- -ce for the noun, -se for the verb: practice (noun) / practise (verb); licence (noun) / license (verb). "The children practise their handwriting."
+- -ogue: catalogue, dialogue, analogue. And: grey not gray, tyre not tire, kerb not curb, plough, draught, cheque, aeroplane, jewellery, aluminium, programme (except a computer program), storey (of a building), maths not math, learnt/spelt/burnt are fine.
+- Vocabulary: Year 1 (not first grade), timetable (not schedule), holiday (not vacation), rubber (not eraser), marker pen, whiteboard, break time, tick (not check mark), full stop (not period), rubbish (not trash), pupils or children (not kids).
+- Punctuation: single quotes for speech where quoting, and place punctuation outside the closing quote unless it belongs to the quoted words. Use dd/mm/yyyy dates and metric units.
+- Grammar: collective nouns may take a plural verb ("the class are working"). Use "have got" naturally. Do not use American date order or American idiom.`;
 // Max time to wait for a single Groq call before aborting it as a timeout.
 // Groq is fast (a full worksheet batch returns in a few seconds); anything past
 // this is a stalled connection, so abort and let the retry logic take over.
@@ -2743,13 +2762,13 @@ async function groqGenerate(
     }
   }
   const messages: any[] = [];
-  if (wantsJson) {
-    messages.push({
-      role: "system",
-      content:
-        "You are an expert Cambridge educator. Respond with a SINGLE valid JSON object only — no markdown, no code fences, no commentary.",
-    });
-  }
+  // Applied to every generation, JSON or not, so no prompt can miss it.
+  messages.push({
+    role: "system",
+    content: wantsJson
+      ? `You are an expert Cambridge educator. Respond with a SINGLE valid JSON object only — no markdown, no code fences, no commentary.\n\n${UK_ENGLISH}`
+      : `You are an expert Cambridge educator.\n\n${UK_ENGLISH}`,
+  });
   messages.push({ role: "user", content: promptText });
   // Give enough room for large worksheets (e.g. 50 questions). The 70B model
   // has a high per-minute token budget; the small fallback model has a tighter
@@ -2877,7 +2896,10 @@ async function groqChat(
     );
   }
   const messages: any[] = [];
-  if (systemInstruction) messages.push({ role: "system", content: systemInstruction });
+  messages.push({
+    role: "system",
+    content: systemInstruction ? `${systemInstruction}\n\n${UK_ENGLISH}` : UK_ENGLISH,
+  });
   for (const t of turns) {
     if (!t || !t.text) continue;
     messages.push({ role: t.role === "model" ? "assistant" : "user", content: t.text });

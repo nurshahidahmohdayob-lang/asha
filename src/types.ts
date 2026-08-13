@@ -41,6 +41,8 @@ export interface LessonTile {
   /** A single emoji. Read from the back of a classroom; never fails to load. */
   emoji: string;
   label: string;
+  /** An uploaded picture shown instead of the emoji. A URL, never base64. */
+  image?: string;
 }
 
 /** One concept, taught on its own slide — the substance of the lesson. This
@@ -48,6 +50,10 @@ export interface LessonTile {
  *  picture, the point in child's words, examples, and a question to the class. */
 export interface LessonTeachPoint {
   emoji: string;
+  /** A picture to show instead of the emoji. A URL, never base64 — the pack
+   *  is saved with the project and an inline image would blow the document
+   *  size limit. */
+  image?: string;
   /** "I Feel Happy!" — spoken in the child's own voice where it suits. */
   title: string;
   /** 1-3 sentences that actually teach the point. */
@@ -71,7 +77,7 @@ export interface LessonActivityPack {
   /** The handful of things being taught, as picture tiles. */
   keyIdeas?: LessonTile[];
   /** "What are feelings?" — the idea stated once, plainly, before the detail. */
-  bigIdea?: { title: string; explain: string };
+  bigIdea?: { title: string; explain: string; image?: string };
   /** The teaching itself: one slide per concept. */
   teach?: LessonTeachPoint[];
   /** An ordered change or process — "sad → calm → happy", "seed → sprout → tree". */
@@ -95,6 +101,43 @@ export interface LessonActivityPack {
   strategies?: { title: string; items: LessonTile[] };
   /** Three closing recall questions for the review slide. */
   review?: string[];
+}
+
+/** One piece of evidence that a teacher attended training — the certificate,
+ *  photo or letter they were given. Stored as a link to the share host, never
+ *  inline, so a year of certificates doesn't bloat the record. */
+export interface PDEvidenceFile {
+  id: string;
+  name: string;
+  url: string;
+  size: number;
+  uploadedAt: number;
+}
+
+/** One professional development activity a teacher has completed. */
+export interface PDRecord {
+  id: string;
+  title: string;
+  provider?: string;
+  kind: 'course' | 'workshop' | 'webinar' | 'conference' | 'in-house' | 'other';
+  /** Hours of training this counted for. */
+  hours: number;
+  /** ISO yyyy-mm-dd. When the training actually happened. */
+  dateAttended: string;
+  /** ISO yyyy-mm-dd. When the teacher filed the evidence — blank until they do,
+   *  which is what makes a record outstanding. */
+  dateSubmitted?: string;
+  evidence: PDEvidenceFile[];
+  notes?: string;
+}
+
+/** A teacher's professional development file for the year. */
+export interface PDLog {
+  /** Hours the school expects in the cycle. */
+  targetHours: number;
+  /** e.g. "2026" or "2026/27" — what the target is counted against. */
+  cycle: string;
+  records: PDRecord[];
 }
 
 export interface WorksheetSection {
@@ -365,7 +408,10 @@ export interface AppTheme {
     | 'botanical'
     | 'origami'
     | 'bubbles'
-    | 'candy';
+    | 'candy'
+    /** The projected Project Lesson look: a white card floating on a Zera
+     *  sub-brand colour, a different colour per slide. */
+    | 'deck';
   /** Title color override for designs where the title sits on a colored
    *  surface (e.g. the band header). Falls back to accentColor. */
   titleColor?: string;

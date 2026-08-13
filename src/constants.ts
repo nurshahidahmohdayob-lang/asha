@@ -4,6 +4,21 @@ import { AppTheme } from './types';
 // chrome and personality — not just a recolor of the same slide.
 export const THEMES: AppTheme[] = [
   {
+    // Matches the projected Project Lesson deck, so a slide edited here looks
+    // like the lesson the class will actually see.
+    id: 'tpl-deck',
+    name: 'Teaching Deck',
+    designType: 'deck',
+    bgColor: '#0A4F29',
+    cardBg: '#FFFFFF',
+    textColor: '#12140F',
+    accentColor: '#0A4F29',
+    secondaryColor: '#F7B917',
+    titleColor: '#12140F',
+    patternType: 'dots',
+    emoji: '🌟',
+  },
+  {
     id: 'tpl-band',
     name: 'Color Band',
     designType: 'band',
