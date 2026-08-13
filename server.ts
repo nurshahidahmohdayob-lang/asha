@@ -1006,6 +1006,13 @@ async function startServer() {
       const token = jwt.sign(payload, ssoPrivateKey, {
         algorithm: 'RS256',
         header: {
+          // `alg` is required on JwtHeader. Without it the options object
+          // doesn't match SignOptions, TypeScript falls through to the
+          // callback overload, and the error it reports ("'algorithm' does
+          // not exist in type 'SignCallback'") points at the wrong thing.
+          // It must agree with `algorithm` above — jsonwebtoken signs with
+          // that and would otherwise emit a header contradicting the signature.
+          alg: 'RS256',
           kid: ssoKid
         }
       });
