@@ -1801,6 +1801,36 @@ function zReset(){var on=document.querySelectorAll('.opt.on,.tf.on,.eopt.on,.cut
 // Slide design templates — every designType is a visually DISTINCT slide
 // layout (band header, hand-drawn sketch, taped paper, gradient, chalkboard…)
 // rather than a recolor of the same chrome. Rendered behind content (z-10).
+/** Every view the app can show. The hash sync checks against this, so a view
+ *  missing from it looks broken in one specific way: the URL changes when you
+ *  press the browser Back button but the page stays put, because the handler
+ *  neither recognises the hash nor treats it as empty. */
+const APP_VIEWS = [
+  "home",
+  "educator-suite",
+  "admin",
+  "lesson-plan",
+  "slides",
+  "worksheet",
+  "notes",
+  "reading-program",
+  "poster",
+  "html-host",
+  "professional-development",
+] as const;
+
+/** The numbered workflow, in order. Kept out of `previousView` so that Back
+ *  from the first step leaves the workflow instead of jumping to whichever
+ *  step was visited last. */
+const WORKFLOW_VIEWS = [
+  "lesson-plan",
+  "slides",
+  "worksheet",
+  "reading-program",
+  "notes",
+  "professional-development",
+] as const;
+
 const renderSlideDecor = (
   theme: AppTheme,
   slideIdx: number,
@@ -10966,10 +10996,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const [isGeneratingPoster, setIsGeneratingPoster] = useState(false);
 
   useEffect(() => {
-    if (
-      currentView &&
-      !["lesson-plan", "slides", "worksheet", "notes", "reading-program"].includes(currentView)
-    ) {
+    if (currentView && !(WORKFLOW_VIEWS as readonly string[]).includes(currentView)) {
       setPreviousView(currentView as any);
     }
   }, [currentView]);
@@ -10978,18 +11005,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash.replace("#", "");
-      const validViews = [
-        "home",
-        "educator-suite",
-        "admin",
-        "lesson-plan",
-        "slides",
-        "worksheet",
-        "notes",
-        "reading-program",
-        "html-host",
-      ];
-      if (hash && validViews.includes(hash)) {
+      if (hash && (APP_VIEWS as readonly string[]).includes(hash)) {
         setCurrentView((prev) => {
           if (prev !== hash) {
             return hash as any;
@@ -11005,17 +11021,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
     // Check hash on load
     const initialHash = window.location.hash.replace("#", "");
-    const validViews = [
-      "home",
-      "educator-suite",
-      "admin",
-      "lesson-plan",
-      "slides",
-      "worksheet",
-      "notes",
-      "reading-program",
-    ];
-    if (initialHash && validViews.includes(initialHash)) {
+    if (initialHash && (APP_VIEWS as readonly string[]).includes(initialHash)) {
       setCurrentView(initialHash as any);
     }
 
@@ -26656,6 +26662,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   );
 
   const renderWorkspaceFlowNavigator = () => {
+    // Order here IS the workflow order, and WORKFLOW_VIEWS mirrors it.
     const steps = [
       { id: "lesson-plan", label: "Lesson Design", icon: BookOpen },
       { id: "slides", label: "Slide Studio", icon: Presentation },
