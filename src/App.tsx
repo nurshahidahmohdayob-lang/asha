@@ -7235,8 +7235,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const [isSessionPlannerOpen, setIsSessionPlannerOpen] = useState(false);
   const [isTemplateMode, setIsTemplateMode] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  /** Slide Studio's Download menu — the projected lesson, or the slides alone. */
-  const [slideDownloadOpen, setSlideDownloadOpen] = useState(false);
   const [isPreviewHandout, setIsPreviewHandout] = useState(false);
   const [imgFailed, setImgFailed] = useState<Record<string, boolean>>({});
   const [manualLink, setManualLink] = useState("");
@@ -8300,7 +8298,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   // goals, an activity slide each, share back, check, exit ticket. Built from
   // the week's own fields, so there is nothing to generate or save.
   const [teachWeekIdx, setTeachWeekIdx] = useState<number | null>(null);
-  const [pickingTeachWeek, setPickingTeachWeek] = useState(false);
   // Slides but no lesson plan — still one deck, just without a week's fields.
   const [teachSlidesOnly, setTeachSlidesOnly] = useState(false);
 
@@ -8442,40 +8439,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       true,
       () => setTeachSlidesOnly(true),
     );
-  };
-
-  // A download asked for from Slide Studio, where the deck isn't on screen.
-  // The deck opens, photographs itself, saves the file and closes again.
-  const [deckAutoExport, setDeckAutoExport] = useState<"pdf" | "pptx" | null>(
-    null,
-  );
-  const downloadProjectedLesson = async (mode: "pdf" | "pptx") => {
-    setDeckAutoExport(mode);
-    // Nothing to project means nothing to download — don't leave the request
-    // armed, or the next Project Lesson would silently export instead.
-    const opened = await openTeachingDeck();
-    if (!opened) setDeckAutoExport(null);
-  };
-
-  /** Returns whether a deck (or the week picker leading to one) opened. */
-  const openTeachingDeck = async (): Promise<boolean> => {
-    if (!content?.lessonPlan || teachWeeks.length === 0) {
-      // No plan is fine as long as there are slides to teach from.
-      if (studioSlides.length > 0) {
-        setTeachSlidesOnly(true);
-        return true;
-      }
-      alert(
-        "Nothing to project yet — generate some slides, or open a lesson plan and the deck will be built from one of its weeks.",
-      );
-      return false;
-    }
-    if (teachWeeks.length === 1) {
-      await ensureActivitiesForWeek(teachWeeks[0], false, () => setTeachWeekIdx(0));
-    } else {
-      setPickingTeachWeek(true);
-    }
-    return true;
   };
 
   const attachmentIcon = (contentType: string, name: string) => {
@@ -39557,51 +39520,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         )}
       </AnimatePresence>
 
-      {/* Which week are we teaching? Skipped when the plan has only one. */}
-      {pickingTeachWeek && (
-        <div
-          className="fixed inset-0 z-[95] bg-[#064E3B]/50 backdrop-blur-sm flex items-center justify-center p-6"
-          onClick={() => setPickingTeachWeek(false)}
-        >
-          <div
-            className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 max-h-[80vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-lg font-black text-[#064E3B]">Which week are you teaching?</h3>
-            <p className="mt-1 text-xs font-bold text-[#064E3B]/50">
-              The deck is built from that week's do now, objectives, activities and assessment.
-            </p>
-            <div className="mt-4 space-y-2">
-              {teachWeeks.map((w, idx) => (
-                <button
-                  key={idx}
-                  onClick={async () => {
-                    setPickingTeachWeek(false);
-                    await ensureActivitiesForWeek(w, false, () =>
-                      setTeachWeekIdx(idx),
-                    );
-                  }}
-                  className="w-full text-left p-3 rounded-2xl border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] transition-all"
-                >
-                  <span className="text-[10px] font-black uppercase tracking-wider text-[#059669]">
-                    Week {w.week}
-                  </span>
-                  <span className="block text-sm font-bold text-[#064E3B]">
-                    {w.topic?.trim() || w.subTopic?.trim() || w.unit?.trim() || "Untitled week"}
-                  </span>
-                </button>
-              ))}
-            </div>
-            <button
-              onClick={() => setPickingTeachWeek(false)}
-              className="mt-4 w-full py-2.5 rounded-xl bg-[#F0FDF4] text-[#064E3B]/60 font-black text-[10px] uppercase tracking-widest hover:bg-[#D1FAE5]"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
       {teachWeekIdx !== null && content?.lessonPlan && teachWeeks[teachWeekIdx] && (
         <TeachingDeck
           plan={content.lessonPlan}
@@ -39612,13 +39530,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             setContent((prev) => (prev ? { ...prev, lessonPack: next } : prev))
           }
           onUploadImage={uploadFileToHost}
-          autoExport={deckAutoExport}
-          onAutoExportDone={() => {
-            setDeckAutoExport(null);
-            // Opened only to be downloaded — put the teacher back where they
-            // were rather than leaving a deck they never asked to present.
-            setTeachWeekIdx(null);
-          }}
           onClose={() => setTeachWeekIdx(null)}
         />
       )}
@@ -39635,11 +39546,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             setContent((prev) => (prev ? { ...prev, lessonPack: next } : prev))
           }
           onUploadImage={uploadFileToHost}
-          autoExport={deckAutoExport}
-          onAutoExportDone={() => {
-            setDeckAutoExport(null);
-            setTeachSlidesOnly(false);
-          }}
           onClose={() => setTeachSlidesOnly(false)}
         />
       )}

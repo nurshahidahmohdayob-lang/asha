@@ -2244,8 +2244,6 @@ export default function TeachingDeck({
   pack,
   onPackChange,
   onUploadImage,
-  autoExport,
-  onAutoExportDone,
   onClose,
 }: {
   plan: LessonPlan;
@@ -2258,11 +2256,6 @@ export default function TeachingDeck({
   onPackChange?: (next: LessonActivityPack) => void;
   /** Supply this to allow pictures to be added to slides while editing. */
   onUploadImage?: (file: File) => Promise<string>;
-  /** Start a download the moment the deck opens — how "Download Lesson"
-   *  works from Slide Studio, where the deck isn't on screen to click. */
-  autoExport?: "pdf" | "pptx" | null;
-  /** Told when an autoExport has finished, so the app can clear the request. */
-  onAutoExportDone?: () => void;
   onClose: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -2345,17 +2338,6 @@ export default function TeachingDeck({
       setExporting(null);
     }
   };
-
-  // "Download Lesson" from Slide Studio opens this deck purely to photograph
-  // it, so the export starts itself. Guarded by a ref — the effect must not
-  // fire a second export when the pack finishes loading and re-renders.
-  const autoStarted = useRef(false);
-  useEffect(() => {
-    if (!autoExport || autoStarted.current) return;
-    autoStarted.current = true;
-    runExport(autoExport).finally(() => onAutoExportDone?.());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoExport]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
