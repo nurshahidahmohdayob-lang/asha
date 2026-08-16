@@ -23,6 +23,12 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import {
+  captureSlide,
+  slidesToPdf,
+  slidesToPptx,
+  waitForStage,
+} from "../utils/deckExport";
 import type {
   LessonActivityPack,
   LessonPlan,
@@ -92,6 +98,13 @@ const I = {
       <circle cx="8.5" cy="8.5" r="1.2" fill="currentColor" stroke="none" />
       <circle cx="15.5" cy="15.5" r="1.2" fill="currentColor" stroke="none" />
       <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
+    </>
+  ),
+  download: (
+    <>
+      <path d="M12 3v12" />
+      <path d="M7.5 10.5L12 15l4.5-4.5" />
+      <path d="M4 17.5V19a2 2 0 002 2h12a2 2 0 002-2v-1.5" />
     </>
   ),
 };
@@ -2231,6 +2244,8 @@ export default function TeachingDeck({
   pack,
   onPackChange,
   onUploadImage,
+  autoExport,
+  onAutoExportDone,
   onClose,
 }: {
   plan: LessonPlan;
@@ -2243,6 +2258,11 @@ export default function TeachingDeck({
   onPackChange?: (next: LessonActivityPack) => void;
   /** Supply this to allow pictures to be added to slides while editing. */
   onUploadImage?: (file: File) => Promise<string>;
+  /** Start a download the moment the deck opens — how "Download Lesson"
+   *  works from Slide Studio, where the deck isn't on screen to click. */
+  autoExport?: "pdf" | "pptx" | null;
+  /** Told when an autoExport has finished, so the app can clear the request. */
+  onAutoExportDone?: () => void;
   onClose: () => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -2270,12 +2290,84 @@ export default function TeachingDeck({
   const deckRef = useRef<HTMLDivElement>(null);
   const [isFs, setIsFs] = useState(false);
 
+  /* ── Downloading the deck ──────────────────────────────────────────────
+     The slides are live React, so there is nothing to serialise — each one
+     is rendered off-screen at 16:9 and photographed, then the pictures are
+     bound into a PDF or a PowerPoint. */
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [captureIdx, setCaptureIdx] = useState<number | null>(null);
+  const [exporting, setExporting] = useState<{ done: number; total: number } | null>(
+    null,
+  );
+  const captureRef = useRef<HTMLDivElement>(null);
+  // The key handler is bound once; a ref is how it sees the live export state.
+  const exportingRef = useRef(false);
+  exportingRef.current = Boolean(exporting);
+
+  const deckTitle = [
+    plan.subject?.trim(),
+    plan.class?.trim(),
+    week.week ? `Week ${week.week}` : "",
+    (week.subTopic || week.topic || plan.overallTopic || "").trim(),
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const runExport = async (mode: "pdf" | "pptx") => {
+    if (exporting) return;
+    setMenuOpen(false);
+    setExporting({ done: 0, total: n });
+    const shots: string[] = [];
+    try {
+      for (let k = 0; k < n; k++) {
+        setCaptureIdx(k);
+        // Let React mount the off-screen slide before reaching for it.
+        await new Promise<void>((r) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => r())),
+        );
+        const el = captureRef.current;
+        if (!el) continue;
+        await waitForStage(el);
+        shots.push(await captureSlide(el));
+        setExporting({ done: k + 1, total: n });
+      }
+      if (!shots.length) throw new Error("Nothing was captured");
+      setExporting({ done: n, total: n });
+      if (mode === "pdf") await slidesToPdf(shots, deckTitle);
+      else await slidesToPptx(shots, deckTitle);
+    } catch (err: any) {
+      console.error("Deck download failed:", err);
+      alert(
+        `Couldn't download the lesson — ${err?.message || "something went wrong"}. Please try again.`,
+      );
+    } finally {
+      setCaptureIdx(null);
+      setExporting(null);
+    }
+  };
+
+  // "Download Lesson" from Slide Studio opens this deck purely to photograph
+  // it, so the export starts itself. Guarded by a ref — the effect must not
+  // fire a second export when the pack finishes loading and re-renders.
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (!autoExport || autoStarted.current) return;
+    autoStarted.current = true;
+    runExport(autoExport).finally(() => onAutoExportDone?.());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoExport]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
       // A space or an arrow key while correcting text belongs to the text.
       if (el?.isContentEditable) return;
+      // Arrow keys must not move the deck out from under a capture.
+      if (exportingRef.current && e.key !== "Escape") {
+        e.preventDefault();
+        return;
+      }
       if (e.key === "Escape" && !document.fullscreenElement) {
         onClose();
       } else if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") {
@@ -2357,6 +2449,52 @@ export default function TeachingDeck({
               {editing ? "Done" : "Edit"}
             </button>
           )}
+          <div className="relative">
+            <button
+              onClick={() => setMenuOpen((o) => !o)}
+              disabled={Boolean(exporting)}
+              className={`grid h-11 w-11 place-items-center rounded-2xl backdrop-blur transition-all active:scale-90 disabled:opacity-60 ${
+                onLight ? "bg-black/10 hover:bg-black/20" : "bg-white/20 hover:bg-white/30"
+              }`}
+              aria-label="Download this lesson"
+              title="Download this lesson"
+            >
+              <Icon d={I.download} className="h-5 w-5" />
+            </button>
+            {menuOpen && !exporting && (
+              <>
+                {/* Click-away catcher, so the menu closes like a menu should. */}
+                <button
+                  aria-hidden
+                  tabIndex={-1}
+                  onClick={() => setMenuOpen(false)}
+                  className="fixed inset-0 z-0 cursor-default"
+                />
+                <div className="absolute right-0 top-full z-10 mt-2 w-64 overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/10">
+                  <button
+                    onClick={() => runExport("pdf")}
+                    className="block w-full px-4 py-3 text-left transition-colors hover:bg-brand-50"
+                  >
+                    <span className="block text-sm font-bold text-ink">PDF</span>
+                    <span className="block text-xs text-zinc-500">
+                      One page per slide — print or share
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => runExport("pptx")}
+                    className="block w-full border-t border-zinc-100 px-4 py-3 text-left transition-colors hover:bg-brand-50"
+                  >
+                    <span className="block text-sm font-bold text-ink">
+                      PowerPoint
+                    </span>
+                    <span className="block text-xs text-zinc-500">
+                      Opens on any classroom machine
+                    </span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <button
             onClick={toggleFs}
             className={`grid h-11 w-11 place-items-center rounded-2xl backdrop-blur transition-all active:scale-90 ${
@@ -2429,6 +2567,68 @@ export default function TeachingDeck({
           <Icon d={I.chevron} className="h-6 w-6" />
         </button>
       </div>
+
+      {/* Download progress — a deck can be twenty slides, and each one is a
+          real render plus a capture, so silence would look like a hang. */}
+      {exporting && (
+        <div className="absolute inset-0 z-30 grid place-items-center bg-brand-900">
+          <div className="w-80 rounded-3xl bg-white p-7 text-center shadow-2xl">
+            <p className="text-lg font-bold text-ink">Preparing your download</p>
+            <p className="mt-1 text-sm text-zinc-500">
+              Slide {Math.min(exporting.done + 1, exporting.total)} of{" "}
+              {exporting.total}
+            </p>
+            <div className="mt-5 h-2.5 overflow-hidden rounded-full bg-zinc-200">
+              <div
+                className="h-full rounded-full bg-brand-600 transition-[width] duration-200"
+                style={{
+                  width: `${Math.round((exporting.done / Math.max(1, exporting.total)) * 100)}%`,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* The photo booth. Each slide is mounted here at a fixed 1280×720 so
+          every page of the download is the same size whatever the window is.
+          It sits at the deck's own top-left, under the opaque progress panel,
+          rather than parked off-screen: html2canvas photographs a clone in a
+          viewport-sized frame, and anything at a negative offset gets clipped
+          out of it. Hidden by what's in front, not by where it is. */}
+      {captureIdx !== null && slides[captureIdx] && (
+        <div
+          ref={captureRef}
+          aria-hidden
+          className={`absolute z-10 flex flex-col font-sans ${TONE_BG[slides[captureIdx].tone]}`}
+          style={{
+            left: 0,
+            top: 0,
+            width: 1280,
+            height: 720,
+            pointerEvents: "none",
+          }}
+        >
+          <div
+            className={`px-9 pt-5 ${
+              TONE_ON_LIGHT[slides[captureIdx].tone] ? "text-brand-900" : "text-white"
+            }`}
+          >
+            <p className="truncate text-sm font-bold uppercase tracking-wider opacity-80">
+              {slides[captureIdx].kicker}
+            </p>
+          </div>
+          <div
+            className={`relative deck-glow ${pattern} flex min-h-0 flex-1 flex-col overflow-hidden px-10 py-6`}
+          >
+            <EditCtx.Provider value={null}>
+              <FitStage key={`capture-${captureIdx}`}>
+                {slides[captureIdx].content}
+              </FitStage>
+            </EditCtx.Provider>
+          </div>
+        </div>
+      )}
     </div>,
     document.body,
   );

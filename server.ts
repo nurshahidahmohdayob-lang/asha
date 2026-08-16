@@ -281,12 +281,29 @@ async function startServer() {
   
   const otpCache = new Map<string, { code: string; expiresAt: number; name: string; role: 'admin' | 'educator' }>();
 
+  // Admin is granted to exactly these accounts. Being on the @zera.edu.my
+  // domain is NOT enough — it only gets you in as an educator (see the tail of
+  // checkEmailRegistration). Keep this in step with ADMIN_EMAILS in
+  // src/App.tsx: the server decides the role on the OTP login, the client
+  // decides who sees the admin portal, and the two disagreeing is a bug.
   const ADMIN_EMAILS = [
-    'nurshahidahmohdayob@gmail.com',
+    'elliot.y@zera.edu.my',
+    'zixin.l@zera.edu.my',
+    'wafi.a@zera.edu.my',
     'shahidah.a@zera.edu.my',
-    'shahidah.a@zera.edumy',
+    'alex.h@zera.edu.my',
+    'jared.l@zera.edu.my',
+    'carol.p@zera.edu.my',
+    'shiryn.g@zera.edu.my',
+    'nanthini.r@zera.edu.my',
+    'lalitha.r@zera.edu.my',
+    'roshini.m@zera.edu.my',
+    // Server-only: addresses that reach OTP login off the school domain, plus
+    // a known typo of shahidah.a@zera.edu.my (missing dot) that used to be
+    // covered by the domain check.
+    'nurshahidahmohdayob@gmail.com',
     'nurshahidah@zera.edu.my',
-    'zixin.l@zera.edu.my'
+    'shahidah.a@zera.edumy'
   ];
 
   // Helper to look up if email is in the school API or is an admin
@@ -297,8 +314,9 @@ async function startServer() {
   ): Promise<{ registered: boolean; name: string; role: 'admin' | 'educator' }> {
     const cleanEmail = emailToCheck.trim().toLowerCase();
     
-    // 1. Check Admin List — any @zera.edu.my staff email, plus the explicit list.
-    if (ADMIN_EMAILS.includes(cleanEmail) || cleanEmail.endsWith('@zera.edu.my')) {
+    // 1. Check Admin List — the explicit list only. The school domain used to
+    //    be enough here, which handed admin to every teacher who signed in.
+    if (ADMIN_EMAILS.includes(cleanEmail)) {
       return {
         registered: true,
         name: "Admin User",
@@ -430,6 +448,20 @@ async function startServer() {
       } catch (err) {
         // Continue to next domain fallback
       }
+    }
+
+    // The staff API didn't find them. A school-domain address is still a
+    // member of staff, so let them in as an educator rather than locking them
+    // out — an unregistered email gets a 404 from send-otp and cannot sign in
+    // at all, and the staff API is not always reachable. What this no longer
+    // does is hand them admin.
+    if (cleanEmail.endsWith('@zera.edu.my')) {
+      console.log(`[send-otp] ${cleanEmail} not found in staff API — allowing as educator on the school domain.`);
+      // The OTP email greets them by name, so give it something to say. The
+      // first part of a zera address is the person's first name.
+      const first = cleanEmail.split('@')[0].split(/[._-]/)[0];
+      const name = first ? first.charAt(0).toUpperCase() + first.slice(1) : "Teacher";
+      return { registered: true, name, role: "educator" };
     }
 
     return { registered: false, name: "", role: "educator" };

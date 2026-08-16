@@ -127,6 +127,11 @@ export interface EduOptions {
   lexileLevel: string;
   subject: string;
   overallTopic?: string;
+  /** Text of a lesson plan or scheme of work the teacher uploaded. Suggestions
+   *  must fit THEIR document, not the subject in general. */
+  sourceDocument?: string;
+  /** What the plan already says for the week being suggested for. */
+  weekContext?: string;
   numSlides: number;
   numQuestions: number;
   questionTypes: string[];
@@ -143,6 +148,26 @@ export interface EduOptions {
     description?: string;
     methodology?: string;
     sections: WorksheetSection[];
+  };
+  /** The week of the teacher's own lesson plan these slides must teach. The
+   *  plan is the source of truth — without this the slides are written from
+   *  the topic string alone and ignore what the teacher actually planned. */
+  lessonPlanContext?: {
+    overallTopic?: string;
+    week?: number;
+    unit?: string;
+    topic?: string;
+    subTopic?: string;
+    strand?: string;
+    learningObjective?: string;
+    introduction?: string;
+    activities?: string;
+    assessment?: string;
+    resources?: string;
+    successCriteria?: string;
+    essentialQuestions?: string;
+    /** The other weeks' topics, so this deck doesn't wander into them. */
+    otherWeekTopics?: string[];
   };
   fileContext?: {
     mimeType: string;
@@ -307,6 +332,26 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
     }
     if (options.metadataHints?.methodology) {
       mainPrompt += `\nPedagogical Methodology to follow: ${options.metadataHints.methodology}`;
+    }
+
+    // The teacher's plan outranks everything else here. These slides are the
+    // board-facing half of a lesson they have already written and had
+    // approved, so the deck has to teach THAT lesson — not the topic in
+    // general.
+    if (options.lessonPlanContext) {
+      const p = options.lessonPlanContext;
+      const line = (label: string, v?: string) =>
+        v && String(v).trim() ? `\n    - ${label}: ${String(v).trim()}` : "";
+      mainPrompt += `\n\nBUILD THESE SLIDES FROM THE TEACHER'S OWN LESSON PLAN — THIS IS THE PRIMARY SOURCE:
+    - The teacher has already written this lesson. Your job is to turn THEIR plan into slides a class can read off the board, not to invent a different lesson on the same topic.
+    - Cover the plan's learning objective and teach it in the order the plan sets out: introduction first, then the activities, then the assessment/check.
+    - Reuse the plan's own wording, examples and terminology wherever it gives any. Do not replace them with your own.
+    - Do NOT teach material that belongs to the plan's other weeks.${line("Scheme topic (whole plan)", p.overallTopic)}${line("Week", p.week ? String(p.week) : "")}${line("Unit", p.unit)}${line("This week's topic", p.topic)}${line("Sub-topic", p.subTopic)}${line("Strand", p.strand)}${line("Learning objective", p.learningObjective)}${line("Success criteria", p.successCriteria)}${line("Essential questions", p.essentialQuestions)}${line("Planned introduction / starter", p.introduction)}${line("Planned activities", p.activities)}${line("Planned assessment", p.assessment)}${line("Resources the teacher listed", p.resources)}${
+        p.otherWeekTopics?.length
+          ? `\n    - Topics covered by OTHER weeks (stay off these): ${p.otherWeekTopics.join("; ")}`
+          : ""
+      }
+    - Slide flow to follow: a title slide for this week's topic; a slide stating the learning objective/success criteria in child-friendly words; content slides that teach the introduction and each planned activity; an activity slide the class actually does; and a quiz slide that checks the planned assessment.`;
     }
 
     if (options.worksheetContext) {
@@ -1043,7 +1088,7 @@ Return ONLY a JSON object in exactly this shape: {"title": "<a short, fitting pa
 - "matching": a left-to-right matching task; leave "options" empty.
 - "drawing": a creative DRAWING task — the student draws their answer in an empty box. Write a clear drawing instruction in "text" and DO NOT provide "options".
 - "sorting": a sorting task. The "text" MUST be EXACTLY "Sort the following into: <Category 1> and <Category 2>." (name 2-4 categories; do NOT prefix it with "Sorting:" or anything else). ALSO set "categories" to the exact list of those category names (the column headers), e.g. ["Input Devices","Output Devices"] — these are shown as the column titles, so they must be real, descriptive names, never "Group 1"/"Group 2". "options" MUST be a list of 6-8 specific ITEMS to sort into those categories — the items are the words the student places into the groups, and they must NOT be the category names. Example: {"text":"Sort the following into: Input Devices and Output Devices.","type":"sorting","categories":["Input Devices","Output Devices"],"options":["Keyboard","Mouse","Monitor","Printer","Microphone","Speaker"]}. NEVER produce a sorting task with an empty "options" list.
-- "cut-and-paste": a cut-and-paste task. Describe the target slots/categories inside "text", and put the individual items the student cuts out and pastes in "options".
+- "cut-and-paste": a cut-and-paste task, encoded EXACTLY like "sorting". Set "categories" to the column headings (2-4 real, descriptive names such as ["Happy Feelings","Sad Feelings"] — never "Group 1"/"Group 2"), and put the individual items the student cuts out in "options". The "text" MUST NAME THE CATEGORIES, e.g. "Cut out the words and paste them under: Happy Feelings and Sad Feelings." CRITICAL: never list the items themselves in "text" — writing "paste them into the correct box: happy, sad, excited" leaves the child with no categories to sort into, and the same words end up as both the columns and the cut-outs. The items in "options" and the names in "categories" must share nothing.
 Only use the types that appear in the "Allowed Types" list above.`;
     contents.push(mainPrompt);
     contents.push(`Format: JSON object with "title", "readingPassage" (The main content if readingPassageOnly, or the context story if includeStory), "description" (ONE sentence, max 25 words), "methodology" (ONE to TWO sentences, max 45 words, MUST include the Cambridge Subject Code — do NOT write a paragraph), and "sections" (array of {title, instructions, questions: array of {text, type, options}}). Keep every question concise and direct. If readingPassageOnly is true, sections should contain exactly one placeholder entry if necessary to satisfy the schema, and no questions.`);
@@ -1740,11 +1785,12 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
     const isLifeCompetencies = /life\s*competenc/i.test(options.subject || "");
     const mainPrompt = `As an expert Cambridge Educator, create a professional, detailed ${weekCount}-WEEK Lesson Plan for a ${options.yearGroup} class.
       ${options.fileContext ? `
-      UPLOADED CURRICULUM DOCUMENTS (HIGHEST PRIORITY):
-      - The attached file(s) contain the official Scheme of Work and/or subject Framework for this class.
-      - Treat the attached document(s) as the PRIMARY SOURCE OF TRUTH. Derive the units, topics, strands, learning objectives, sequence/progression, and assessment guidance directly from them.
-      - Match the weekly breakdown to the order and content of the uploaded scheme of work. Use its exact unit titles, objective codes, and terminology wherever provided.
-      - Only fall back to general Cambridge curriculum knowledge to fill gaps the document does not cover.
+      THE TEACHER HAS UPLOADED THEIR OWN DOCUMENT — IT OUTRANKS EVERYTHING ELSE IN THIS PROMPT:
+      - It is either their own lesson plan or their scheme of work. Read it first and work out which.
+      - IF IT IS A LESSON PLAN: reproduce it. Keep its weeks in its order, its unit and topic titles word for word, its learning objectives, its activities and its assessments. You are formatting and completing THEIR plan, not writing a better one. Do not renumber the weeks, do not resequence the topics, do not substitute your own activities for theirs, and do not "improve" wording that is already there.
+      - IF IT IS A SCHEME OF WORK: derive the units, topics, strands, objectives, sequence and assessment guidance from it, matching its order and using its exact unit titles, objective codes and terminology.
+      - EITHER WAY: only add content where the document is genuinely silent, and say nothing that contradicts it. If the document covers fewer weeks than requested, keep its weeks as they are and continue the same progression afterwards.
+      - If the document and the fields below disagree, the document wins — except for the class, term and teacher names, which come from the fields.
       ` : ''}
       STANDARDS & FRAMEWORK:
       - Use the provided subject "${options.subject}" exactly as given. Do not substitute it with a similar subject (e.g. do not change Digital Literacy to Computer Science).
@@ -1870,6 +1916,16 @@ export async function suggestWeeklyInput(type: 'unit' | 'topic' | 'subtopic' | '
     - Subject: ${options.subject}
     - Grade: ${options.yearGroup}
     - Overall Lesson Topic: ${options.overallTopic || 'General ' + options.subject}
+    ${options.weekContext ? `- The plan already says this for Week ${weekNum}: ${options.weekContext}. Your suggestion must sit alongside that, not repeat or contradict it.` : ''}
+    ${options.sourceDocument ? `
+    THE TEACHER'S OWN PLANNING DOCUMENT — TAKE THE SUGGESTION FROM THIS:
+    <<<
+    ${options.sourceDocument.slice(0, 6000)}
+    >>>
+    - Find what this document says about Week ${weekNum} and suggest the ${type} ITS plan calls for.
+    - Use its wording, its units, its topics and its sequence. Do not send the week in a different direction.
+    - Only if it genuinely says nothing about this week, fall back to Cambridge knowledge that continues its progression.
+    ` : ''}
     
     CURRICULUM ALIGNMENT:
     - Use the provided subject "${options.subject}" exactly as given. Do not substitute it with a similar subject (e.g. do not change Digital Literacy to Computer Science).
