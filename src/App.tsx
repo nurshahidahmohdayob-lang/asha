@@ -132,6 +132,7 @@ import { ZeraBrandLogo } from "./components/ZeraBrandLogo";
 import { InteractiveOrganizerWorksheet } from "./components/InteractiveOrganizerWorksheet";
 import TeachingDeck from "./components/TeachingDeck";
 import LessonPlanGuide from "./components/LessonPlanGuide";
+import RegisterGuide, { RegisterGuideLink } from "./components/RegisterGuide";
 import ProfessionalDevelopment from "./components/ProfessionalDevelopment";
 import mammoth from "mammoth";
 import JSZip from "jszip";
@@ -5335,6 +5336,7 @@ export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [showRegisterGuide, setShowRegisterGuide] = useState(false);
 
   // Auth Form State
   const [email, setEmail] = useState("");
@@ -8874,8 +8876,17 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               ? "Don't have an account? Register here"
               : "Already have an account? Sign In"}
           </button>
+
+          {/* A teacher opening this for the first time has no way of knowing
+              what "access roles" means, or that Admin is restricted. The
+              walkthrough answers both before they get stuck. */}
+          <RegisterGuideLink onOpen={() => setShowRegisterGuide(true)} />
         </div>
       </motion.div>
+
+      {showRegisterGuide && (
+        <RegisterGuide onClose={() => setShowRegisterGuide(false)} />
+      )}
     </div>
   );
 
