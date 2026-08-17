@@ -293,7 +293,9 @@ export default function RegisterGuide({ onClose }: { onClose: () => void }) {
       role="dialog"
       aria-modal="true"
       aria-label="How to register and sign in"
-      className="fixed inset-0 z-[130] flex items-center justify-center bg-[#064E3B]/50 backdrop-blur-sm p-4 sm:p-8"
+      /* z-[2100] clears the sign-in screen's own z-[2000] — anything lower
+         opens behind it, which looks exactly like the button doing nothing. */
+      className="fixed inset-0 z-[2100] flex items-center justify-center bg-[#064E3B]/50 backdrop-blur-sm p-4 sm:p-8"
       onClick={onClose}
     >
       <div
