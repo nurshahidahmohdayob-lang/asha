@@ -3951,6 +3951,38 @@ const isPlaceholderTitle = (t?: string): boolean =>
   /^untitled/i.test(t.trim()) ||
   /^new lesson plan$/i.test(t.trim());
 
+/** What a saved project should be called in My Saved Designs.
+ *
+ *  A lesson plan's real title is the Topic the teacher types into the plan
+ *  document — `lessonPlan.overallTopic`. `lessonTitle` is only a placeholder
+ *  that New Lesson sets to "Untitled Lesson Plan" and nothing ever updates,
+ *  so saving straight from it filed every plan under that placeholder and a
+ *  teacher with three plans could not tell them apart. */
+const deriveProjectTitle = (c: any, typed?: string): string => {
+  const lp = c?.lessonPlan;
+  const real = (v?: string) => (!isPlaceholderTitle(v) ? (v || "").trim() : "");
+
+  const named =
+    real(lp?.overallTopic) ||
+    real(lp?.subTopic) ||
+    real(c?.worksheet?.title) ||
+    real(c?.readingProgram?.title) ||
+    real(c?.lessonTitle) ||
+    real(typed) ||
+    // A plan is often filled in week by week before the overall topic is
+    // written, so the first week that has a topic still names it usefully.
+    real((lp?.weeklyBreakdown || []).find((w: any) => real(w?.topic))?.topic);
+
+  if (named) return named;
+
+  // Nothing is named yet — subject and year group still beat "Untitled".
+  const bits = [
+    lp?.subject || c?.subject,
+    lp?.class || c?.gradeLevel,
+  ].filter((b) => b && !/^general$/i.test(b));
+  return bits.length ? bits.join(" • ") : "Untitled Lesson Plan";
+};
+
 // A submission title a Head of Department can read at a glance: which subject,
 // which year group and which week — e.g. "Life Competencies • Year 1 • Week 2".
 // The teacher's name is already stored alongside it on the submission.
@@ -6585,16 +6617,23 @@ export default function App() {
     if (!user) return;
     const projectId =
       currentProjectId || Math.random().toString(36).substring(2, 15);
+    // Worked out here rather than at each of the save buttons, so every one of
+    // them files the project under the same name.
+    const savedTitle = deriveProjectTitle(lessonContent, title);
     const projectData = {
       id: projectId,
       userId: user.uid,
       folderId: activeFolderId,
       timestamp: Date.now(),
-      title: title || "Untitled Project",
+      title: savedTitle,
       category,
       status: "draft",
       teacherName: teacherName,
-      content: lessonContent,
+      // Carry the name back into the content too, so reopening the project
+      // shows the same title everywhere instead of the placeholder again.
+      content: isPlaceholderTitle(lessonContent?.lessonTitle)
+        ? { ...lessonContent, lessonTitle: savedTitle }
+        : lessonContent,
       settings: {
         includeStory,
         isTemplateMode,
