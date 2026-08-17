@@ -94,6 +94,7 @@ import {
   Lock,
   Unlock,
   RefreshCw,
+  AlertTriangle,
   Home,
   ArrowRightCircle,
   MoreVertical,
@@ -3352,6 +3353,12 @@ const db = initializeFirestore(
   firebaseApp,
   {
     experimentalForceLongPolling: true,
+    // A lesson plan is full of optional fields — subTopic, attachments,
+    // slidesMetadata — that are simply absent until something fills them.
+    // Without this, ONE undefined value anywhere in the document makes the
+    // whole write throw "Unsupported field value: undefined", so the plan
+    // never saved. Skipping them is exactly what this setting is for.
+    ignoreUndefinedProperties: true,
   },
   firebaseConfig.firestoreDatabaseId,
 );
@@ -9915,12 +9922,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       await setDoc(doc(db, "projects", id), {
         id,
         userId: user.uid,
-        folderId: activeFolderId,
+        // Only a folder this teacher owns — a stale id from another account
+        // files the plan somewhere they can never open.
+        folderId:
+          activeFolderId && folders.some((f: any) => f?.id === activeFolderId)
+            ? activeFolderId
+            : null,
         timestamp: Date.now(),
-        title:
-          planContent.lessonTitle ||
-          planContent.lessonPlan?.overallTopic ||
-          "Untitled Lesson Plan",
+        title: deriveProjectTitle(planContent),
         category: "lesson-plan",
         status: "draft",
         teacherName: teacherName,
@@ -9932,8 +9941,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         },
       });
       return id;
-    } catch (err) {
+    } catch (err: any) {
+      // This used to fail without a word, so a plan could vanish and the
+      // teacher was told nothing. Still quiet enough not to interrupt, but
+      // it now says so rather than pretending the plan was kept.
       console.error("persistLessonPlanSilently: ERROR", err);
+      setFirestoreError(
+        `Your lesson plan could not be saved: ${err?.message || err}`,
+      );
       return null;
     }
   };
@@ -38281,6 +38296,25 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         <div className="fixed bottom-4 right-4 bg-amber-500 text-white font-black uppercase text-[10px] tracking-widest px-4 py-2.5 rounded-2xl shadow-2xl z-[9999] flex items-center gap-2.5 border border-amber-400">
           <span className="w-2.5 h-2.5 rounded-full bg-white animate-pulse" />
           <span>Operating in Offline Mode (Cached)</span>
+        </div>
+      )}
+
+      {/* A save that fails has to say so. This state was being set and never
+          shown, so a plan could fail to save and the teacher was told nothing —
+          they only found out when the board said "0 plans in progress". */}
+      {firestoreError && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 max-w-md bg-red-600 text-white px-5 py-3.5 rounded-2xl shadow-2xl z-[9999] flex items-start gap-3 border border-red-500">
+          <AlertTriangle size={18} className="shrink-0 mt-0.5" />
+          <p className="text-xs font-bold leading-snug flex-1">
+            {firestoreError}
+          </p>
+          <button
+            onClick={() => setFirestoreError(null)}
+            aria-label="Dismiss"
+            className="shrink-0 p-1 rounded-lg hover:bg-white/20 transition-colors"
+          >
+            <X size={14} />
+          </button>
         </div>
       )}
 
