@@ -3951,6 +3951,14 @@ const isPlaceholderTitle = (t?: string): boolean =>
   /^untitled/i.test(t.trim()) ||
   /^new lesson plan$/i.test(t.trim());
 
+/** Is this saved project a lesson plan?
+ *
+ *  Its content decides, not the category it was filed under: plans saved
+ *  before the category followed the view were stored as "slides", and reading
+ *  only the label made them disappear from All Plans and the Submit All count. */
+const isLessonPlanProject = (p: any): boolean =>
+  p?.category === "lesson-plan" || !!p?.content?.lessonPlan;
+
 /** What a saved project should be called in My Saved Designs.
  *
  *  A lesson plan's real title is the Topic the teacher types into the plan
@@ -6620,6 +6628,18 @@ export default function App() {
     // Worked out here rather than at each of the save buttons, so every one of
     // them files the project under the same name.
     const savedTitle = deriveProjectTitle(lessonContent, title);
+    // The view holds the truth about what is being saved — every save button
+    // is rendered inside one. workspaceMode can lag behind it, and a lesson
+    // plan filed as "slides" is invisible in All Plans.
+    const VIEW_CATEGORY: Record<string, string> = {
+      "lesson-plan": "lesson-plan",
+      slides: "slides",
+      worksheet: "worksheet",
+      notes: "notes",
+      "reading-program": "reading-program",
+    };
+    const savedCategory =
+      VIEW_CATEGORY[currentView as string] || category || "slides";
     const projectData = {
       id: projectId,
       userId: user.uid,
@@ -6632,7 +6652,7 @@ export default function App() {
           : null,
       timestamp: Date.now(),
       title: savedTitle,
-      category,
+      category: savedCategory,
       status: "draft",
       teacherName: teacherName,
       // Carry the name back into the content too, so reopening the project
@@ -9712,7 +9732,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           timestamp: Date.now(),
           content,
           weekId: selectedWeekForSubmission,
-          category: workspaceMode,
+          // A plan is a lesson plan however the teacher arrived at it. Taking
+          // this from workspaceMode filed submissions under whatever mode was
+          // last set, and the reviewer's lesson-plan filters then skipped them.
+          category: content?.lessonPlan ? "lesson-plan" : workspaceMode,
           title: buildSubmissionTitle(content, selectedWeekForSubmission),
           status: "submitted",
           ...submissionIdentity(),
@@ -9750,7 +9773,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const submitAllToAdmin = async () => {
     if (!user) return;
     const plans = userProjects.filter(
-      (p: any) => p?.category === "lesson-plan" && p?.content,
+      (p: any) => isLessonPlanProject(p) && p?.content,
     );
     if (plans.length === 0) {
       alert(
@@ -10066,7 +10089,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     setIsTemplateMode(project.settings?.isTemplateMode || false);
 
     // Navigate to the correct view
-    if (project.category === "lesson-plan") setCurrentView("lesson-plan");
+    if (isLessonPlanProject(project)) setCurrentView("lesson-plan");
     else if (project.category === "slides") setCurrentView("slides");
     else if (project.category === "worksheet") setCurrentView("worksheet");
     else if (project.category === "notes") setCurrentView("notes");
@@ -21875,9 +21898,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             const headingLine = chips.length
                               ? chips.join(" · ")
                               : rawTitle;
+                            // By content, not the stored label — a plan
+                            // submitted under the wrong category was left with
+                            // no approve or send-back buttons at all.
                             const reviewable =
-                              isPlanReviewer &&
-                              project.category === "lesson-plan";
+                              isPlanReviewer && isLessonPlanProject(project);
                             const hasReturnNote =
                               stage === "changes_requested" &&
                               (project.reviewNote ||
@@ -27713,6 +27738,20 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           content.studentNotes = "";
         }
       }
+      // Both saving and submitting take their category from workspaceMode, but
+      // walking through the rail only ever changed the VIEW. A teacher who
+      // reached Lesson Design this way saved their plan under whatever mode
+      // they happened to be in — usually "slides" — so it never showed up in
+      // All Plans, which lists lesson-plan projects.
+      if (
+        stepId === "lesson-plan" ||
+        stepId === "slides" ||
+        stepId === "worksheet" ||
+        stepId === "notes" ||
+        stepId === "reading-program"
+      ) {
+        setWorkspaceMode(stepId);
+      }
       setCurrentView(stepId);
     };
 
@@ -27797,13 +27836,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   <Minimize2 size={13} className="shrink-0" />
                   <span className="leading-tight flex-1">All Plans</span>
                   {userProjects.filter(
-                    (p: any) => p?.category === "lesson-plan" && p?.content,
+                    (p: any) => isLessonPlanProject(p) && p?.content,
                   ).length > 0 && (
                     <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#FACC15] text-[#064E3B] text-[9px] font-black shrink-0">
                       {
                         userProjects.filter(
                           (p: any) =>
-                            p?.category === "lesson-plan" && p?.content,
+                            isLessonPlanProject(p) && p?.content,
                         ).length
                       }
                     </span>
@@ -34292,7 +34331,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   // clicking one blows it up into the full editor, and minimising brings the
   // teacher straight back here to pick the next subject / year group.
   const renderLessonPlanBoard = () => {
-    const plans = userProjects.filter((p: any) => p?.category === "lesson-plan");
+    // Anything that HAS a lesson plan is one, whatever category it was filed
+    // under. Plans saved before the category followed the view were stored as
+    // "slides" and vanished from this board — this shows them without needing
+    // the old records rewritten.
+    const plans = userProjects.filter(
+      (p: any) => isLessonPlanProject(p),
+    );
     const yearOptions = [
       "Year 1",
       "Year 2",
@@ -34858,13 +34903,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   >
                     <CheckCircle size={16} />
                     {userProjects.filter(
-                      (p: any) => p?.category === "lesson-plan" && p?.content,
+                      (p: any) => isLessonPlanProject(p) && p?.content,
                     ).length > 0 && (
                       <span className="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-[#FACC15] text-[#064E3B] text-[9px] font-black">
                         {
                           userProjects.filter(
                             (p: any) =>
-                              p?.category === "lesson-plan" && p?.content,
+                              isLessonPlanProject(p) && p?.content,
                           ).length
                         }
                       </span>
@@ -35031,13 +35076,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         <CheckCircle size={16} /> Submit All
                         {userProjects.filter(
                           (p: any) =>
-                            p?.category === "lesson-plan" && p?.content,
+                            isLessonPlanProject(p) && p?.content,
                         ).length > 0 && (
                           <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#FACC15] text-[#064E3B] text-[10px] font-black">
                             {
                               userProjects.filter(
                                 (p: any) =>
-                                  p?.category === "lesson-plan" && p?.content,
+                                  isLessonPlanProject(p) && p?.content,
                               ).length
                             }
                           </span>
