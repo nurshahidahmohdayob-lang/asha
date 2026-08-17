@@ -5425,9 +5425,12 @@ export default function App() {
   const [legacyPassword, setLegacyPassword] = useState("");
   const [showLegacyPasswordField, setShowLegacyPasswordField] = useState(false);
 
-  const [isOnline, setIsOnline] = useState(
-    typeof navigator !== "undefined" ? navigator.onLine : true,
-  );
+  // Optimistic on purpose. This used to be seeded from navigator.onLine, which
+  // reports whether a network interface exists rather than whether anything is
+  // reachable — false on some VPNs and captive networks where the app works
+  // perfectly. Real evidence flips it: a Firestore snapshot proves online, the
+  // browser's own offline event proves offline.
+  const [isOnline, setIsOnline] = useState(true);
   const [firestoreError, setFirestoreError] = useState<string | null>(null);
 
   // --- Firebase Debugging ---
@@ -5506,7 +5509,14 @@ export default function App() {
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
 
-    const handleConnChange = (e: any) => setIsOnline(e.detail);
+    // Only ever raises the flag. The startup probe is a single request and can
+    // fail for reasons that have nothing to do with connectivity — letting it
+    // set "offline" left the badge stuck there for the rest of the session,
+    // with nothing able to clear it. Going offline is decided by the browser's
+    // offline event below, which is the one signal that means it.
+    const handleConnChange = (e: any) => {
+      if (e.detail) setIsOnline(true);
+    };
     window.addEventListener("firestore-connection-changed", handleConnChange);
 
     return () => {
@@ -10355,6 +10365,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         }));
         setUserProjects(projects);
         setIsFetchingProjects(false);
+        // Data arriving from Firestore is the strongest proof of a working
+        // connection there is, and it keeps arriving — so the badge corrects
+        // itself rather than relying on one probe at startup.
+        if (!snapshot.metadata.fromCache) setIsOnline(true);
       },
       (error) => {
         console.error("Error setting up projects listener:", error);
