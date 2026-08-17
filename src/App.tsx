@@ -10083,13 +10083,20 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     // spelling. Taking the FIRST match instead was how a nickname and a full
     // name ended up as two teachers: whichever the lookup happened to hit
     // first became canonical, so the two never converged.
+    //
+    // The fold STARTS from the name passed in — normally the one the teacher
+    // registered with. Seeding it from the directory instead meant a teacher
+    // who signed up as "Aisyah binti Rahman" had her folder renamed to the
+    // roster's classroom short name, which is not what she is called on her
+    // own work. Her registered name is the fuller of the two, so it wins;
+    // matching still folds her in with the roster record either way.
     const matches = getActiveStaffList(teachers).filter((t: any) =>
       sameTeacherIdentity(t.name, raw),
     );
     if (!matches.length) return raw;
     return matches.reduce(
       (best: string, t: any) => fullerTeacherName(best, t.name),
-      matches[0].name as string,
+      raw,
     );
   };
 
