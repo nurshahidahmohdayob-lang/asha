@@ -160,7 +160,7 @@ const STEPS: Step[] = [
     n: 2,
     title: "Type your full name",
     body: "This is the name that appears on every lesson plan you submit, and the name your Head of Department sees in their list.",
-    note: "Use the name your school knows you by. Plans are grouped by this name, so a nickname one week and a full name the next puts your work in two different folders.",
+    note: "Please fill in your full name.",
     art: (
       <Screen title="Create Account" footer="Already have an account? Sign In">
         <Field label="Full Name" value="Aisyah binti Rahman" icon={<User size={12} />} focus />
