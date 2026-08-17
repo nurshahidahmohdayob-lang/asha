@@ -10359,25 +10359,28 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     setIsFetchingProjects(true);
     setIsFetchingFolders(true);
 
+    // No orderBy. Combining a where with an orderBy on a DIFFERENT field needs
+    // a composite index in Firestore, and without one the listener fails with
+    // "The query requires an index" — which this code only logged to the
+    // console, so every project silently disappeared from the app. Sorting a
+    // teacher's own handful of projects in the browser costs nothing and
+    // cannot fail.
     const projectsQ = query(
       collection(db, "projects"),
       where("userId", "==", user.uid),
-      orderBy("timestamp", "desc"),
     );
 
     const foldersQ = query(
       collection(db, "folders"),
       where("userId", "==", user.uid),
-      orderBy("timestamp", "desc"),
     );
 
     const unsubscribeProjects = onSnapshot(
       projectsQ,
       (snapshot) => {
-        const projects = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
+        const projects = snapshot.docs
+          .map((doc) => ({ id: doc.id, ...doc.data() }))
+          .sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
         setUserProjects(projects);
         setIsFetchingProjects(false);
         // Data arriving from Firestore is the strongest proof of a working
@@ -10385,8 +10388,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         // itself rather than relying on one probe at startup.
         if (!snapshot.metadata.fromCache) setIsOnline(true);
       },
-      (error) => {
+      (error: any) => {
+        // Logged and swallowed before, so a broken listener looked exactly
+        // like having no saved work at all.
         console.error("Error setting up projects listener:", error);
+        setFirestoreError(
+          `Your saved work could not be loaded: ${error?.message || error}`,
+        );
         setIsFetchingProjects(false);
       },
     );
