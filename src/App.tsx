@@ -13481,6 +13481,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     if (!user || !userRoles.includes("admin")) return;
     if (isFetchingSubmittedFolders) return;
     if (autoFolderRun.current) return;
+    // A reviewer restricted to named teachers only ever sees those folders, so
+    // from here every other teacher looks like they have none. Creating them
+    // would write the same documents forever — see the loop note below.
+    if (scopedTeachersFor(user.email)) return;
 
     // Canonicalised first, then de-duplicated. Creating folders under the raw
     // directory name wrote a doc whose id was canonical but whose stored name
@@ -13502,6 +13506,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     );
     if (missing.length === 0) return;
 
+    // Set once and never cleared. It used to be reset in .finally(), and
+    // submittedFolders is a FILTERED view — removed teachers and, for a scoped
+    // reviewer, everyone outside their list are stripped out before it reaches
+    // here. Those folders therefore always looked missing: create them, the
+    // listener fires, they are filtered out again, the guard clears, and it
+    // writes the same documents on a loop. That is what burned 52K writes and
+    // 145K reads in a day against free tiers of 20K and 50K.
     autoFolderRun.current = true;
     Promise.all(
       missing.map((n) =>
@@ -13517,10 +13528,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         ),
       ),
     )
-      .catch((err) => console.warn("Auto teacher folders:", err))
-      .finally(() => {
-        autoFolderRun.current = false;
-      });
+      .catch((err) => console.warn("Auto teacher folders:", err));
   }, [
     user,
     userRoles,
