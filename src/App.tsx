@@ -10543,7 +10543,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         unsubscribePlans();
       };
     }
-  }, [user, userRoles]);
+    // Keyed on a STRING of the roles, not the array. An array gets a new
+    // identity every time setUserRoles runs, and each change tore down and
+    // re-subscribed this listener — which for a reviewer re-reads every
+    // submitted plan in the school. That is a lot of Firestore reads for a
+    // list that had not changed.
+  }, [user?.uid, [...userRoles].sort().join(",")]);
 
   const updateSlideData = (index: number, field: string, value: any) => {
     setContent((prev) => {
