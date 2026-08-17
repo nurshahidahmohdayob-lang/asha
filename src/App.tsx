@@ -5465,6 +5465,13 @@ export default function App() {
         console.info("Firebase Firestore server connection active.");
         setFirestoreError(null);
         setFirestoreConnected(true);
+        // Reaching the Firestore server is proof of a working connection, and
+        // far better proof than navigator.onLine — which only reports whether
+        // a network interface exists. The badge seeded itself from that flag
+        // and then only ever changed on the browser's online/offline events,
+        // so a page that loaded during a blip stayed stuck on "Offline Cache"
+        // for the whole session while everything actually worked.
+        setIsOnline(true);
       } catch (error: any) {
         // Log connection failure gracefully as info, as Firestore handles offline transitions seamlessly
         if (
