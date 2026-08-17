@@ -6623,7 +6623,13 @@ export default function App() {
     const projectData = {
       id: projectId,
       userId: user.uid,
-      folderId: activeFolderId,
+      // Only file into a folder this teacher actually owns. Saving into a
+      // folder id left behind by another account put the project somewhere
+      // they could never open.
+      folderId:
+        activeFolderId && folders.some((f: any) => f?.id === activeFolderId)
+          ? activeFolderId
+          : null,
       timestamp: Date.now(),
       title: savedTitle,
       category,
@@ -10279,6 +10285,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       handleFirestoreError(err, OperationType.UPDATE, `projects/${projectId}`);
     }
   };
+
+  useEffect(() => {
+    // The selected folder belongs to whoever was signed in before. Left set
+    // across a sign-out it filtered the new account's list down to a folder
+    // they do not own — so their saved work appeared nowhere — and worse,
+    // saveProject filed their next save into that stranger's folder id.
+    setActiveFolderId(null);
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!user) {
@@ -26876,6 +26890,23 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     </div>
   );
 
+  /** What My Saved Designs lists.
+   *
+   *  "All Projects" now means all of them. It used to show only projects with
+   *  no folder, so anything saved while a folder was selected vanished from
+   *  the view that claims to show everything — and a project filed into a
+   *  folder the account cannot see was invisible outright.
+   *
+   *  A folder that is not this teacher's own is ignored rather than obeyed,
+   *  so a stale selection can never empty the list. */
+  const visibleProjects = (() => {
+    const folderIsMine =
+      !!activeFolderId && folders.some((f: any) => f?.id === activeFolderId);
+    return folderIsMine
+      ? userProjects.filter((p: any) => p.folderId === activeFolderId)
+      : userProjects;
+  })();
+
   const renderEducatorSuite = () => (
     <div className="flex-1 overflow-y-auto p-6 bg-[#FDFBF7] custom-scrollbar">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -27240,10 +27271,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               <div className="flex items-center justify-center p-12">
                 <Loader2 className="animate-spin text-[#064E3B]" size={32} />
               </div>
-            ) : (activeFolderId
-                ? userProjects.filter((p) => p.folderId === activeFolderId)
-                : userProjects.filter((p) => !p.folderId)
-              ).length === 0 ? (
+            ) : visibleProjects.length === 0 ? (
               <div className="bg-white p-12 rounded-[2.5rem] border-2 border-dashed border-[#064E3B]/10 text-center">
                 <div className="w-16 h-16 bg-[#F0FDF4] rounded-2xl flex items-center justify-center text-[#064E3B]/20 mx-auto mb-4">
                   <BookOpen size={32} />
@@ -27254,15 +27282,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 <p className="text-[#064E3B]/60 text-sm max-w-xs mx-auto mt-2">
                   {activeFolderId
                     ? "This folder is currently empty."
-                    : "No unorganized projects found."}
+                    : "Nothing saved yet — save a lesson plan and it appears here."}
                 </p>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {(activeFolderId
-                  ? userProjects.filter((p) => p.folderId === activeFolderId)
-                  : userProjects.filter((p) => !p.folderId)
-                ).map((project: any) => (
+                {visibleProjects.map((project: any) => (
                   <div
                     key={project.id}
                     className="group bg-white p-6 rounded-[2rem] border-2 border-transparent hover:border-[#FACC15] hover:shadow-xl transition-all relative"
