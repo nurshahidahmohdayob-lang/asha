@@ -6749,6 +6749,16 @@ export default function App() {
 
   const deleteFolder = async (folderId: string) => {
     if (!user) return;
+    // Without this, a missing id matches every project whose folderId is null —
+    // that is, everything the teacher never filed — and deletes the lot. The
+    // Firestore version was saved from this by accident: doc(db, "folders",
+    // undefined) throws before batch.commit(), so nothing was written. Deleting
+    // through the store has no such accident to rely on, so the guard is
+    // explicit, and the filter below refuses a falsy folderId a second time.
+    if (!folderId) {
+      console.warn("deleteFolder called without a folder id; ignoring.");
+      return;
+    }
     if (!window.confirm("Delete folder and all its contents?")) return;
     try {
       // The store has no batch, so this is no longer atomic. The projects go
@@ -6756,7 +6766,7 @@ export default function App() {
       // empty folder, which they can delete again, rather than projects left
       // pointing at a folder that no longer exists and no way to reach them.
       const projectsInFolder = userProjects.filter(
-        (p) => p.folderId === folderId,
+        (p) => !!p.folderId && p.folderId === folderId,
       );
       await Promise.all(
         projectsInFolder.map((p) => store.remove("projects", p.id)),

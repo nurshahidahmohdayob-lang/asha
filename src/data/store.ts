@@ -70,6 +70,17 @@ const sortRows = (rows: Row[], order?: OrderClause): Row[] => {
 const matches = (row: Row, clauses?: WhereClause[]): boolean =>
   !clauses?.length || clauses.every(([field, , value]) => row?.[field] === value);
 
+/** A blank id is never a legitimate target. Left unchecked it becomes a
+ *  delete or a patch aimed at whatever the database happens to match, which is
+ *  how a folder delete with a missing id removed every unfiled project. Both
+ *  backends refuse it here rather than each caller remembering to. */
+const requireId = (table: string, id: string): string => {
+  if (!id || typeof id !== "string") {
+    throw new Error(`A record id is required for "${table}" (got ${JSON.stringify(id)})`);
+  }
+  return id;
+};
+
 /* ── The API the app uses ──────────────────────────────────────────────── */
 
 function createFirestoreStore(db: Firestore) {
@@ -90,7 +101,7 @@ function createFirestoreStore(db: Firestore) {
       data: Record<string, any>,
       opts?: { merge?: boolean },
     ): Promise<void> {
-      await setDoc(doc(db, table, id), data, { merge: !!opts?.merge });
+      await setDoc(doc(db, table, requireId(table, id)), data, { merge: !!opts?.merge });
     },
 
     /** Patch fields on an existing record. */
@@ -99,7 +110,7 @@ function createFirestoreStore(db: Firestore) {
       id: string,
       changes: Record<string, any>,
     ): Promise<void> {
-      await updateDoc(doc(db, table, id), changes);
+      await updateDoc(doc(db, table, requireId(table, id)), changes);
     },
 
     /** Create a record with a generated id, and return that id. */
@@ -109,11 +120,11 @@ function createFirestoreStore(db: Firestore) {
     },
 
     async remove(table: string, id: string): Promise<void> {
-      await deleteDoc(doc(db, table, id));
+      await deleteDoc(doc(db, table, requireId(table, id)));
     },
 
     async get(table: string, id: string): Promise<Row | null> {
-      const snap = await getDoc(doc(db, table, id));
+      const snap = await getDoc(doc(db, table, requireId(table, id)));
       return snap.exists() ? ({ id: snap.id, ...snap.data() } as Row) : null;
     },
 
@@ -156,7 +167,7 @@ function createFirestoreStore(db: Firestore) {
       onError?: (err: any) => void,
     ): () => void {
       return onSnapshot(
-        doc(db, table, id),
+        doc(db, table, requireId(table, id)),
         (snap) =>
           onRow(snap.exists() ? ({ id: snap.id, ...snap.data() }) as Row : null, {
             fromCache: snap.metadata.fromCache,

@@ -196,6 +196,17 @@ const autoId = (): string => {
  *  the teacher comes back to the tab. */
 const POLL_MS = 15000;
 
+/** A blank id is never a legitimate target. Left unchecked it becomes a
+ *  delete or a patch aimed at whatever the database happens to match, which is
+ *  how a folder delete with a missing id removed every unfiled project. Both
+ *  backends refuse it here rather than each caller remembering to. */
+const requireId = (table: string, id: string): string => {
+  if (!id || typeof id !== "string") {
+    throw new Error(`A record id is required for "${table}" (got ${JSON.stringify(id)})`);
+  }
+  return id;
+};
+
 /* ── The store ────────────────────────────────────────────────────────── */
 
 export function createSupabaseStore(getToken: TokenGetter) {
@@ -236,7 +247,7 @@ export function createSupabaseStore(getToken: TokenGetter) {
           row = { ...rest, ...data };
         }
       }
-      await call("put", { table, id, row: encodeRow(table, row) }, getToken);
+      await call("put", { table, id: requireId(table, id), row: encodeRow(table, row) }, getToken);
     },
 
     /** Patch fields on an existing record.
@@ -266,7 +277,7 @@ export function createSupabaseStore(getToken: TokenGetter) {
       for (const field of Object.keys(changes)) {
         if (map[field]) encoded[map[field]] = stripUndefined(changes[field]);
       }
-      await call("patch", { table, id, changes: encoded }, getToken);
+      await call("patch", { table, id: requireId(table, id), changes: encoded }, getToken);
     },
 
     /** Create a record with a generated id, and return that id. */
@@ -277,11 +288,11 @@ export function createSupabaseStore(getToken: TokenGetter) {
     },
 
     async remove(table: string, id: string): Promise<void> {
-      await call("remove", { table, id }, getToken);
+      await call("remove", { table, id: requireId(table, id) }, getToken);
     },
 
     async get(table: string, id: string): Promise<Row | null> {
-      const { row } = await call("get", { table, id }, getToken);
+      const { row } = await call("get", { table, id: requireId(table, id) }, getToken);
       return decodeRow(table, row);
     },
 
@@ -341,7 +352,7 @@ export function createSupabaseStore(getToken: TokenGetter) {
         if (stopped || inFlight) return;
         inFlight = true;
         try {
-          const { row } = await call("get", { table, id }, getToken);
+          const { row } = await call("get", { table, id: requireId(table, id) }, getToken);
           if (!stopped) onRow(decodeRow(table, row), { fromCache: false });
         } catch (err) {
           if (!stopped) onError?.(err);
