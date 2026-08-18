@@ -2728,8 +2728,40 @@ const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
      curl -s https://api.groq.com/openai/v1/models \
        -H "Authorization: Bearer $GROQ_API_KEY"
    qwen3.6-27b is deliberately not here: it writes its <think> reasoning into
-   the message content, which would end up inside teachers' lesson plans. */
-const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
+   the message content, which would end up inside teachers' lesson plans.
+
+   ORDER MATTERS, and it is about allowances rather than quality. On this tier
+   the gpt-oss models allow 8,000 tokens per minute, and a real lesson-plan
+   prompt runs to roughly 9,000-10,000 — so they answer "413 Request too large"
+   for most of the work this app actually does. compound-mini allows 70,000 and
+   has taken a 10,092-token prompt in testing, so it leads; the gpt-oss models
+   sit behind it for when it is busy. Full groq/compound is NOT here: it shares
+   the 70,000 allowance but refused that same prompt outright. */
+const GROQ_MODELS = [
+  "groq/compound-mini",
+  "openai/gpt-oss-120b",
+  "openai/gpt-oss-20b",
+];
+
+/** Errors meaning THIS model cannot serve THIS request: retrying it is
+ *  pointless, but the next model in the list may take it. A 404 is a retired
+ *  model. A 413 is the request overflowing the model's per-minute allowance on
+ *  the current tier — which is precisely what a model with a bigger allowance
+ *  can still handle, and which used to be thrown straight at the teacher
+ *  instead of falling through. */
+const modelCannotServe = (msg: string): boolean => {
+  const lower = msg.toLowerCase();
+  return (
+    msg.includes("404") ||
+    lower.includes("not found") ||
+    lower.includes("decommission") ||
+    lower.includes("does not exist") ||
+    msg.includes("413") ||
+    lower.includes("too large") ||
+    lower.includes("request_too_large") ||
+    lower.includes("tokens per minute")
+  );
+};
 
 /** British English, everywhere.
  *
@@ -2921,14 +2953,8 @@ async function generateContentWithRetry(
         lastErr = err;
         const msg = String(err?.message || err);
         const lower = msg.toLowerCase();
-        // decommissioned / unknown model → try the next model in the list
-        if (
-          msg.includes("404") ||
-          lower.includes("not found") ||
-          lower.includes("decommission") ||
-          lower.includes("does not exist")
-        )
-          break;
+        // this model cannot serve it → try the next model in the list
+        if (modelCannotServe(msg)) break;
         const isRateLimit = msg.includes("429") || lower.includes("rate limit");
         const transient =
           isRateLimit ||
@@ -3002,13 +3028,7 @@ async function groqChat(
         }
         const msg = String(lastErr?.message || lastErr);
         const lower = msg.toLowerCase();
-        if (
-          msg.includes("404") ||
-          lower.includes("not found") ||
-          lower.includes("decommission") ||
-          lower.includes("does not exist")
-        )
-          break; // bad model → try next model
+        if (modelCannotServe(msg)) break; // this model cannot serve it
         const isRateLimit = msg.includes("429") || lower.includes("rate limit");
         const transient =
           isRateLimit ||
