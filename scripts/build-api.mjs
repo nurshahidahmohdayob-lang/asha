@@ -23,3 +23,22 @@ await build({
 });
 
 console.log("✓ Bundled api/_lib/geminiService.js");
+
+// Same treatment for the database API. server/data-api.ts is written against
+// Express, but it only ever touches req.headers/req.body and res.status/res.json
+// — which Vercel's request and response objects provide too — so the function in
+// api/data/ can drive the very same handlers rather than reimplementing them.
+// One copy of the auth and ownership rules, two ways in.
+await build({
+  entryPoints: ["server/data-api.ts"],
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "node18",
+  outfile: "api/_lib/data-api.js",
+  banner: {
+    js: "import { createRequire as __vcr } from 'module'; const require = __vcr(import.meta.url);",
+  },
+});
+
+console.log("✓ Bundled api/_lib/data-api.js");
