@@ -27,6 +27,8 @@ import {
   type Firestore,
 } from "firebase/firestore";
 
+import { createSupabaseStore, type TokenGetter } from "./supabase-store";
+
 /** Which backend is serving the app. Flipped in one place when Supabase is
  *  ready; until then this is the only supported value. */
 export type Backend = "firestore" | "supabase";
@@ -70,7 +72,7 @@ const matches = (row: Row, clauses?: WhereClause[]): boolean =>
 
 /* ── The API the app uses ──────────────────────────────────────────────── */
 
-export function createStore(db: Firestore) {
+function createFirestoreStore(db: Firestore) {
   const buildQuery = (table: string, opts?: ListOptions) => {
     const parts = (opts?.where || []).map(([f, , v]) => fsWhere(f, "==", v));
     return parts.length
@@ -143,9 +145,51 @@ export function createStore(db: Firestore) {
       );
     },
 
+    /** Live results for ONE record. Returns the unsubscribe function.
+     *
+     *  The timetable and the covers log are single shared documents the whole
+     *  school watches, so they need this rather than a collection listener. */
+    watchDoc(
+      table: string,
+      id: string,
+      onRow: (row: Row | null, meta: { fromCache: boolean }) => void,
+      onError?: (err: any) => void,
+    ): () => void {
+      return onSnapshot(
+        doc(db, table, id),
+        (snap) =>
+          onRow(snap.exists() ? ({ id: snap.id, ...snap.data() }) as Row : null, {
+            fromCache: snap.metadata.fromCache,
+          }),
+        (err) => onError?.(err),
+      );
+    },
+
     /** Escape hatch for the few places still holding a Firestore handle —
      *  timetable config and the professional development log. Everything
      *  reachable through the functions above must not use this. */
+    _firestore: db,
+  };
+}
+
+/** The store the app uses. Which backend answers is decided here and nowhere
+ *  else, so flipping ACTIVE_BACKEND is the whole switch.
+ *
+ *  `getToken` returns the signed-in teacher's Firebase ID token. The Supabase
+ *  backend needs it on every call — the browser holds no database key, so the
+ *  server authenticates the token and talks to Supabase on its behalf. Without
+ *  it the app stays on Firestore, which is the safe way round. */
+export function createStore(db: Firestore, getToken?: TokenGetter) {
+  const base =
+    ACTIVE_BACKEND === "supabase" && getToken
+      ? createSupabaseStore(getToken)
+      : createFirestoreStore(db);
+
+  return {
+    ...base,
+    backend: ACTIVE_BACKEND,
+    /** Escape hatch for the few places still holding a Firestore handle.
+     *  Everything reachable through the functions above must not use this. */
     _firestore: db,
   };
 }

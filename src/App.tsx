@@ -3287,25 +3287,13 @@ import {
   sendPasswordResetEmail,
   User as FirebaseUser,
 } from "firebase/auth";
+// Reads and writes go through src/data/store.ts, not through these. What is
+// left is the client setup, plus the two places documented below that still
+// have to reach Firestore directly.
 import {
   initializeFirestore,
-  getFirestore,
-  collection,
-  query,
-  where,
-  onSnapshot,
   doc,
-  setDoc,
-  addDoc,
-  deleteDoc,
-  updateDoc,
-  writeBatch,
   deleteField,
-  serverTimestamp,
-  getDoc,
-  getDocs,
-  getDocsFromServer,
-  orderBy,
 } from "firebase/firestore";
 import firebaseConfig from "../firebase-applet-config.json";
 import { createStore } from "./data/store";
@@ -3363,9 +3351,17 @@ const db = initializeFirestore(
   firebaseConfig.firestoreDatabaseId,
 );
 
-// Every read and write goes through this. It forwards to Firestore today and
-// is where Supabase gets swapped in, so the app above it never has to change.
-const store = createStore(db);
+// Every read and write goes through this. Which backend answers is decided
+// inside the store by ACTIVE_BACKEND, so the app above it never has to change.
+//
+// The Supabase backend needs the signed-in teacher's Firebase ID token on
+// every call: the browser holds no database key, so the server verifies the
+// token and talks to Supabase on their behalf. getIdToken() serves it from
+// memory and refreshes it only when it is close to expiring.
+const store = createStore(db, async () => {
+  const user = auth.currentUser;
+  return user ? await user.getIdToken() : null;
+});
 
 // Connection state for UI
 let isFirestoreConnected = false;
@@ -5448,9 +5444,28 @@ export default function App() {
   useEffect(() => {
     const testConnection = async () => {
       try {
+        // On the Supabase backend there is no Firestore to reach, so the
+        // equivalent proof of a working connection is the data API answering
+        // that it can query the database. Same meaning, different backend.
+        if (store.backend === "supabase") {
+          const res = await fetch("/api/data/health");
+          const body = await res.json().catch(() => ({}));
+          if (!body?.ready) {
+            throw new Error(body?.reason || "The data API is not ready.");
+          }
+          console.info("Supabase data API connection active.");
+          setFirestoreError(null);
+          setFirestoreConnected(true);
+          setIsOnline(true);
+          return;
+        }
+
         const { getDocFromServer } = await import("firebase/firestore");
         // Use a 15s timeout for the initial check to be more patient than the default 10s
         const connectPromise = getDocFromServer(
+          // The only direct Firestore call left in this file. It is the
+          // Firestore-specific half of the probe above and never runs on the
+          // Supabase backend.
           doc(db, "system", "connection_test"),
         );
         const timeoutPromise = new Promise((_, reject) =>
@@ -5881,11 +5896,12 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
 
-    const unsubscribe = onSnapshot(
-      doc(db, "school_config", "timetable"),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data();
+    const unsubscribe = store.watchDoc(
+      "school_config",
+      "timetable",
+      (row) => {
+        if (row) {
+          const data = row;
           if (data.teachers) setTeachers(data.teachers);
 
           /* MIGRATION: rename legacy subjects in saved configs on load.
@@ -6039,13 +6055,11 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
 
-    const unsubscribe = onSnapshot(
-      doc(db, "school_config", "covers"),
-      (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          if (data.records) setCoverRecords(data.records);
-        }
+    const unsubscribe = store.watchDoc(
+      "school_config",
+      "covers",
+      (row) => {
+        if (row?.records) setCoverRecords(row.records);
       },
       (err) => {
         console.warn("Covers read error (could be permission related):", err);
@@ -6058,7 +6072,7 @@ export default function App() {
   const saveCoversToFirestore = async (newRecords: any[]) => {
     if (!user || !userRoles.includes("admin")) return;
     try {
-      await setDoc(doc(db, "school_config", "covers"), {
+      await store.put("school_config", "covers", {
         records: newRecords,
         updatedAt: Date.now(),
       });
@@ -6450,7 +6464,7 @@ export default function App() {
         updatedAt: Date.now(),
       });
 
-      await setDoc(doc(db, "school_config", "timetable"), payload);
+      await store.put("school_config", "timetable", payload);
       setHasUnsavedTimetableChanges(false);
     } catch (err) {
       console.error("Failed to sync timetable config with cloud:", err);
@@ -6638,7 +6652,7 @@ export default function App() {
         updatedAt: Date.now(),
       });
 
-      await setDoc(doc(db, "school_config", "timetable"), payload);
+      await store.put("school_config", "timetable", payload);
       alert("Timetable configuration saved to cloud successfully!");
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, "school_config/timetable");
@@ -6708,7 +6722,7 @@ export default function App() {
     if (!user || !name.trim()) return;
     const folderId = Math.random().toString(36).substring(2, 15);
     try {
-      await setDoc(doc(db, "folders", folderId), {
+      await store.put("folders", folderId, {
         id: folderId,
         userId: user.uid,
         name,
@@ -6726,7 +6740,7 @@ export default function App() {
     if (!window.confirm("Are you sure you want to delete this project?"))
       return;
     try {
-      await deleteDoc(doc(db, "projects", projectId));
+      await store.remove("projects", projectId);
       if (currentProjectId === projectId) {
         clearWorkspace();
       }
@@ -6739,17 +6753,17 @@ export default function App() {
     if (!user) return;
     if (!window.confirm("Delete folder and all its contents?")) return;
     try {
-      const batch = writeBatch(db);
-      batch.delete(doc(db, "folders", folderId));
-
+      // The store has no batch, so this is no longer atomic. The projects go
+      // first on purpose: if the folder delete then fails the teacher sees an
+      // empty folder, which they can delete again, rather than projects left
+      // pointing at a folder that no longer exists and no way to reach them.
       const projectsInFolder = userProjects.filter(
         (p) => p.folderId === folderId,
       );
-      projectsInFolder.forEach((p) => {
-        batch.delete(doc(db, "projects", p.id));
-      });
-
-      await batch.commit();
+      await Promise.all(
+        projectsInFolder.map((p) => store.remove("projects", p.id)),
+      );
+      await store.remove("folders", folderId);
       if (activeFolderId === folderId) setActiveFolderId(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, "batch-delete-folder");
@@ -7516,7 +7530,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           const rolesToSave =
             resData.role === "admin" ? ["admin", "educator"] : ["educator"];
           try {
-            await setDoc(doc(db, "users", userCredential.user.uid), {
+            await store.put("users", userCredential.user.uid, {
               uid: userCredential.user.uid,
               email: cleanEmail,
               teacherName: resData.name,
@@ -7622,6 +7636,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         // as admin directly (skip the "already in Firebase" check).
         let rolesToSave = [...registerRoles];
         if (rolesToSave.includes("admin") && !isAdminEmail(cleanEmail)) {
+          // NOT YET MOVED TO THE STORE, and it cannot be as things stand.
+          // This runs during registration, BEFORE the account exists, so there
+          // is no Firebase ID token — and the data API rejects every call
+          // without one. Reaching Supabase here would mean an endpoint that
+          // answers "does this email have an account" to anyone who asks,
+          // which is an account-existence oracle and worth a deliberate
+          // decision rather than a quiet addition. Until that is decided this
+          // check reads Firestore directly and must not be removed with the
+          // rest of the Firestore code in step 5.
           const { query, collection, where, getDocs } =
             await import("firebase/firestore");
           const usersRef = collection(db, "users");
@@ -7647,7 +7670,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         setTeacherName(registerName);
 
         try {
-          await setDoc(doc(db, "users", res.user.uid), {
+          await store.put("users", res.user.uid, {
             uid: res.user.uid,
             email: cleanEmail,
             teacherName: registerName,
@@ -7673,9 +7696,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         setTeacherName(fallbackName);
 
         try {
-          const docSnap = await getDoc(doc(db, "users", res.user.uid));
-          if (docSnap.exists()) {
-            const data = docSnap.data();
+          const data = await store.get("users", res.user.uid);
+          if (data) {
             if (data?.teacherName) {
               setTeacherName(data.teacherName);
             }
@@ -7750,7 +7772,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
         // Fetch teacher name from Firestore profile
         try {
-          const userDoc = await getDoc(doc(db, "users", fbUser.uid));
+          const userDoc = await store.get("users", fbUser.uid);
 
           // Admin is granted ONLY to the fixed allowlist (isAdminEmail).
           // The external schools API is deliberately NOT consulted for admin:
@@ -7758,8 +7780,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           // which would defeat the restriction to ADMIN_EMAILS.
           const isAuthorizedObj = isAdminEmail(fbUser.email);
 
-          if (userDoc.exists()) {
-            const data = userDoc.data();
+          if (userDoc) {
+            const data = userDoc;
             if (data.teacherName) {
               setTeacherName(data.teacherName);
             }
@@ -7785,8 +7807,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               JSON.stringify((data.roles || []).sort());
             if (rolesHaveChanged) {
               try {
-                await setDoc(
-                  doc(db, "users", fbUser.uid),
+                await store.put(
+                  "users",
+                  fbUser.uid,
                   { roles: consolidatedRoles },
                   { merge: true },
                 );
@@ -8356,9 +8379,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     let cancelled = false;
     (async () => {
       try {
-        const snap = await getDoc(doc(db, "professional_development", user.uid));
+        const snap = await store.get("professional_development", user.uid);
         if (cancelled) return;
-        const data = snap.data() as PDLog | undefined;
+        // The store returns a plain row; the PD log is the whole document.
+        const data = (snap ?? undefined) as unknown as PDLog | undefined;
         if (data?.records) setPdLog({ targetHours: 30, cycle: String(new Date().getFullYear()), ...data });
       } catch (e) {
         console.error("Couldn't load the professional development record:", e);
@@ -8375,7 +8399,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     setPdLog(next);
     if (!user?.uid) return;
     try {
-      await setDoc(doc(db, "professional_development", user.uid), {
+      await store.put("professional_development", user.uid, {
         ...next,
         updatedAt: Date.now(),
         teacherEmail: user.email || "",
@@ -9561,7 +9585,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const hodApprovePlan = async (plan: any) => {
     if (!plan?.id) return;
     try {
-      await updateDoc(doc(db, "submitted_plans", plan.id), {
+      await store.patch("submitted_plans", plan.id, {
         reviewStage: "pending_coordinator",
         reviewNote: "",
         weeklyFeedback: {},
@@ -9582,7 +9606,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const coordinatorApprovePlan = async (plan: any) => {
     if (!plan?.id) return;
     try {
-      await updateDoc(doc(db, "submitted_plans", plan.id), {
+      await store.patch("submitted_plans", plan.id, {
         reviewStage: "approved",
         reviewNote: "",
         weeklyFeedback: {},
@@ -9609,7 +9633,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       ? current.filter((r) => r !== role)
       : [...current, role];
     try {
-      await updateDoc(doc(db, "users", member.id), { roles: next });
+      await store.patch("users", member.id, { roles: next });
       setAllMembers((prev) =>
         prev.map((m) => (m.id === member.id ? { ...m, roles: next } : m)),
       );
@@ -9640,7 +9664,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     }
     setIsSavingReview(true);
     try {
-      await updateDoc(doc(db, "submitted_plans", feedbackPlan.id), {
+      await store.patch("submitted_plans", feedbackPlan.id, {
         reviewStage: "changes_requested",
         reviewNote: feedbackNote.trim(),
         weeklyFeedback: weekNotes,
@@ -9708,7 +9732,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       try {
         const previous =
           submittedProjects.find((p: any) => p.id === revisionTargetId) || {};
-        await updateDoc(doc(db, "submitted_plans", revisionTargetId), {
+        await store.patch("submitted_plans", revisionTargetId, {
           content,
           timestamp: Date.now(),
           weekId: selectedWeekForSubmission,
@@ -9779,7 +9803,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           "SubmitToAdmin: Writing to Firestore submitted_plans/",
           submissionData,
         );
-        await addDoc(collection(db, "submitted_plans"), submissionData);
+        await store.add("submitted_plans", submissionData);
       } else {
         console.warn("SubmitToAdmin: No content to submit");
         return;
@@ -9850,10 +9874,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           };
           // Deterministic id keyed to the source project so re-submitting
           // the same plan updates its record instead of creating duplicates.
-          return setDoc(
-            doc(db, "submitted_plans", `sub_${p.id}`),
-            submissionData,
-          );
+          return store.put("submitted_plans", `sub_${p.id}`, submissionData);
         }),
       );
       alert(
@@ -9988,7 +10009,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       await Promise.all(
         years.map((y) => {
           const id = Math.random().toString(36).substring(2, 15);
-          return setDoc(doc(db, "projects", id), {
+          return store.put("projects", id, {
             id,
             userId: user.uid,
             folderId: activeFolderId,
@@ -10040,7 +10061,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           const wk = weekForPlan(p.content, filedWeekId(p.id));
           // Deterministic id keyed to the source project so re-submitting
           // the same plan updates its record instead of creating duplicates.
-          return setDoc(doc(db, "submitted_plans", `sub_${p.id}`), {
+          return store.put("submitted_plans", `sub_${p.id}`, {
             userId: user.uid,
             folderId: teacherFolderId(p.teacherName || teacherName),
             sourceProjectId: p.id,
@@ -10081,7 +10102,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     const wk = weekForPlan(project.content, filedWeekId(project.id));
     try {
       await ensureTeacherFolder(project.teacherName || teacherName);
-      await setDoc(doc(db, "submitted_plans", `sub_${project.id}`), {
+      await store.put("submitted_plans", `sub_${project.id}`, {
         userId: user.uid,
         folderId: teacherFolderId(project.teacherName || teacherName),
         sourceProjectId: project.id,
@@ -10155,7 +10176,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     if (!name) return;
 
     try {
-      await addDoc(collection(db, "submitted_folders"), {
+      await store.add("submitted_folders", {
         name,
         createdAt: Date.now(),
         createdBy: user?.email,
@@ -10219,8 +10240,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     const id = teacherFolderId(trimmed);
     if (submittedFolders.some((f) => f.id === id)) return id;
     try {
-      await setDoc(
-        doc(db, "submitted_folders", id),
+      await store.put(
+        "submitted_folders",
+        id,
         {
           name: trimmed,
           teacherFolder: true,
@@ -10266,8 +10288,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       );
       await Promise.all(
         toCreate.map((n) =>
-          setDoc(
-            doc(db, "submitted_folders", teacherFolderId(n as string)),
+          store.put(
+            "submitted_folders",
+            teacherFolderId(n as string),
             {
               name: n,
               teacherFolder: true,
@@ -10304,13 +10327,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       const batch: any[] = [];
       submittedProjects.forEach((p) => {
         if (p.folderId === folderId) {
-          batch.push(
-            updateDoc(doc(db, "submitted_plans", p.id), { folderId: null }),
-          );
+          batch.push(store.patch("submitted_plans", p.id, { folderId: null }));
         }
       });
       await Promise.all(batch);
-      await deleteDoc(doc(db, "submitted_folders", folderId));
+      await store.remove("submitted_folders", folderId);
       if (currentSubmittedFolderId === folderId)
         setCurrentSubmittedFolderId(null);
     } catch (err) {
@@ -10425,15 +10446,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       userRoles.includes("coordinator")
     ) {
       setIsFetchingSubmittedFolders(true);
-      const plansQ = query(
-        collection(db, "submitted_plans"),
-        orderBy("timestamp", "desc"),
-      );
-
-      const foldersQ = query(
-        collection(db, "submitted_folders"),
-        orderBy("name", "asc"),
-      );
 
       // A reviewer restricted to named teachers is filtered right here, at the
       // one place submissions enter the app, rather than at each of the dozen
@@ -10441,13 +10453,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       // says the right thing while a total or a folder still leaks the rest.
       const scoped = scopedTeachersFor(user.email);
 
-      const unsubscribePlans = onSnapshot(
-        plansQ,
-        (snapshot) => {
-          const projects = snapshot.docs.map((doc) => ({
-            id: doc.id,
-            ...doc.data(),
-          }));
+      const unsubscribePlans = store.watch(
+        "submitted_plans",
+        { orderBy: ["timestamp", "desc"] },
+        (projects) => {
           const visible = projects.filter(
             (p: any) => !isRemovedTeacher(p?.teacherName),
           );
@@ -10470,13 +10479,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         },
       );
 
-      const unsubscribeFolders = onSnapshot(
-        foldersQ,
-        (snapshot) => {
-          const foldersList = snapshot.docs.map((doc) => ({
-            id: doc.id,
-            ...doc.data(),
-          }));
+      const unsubscribeFolders = store.watch(
+        "submitted_folders",
+        { orderBy: ["name", "asc"] },
+        (foldersList) => {
           const visibleFolders = foldersList.filter(
             (f: any) => !isRemovedTeacher(f?.name),
           );
@@ -10505,17 +10511,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     } else {
       // For non-admin teachers, fetch only their own submissions
       // sorted client side to bypass any missing coordinate index errors
-      const plansQ = query(
-        collection(db, "submitted_plans"),
-        where("userId", "==", user.uid),
-      );
-
-      const unsubscribePlans = onSnapshot(
-        plansQ,
-        (snapshot) => {
-          const projects = snapshot.docs
-            .map((doc) => ({ id: doc.id, ...doc.data() }))
-            .sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
+      const unsubscribePlans = store.watch(
+        "submitted_plans",
+        { where: [["userId", "==", user.uid]] },
+        (rows) => {
+          const projects = [...rows].sort(
+            (a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0),
+          );
           setSubmittedProjects(projects);
           setIsFetchingSubmitted(false);
         },
@@ -12050,29 +12052,18 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     setIsLoadingMembers(true);
     setAllMembers([]); // Clear existing list for visual feedback of refresh
     try {
-      const q = query(collection(db, "users"), orderBy("createdAt", "desc"));
-      // Force fetch from server to bypass cache
-      const snapshot = await getDocsFromServer(q);
-      const members = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+      // One read through the store. This used to ask Firestore for a
+      // server-only fetch and fall back to the cache on failure; the store
+      // draws no such distinction, and on the Supabase backend every read is
+      // a server read already.
+      const members = await store.list("users", {
+        orderBy: ["createdAt", "desc"],
+      });
       setAllMembers(members);
-      console.log(`Fetched ${members.length} members from server.`);
+      console.log(`Fetched ${members.length} members.`);
     } catch (err) {
       console.error("Fetch members failed:", err);
-      // Fallback to cache if server is unavailable
-      try {
-        const q = query(collection(db, "users"), orderBy("createdAt", "desc"));
-        const snapshot = await getDocs(q);
-        const members = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        setAllMembers(members);
-      } catch (cacheErr) {
-        handleFirestoreError(cacheErr, OperationType.GET, "users");
-      }
+      handleFirestoreError(err, OperationType.GET, "users");
     } finally {
       setIsLoadingMembers(false);
     }
@@ -12098,7 +12089,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
     console.log("Admin: Initiating delete for member:", memberId);
     try {
-      await deleteDoc(doc(db, "users", memberId));
+      await store.remove("users", memberId);
       console.log("Admin: Delete successful for member:", memberId);
 
       // Update local state first for immediate UI feedback
@@ -13421,8 +13412,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     (async () => {
       try {
         // The folder everything lands in.
-        await setDoc(
-          doc(db, "submitted_folders", target),
+        await store.put(
+          "submitted_folders",
+          target,
           {
             name: shaFullName,
             teacherFolder: true,
@@ -13437,12 +13429,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         );
         await Promise.all(
           moving.map((p: any) =>
-            updateDoc(doc(db, "submitted_plans", p.id), { folderId: target }),
+            store.patch("submitted_plans", p.id, { folderId: target }),
           ),
         );
         // Then drop the now-empty duplicates.
         await Promise.all(
-          strayIds.map((id) => deleteDoc(doc(db, "submitted_folders", id))),
+          strayIds.map((id) => store.remove("submitted_folders", id)),
         );
         console.log(
           `Merged ${strayIds.length} folder(s) into "${shaFullName}", moving ${moving.length} submission(s).`,
@@ -13502,8 +13494,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     autoFolderRun.current = true;
     Promise.all(
       missing.map((n) =>
-        setDoc(
-          doc(db, "submitted_folders", teacherFolderId(n as string)),
+        store.put(
+          "submitted_folders",
+          teacherFolderId(n as string),
           {
             name: n,
             teacherFolder: true,
@@ -13700,7 +13693,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       }
 
       // Fetch latest cloud state to prevent race conditions during staff sync
-      const latestSnap = await getDoc(doc(db, "school_config", "timetable"));
+      const latestSnap = await store.get("school_config", "timetable");
       let baseTeachers = teachers;
       let baseAssignments = staffAssignments;
       let baseQuotas = assignmentQuotas;
@@ -13710,8 +13703,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       let baseSubjects = subjects;
       let baseRules = parallelRules;
 
-      if (latestSnap.exists()) {
-        const d = latestSnap.data();
+      if (latestSnap) {
+        const d = latestSnap;
         if (d.teachers) baseTeachers = d.teachers;
         if (d.staffAssignments) baseAssignments = d.staffAssignments;
         if (d.assignmentQuotas) baseQuotas = d.assignmentQuotas;
@@ -20851,8 +20844,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           classroomSubjectMappings,
                           updatedAt: Date.now(),
                         });
-                        await setDoc(
-                          doc(db, "school_config", "timetable"),
+                        await store.put(
+                          "school_config",
+                          "timetable",
                           payload,
                         );
                         alert("Classroom allocations synced successfully!");

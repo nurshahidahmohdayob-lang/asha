@@ -9,11 +9,10 @@ export default defineConfig(({mode}) => {
     plugins: [react(), tailwindcss()],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || ''),
-      // Supabase. Both are safe in the browser: the anon key is public by
-      // design and every table is guarded by row-level security. The
-      // service_role key must NEVER appear here.
-      'process.env.SUPABASE_URL': JSON.stringify(env.SUPABASE_URL || ''),
-      'process.env.SUPABASE_ANON_KEY': JSON.stringify(env.SUPABASE_ANON_KEY || ''),
+      // No Supabase values are exposed here. The browser holds no database
+      // key at all: it calls this app's own /api/data/* endpoints with the
+      // teacher's Firebase ID token, and the server does the talking with the
+      // service_role key. See server/data-api.ts.
     },
     resolve: {
       alias: {
