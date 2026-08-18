@@ -13,3 +13,7 @@ api/_lib/
 
 # Local wrangler state from `wrangler pages dev`
 .wrangler/
+
+# Firebase service account key for scripts/migrate-to-supabase.mjs.
+# Full access to the Firebase project — never commit it.
+service-account.json

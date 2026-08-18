@@ -3,29 +3,31 @@
    Supabase tables schema.sql created. Safe to re-run: rows are upserted on
    their primary key, so a second pass overwrites rather than duplicates.
 
-   Auth stays on Firebase, so this signs in as a real account to read — the
-   Firestore rules still apply to it. Use an admin account, or the reviewer
-   collections will come back partly empty.
+   Reads with a Firebase service account, so no teacher's password is needed
+   and the Firestore rules do not apply — every collection comes back whole,
+   which is what a migration needs.
+
+   Get the key: Firebase console → Project Settings → Service Accounts →
+   "Generate new private key". Save the download as service-account.json in the
+   project root. It is gitignored, and grants full access to the Firebase
+   project, so delete it once the migration is done.
 
    Usage:
      node scripts/migrate-to-supabase.mjs --dry-run     # count only, no writes
      node scripts/migrate-to-supabase.mjs               # copy for real
      node scripts/migrate-to-supabase.mjs --only projects,folders
 
-   Needs in .env (on top of SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY):
-     MIGRATE_EMAIL=admin@yourschool...
-     MIGRATE_PASSWORD=...
-   Those two are read only by this script and can be deleted afterwards. */
+   Needs SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env, and
+   service-account.json (or SERVICE_ACCOUNT_PATH pointing elsewhere). */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
-import { initializeApp } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
-import { getFirestore, collection, getDocs } from "firebase/firestore";
+import { cert, initializeApp } from "firebase-admin/app";
+import { getFirestore } from "firebase-admin/firestore";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 dotenv.config({ path: path.join(root, ".env") });
@@ -127,23 +129,37 @@ const firebaseConfig = JSON.parse(
   readFileSync(path.join(root, "firebase-applet-config.json"), "utf8"),
 );
 
+const keyPath = process.env.SERVICE_ACCOUNT_PATH
+  ? path.resolve(root, process.env.SERVICE_ACCOUNT_PATH)
+  : path.join(root, "service-account.json");
+
+if (!existsSync(keyPath)) {
+  console.error(
+    `No service account key at ${keyPath}\n\n` +
+      `Firebase console → Project Settings → Service Accounts →\n` +
+      `"Generate new private key", then save the download there.`,
+  );
+  process.exit(1);
+}
+
+const serviceAccount = JSON.parse(readFileSync(keyPath, "utf8"));
+if (serviceAccount.project_id !== firebaseConfig.projectId) {
+  console.error(
+    `That key belongs to Firebase project "${serviceAccount.project_id}", ` +
+      `but this app uses "${firebaseConfig.projectId}".`,
+  );
+  process.exit(1);
+}
+
 const supabase = createClient(need("SUPABASE_URL"), need("SUPABASE_SERVICE_ROLE_KEY"), {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-const app = initializeApp(firebaseConfig);
+const app = initializeApp({ credential: cert(serviceAccount) });
 const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
 console.log(DRY ? "DRY RUN — nothing will be written.\n" : "Copying Firestore → Supabase.\n");
-
-await signInWithEmailAndPassword(
-  getAuth(app),
-  need("MIGRATE_EMAIL"),
-  need("MIGRATE_PASSWORD"),
-).catch((e) => {
-  console.error(`Could not sign in to Firebase: ${e.message}`);
-  process.exit(1);
-});
+console.log(`Firebase project ${serviceAccount.project_id}, database ${firebaseConfig.firestoreDatabaseId}\n`);
 
 let totalRead = 0;
 let totalWritten = 0;
@@ -155,7 +171,7 @@ for (const table of TABLES) {
 
   let docs;
   try {
-    const snap = await getDocs(collection(db, table));
+    const snap = await db.collection(table).get();
     docs = snap.docs;
   } catch (e) {
     problems.push(`${table}: could not read from Firestore — ${e.message}`);
