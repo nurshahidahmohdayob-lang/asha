@@ -2720,6 +2720,17 @@ async function mapLimit<T, R>(
 const GROQ_API_KEY = (process.env.GROQ_API_KEY as string) || "";
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
+/* The models this account can actually reach, biggest first so the fallback is
+   a smaller model rather than a different family. Groq retired the Llama chat
+   models — llama-3.3-70b-versatile and llama-3.1-8b-instant both 404 now, which
+   surfaced to teachers as "AI Error: Groq 404" the moment the second one went
+   too. Re-check the list with:
+     curl -s https://api.groq.com/openai/v1/models \
+       -H "Authorization: Bearer $GROQ_API_KEY"
+   qwen3.6-27b is deliberately not here: it writes its <think> reasoning into
+   the message content, which would end up inside teachers' lesson plans. */
+const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
+
 /** British English, everywhere.
  *
  *  This is a Cambridge International school: lesson plans, slides, worksheets
@@ -2893,7 +2904,7 @@ function backoffMs(message: string, isRateLimit: boolean, attempt: number): numb
 
 async function generateContentWithRetry(
   request: { contents: any; config?: any },
-  models: string[] = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+  models: string[] = GROQ_MODELS,
   attemptsPerModel = 2,
 ): Promise<any> {
   if (!GROQ_API_KEY) {
@@ -2943,7 +2954,7 @@ async function generateContentWithRetry(
 async function groqChat(
   systemInstruction: string,
   turns: { role: "user" | "model"; text: string }[],
-  models: string[] = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+  models: string[] = GROQ_MODELS,
   attemptsPerModel = 2,
 ): Promise<string> {
   if (!GROQ_API_KEY) {
