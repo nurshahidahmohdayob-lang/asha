@@ -7636,29 +7636,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         // as admin directly (skip the "already in Firebase" check).
         let rolesToSave = [...registerRoles];
         if (rolesToSave.includes("admin") && !isAdminEmail(cleanEmail)) {
-          // NOT YET MOVED TO THE STORE, and it cannot be as things stand.
-          // This runs during registration, BEFORE the account exists, so there
-          // is no Firebase ID token — and the data API rejects every call
-          // without one. Reaching Supabase here would mean an endpoint that
-          // answers "does this email have an account" to anyone who asks,
-          // which is an account-existence oracle and worth a deliberate
-          // decision rather than a quiet addition. Until that is decided this
-          // check reads Firestore directly and must not be removed with the
-          // rest of the Firestore code in step 5.
-          const { query, collection, where, getDocs } =
-            await import("firebase/firestore");
-          const usersRef = collection(db, "users");
-          const q = query(
-            usersRef,
-            where("email", "==", cleanEmail.toLowerCase()),
+          // The allowlist is the whole rule. This used to ALSO admit anyone
+          // who already had a user record, which meant reading the database
+          // during registration — before the account exists, so before there
+          // is any token to prove who is asking. Nothing can do that read
+          // safely, and doing without it is the stricter answer anyway.
+          throw new Error(
+            "Only allowlisted addresses can register as Admin. Otherwise you can register as Educator.",
           );
-          const querySnapshot = await getDocs(q);
-
-          if (querySnapshot.empty) {
-            throw new Error(
-              "Only users who are already registered in Firebase can register as Admin. Other than that you can register as Educator only.",
-            );
-          }
         }
 
         const res = await createUserWithEmailAndPassword(
