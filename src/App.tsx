@@ -3308,6 +3308,7 @@ import {
   orderBy,
 } from "firebase/firestore";
 import firebaseConfig from "../firebase-applet-config.json";
+import { createStore } from "./data/store";
 
 import { ImageEditor } from "./components/ImageEditor";
 import { GENERATED_THEMES, THEMES } from "./constants";
@@ -3361,6 +3362,10 @@ const db = initializeFirestore(
   },
   firebaseConfig.firestoreDatabaseId,
 );
+
+// Every read and write goes through this. It forwards to Firestore today and
+// is where Supabase gets swapped in, so the app above it never has to change.
+const store = createStore(db);
 
 // Connection state for UI
 let isFirestoreConnected = false;
@@ -6691,7 +6696,7 @@ export default function App() {
     };
 
     try {
-      await setDoc(doc(db, "projects", projectId), projectData);
+      await store.put("projects", projectId, projectData);
       setCurrentProjectId(projectId);
       alert("Project saved successfully!");
     } catch (err) {
@@ -9918,7 +9923,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       currentProjectId ||
       Math.random().toString(36).substring(2, 15);
     try {
-      await setDoc(doc(db, "projects", id), {
+      await store.put("projects", id, {
         id,
         userId: user.uid,
         // Only a folder this teacher owns — a stale id from another account
@@ -10137,7 +10142,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       return;
 
     try {
-      await deleteDoc(doc(db, "submitted_plans", planId));
+      await store.remove("submitted_plans", planId);
       alert("Successfully deleted the submitted plan.");
     } catch (err) {
       console.error("Error deleting plan:", err);
@@ -10319,7 +10324,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     folderId: string | null,
   ) => {
     try {
-      await updateDoc(doc(db, "submitted_plans", planId), { folderId });
+      await store.patch("submitted_plans", planId, { folderId });
     } catch (err) {
       console.error("Error moving plan:", err);
       alert("Failed to move plan.");
@@ -10331,7 +10336,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     folderId: string | null,
   ) => {
     try {
-      await updateDoc(doc(db, "projects", projectId), {
+      await store.patch("projects", projectId, {
         folderId: folderId || deleteField(),
       });
       setIsMovingProject(null);
@@ -10364,28 +10369,16 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     // console, so every project silently disappeared from the app. Sorting a
     // teacher's own handful of projects in the browser costs nothing and
     // cannot fail.
-    const projectsQ = query(
-      collection(db, "projects"),
-      where("userId", "==", user.uid),
-    );
-
-    const foldersQ = query(
-      collection(db, "folders"),
-      where("userId", "==", user.uid),
-    );
-
-    const unsubscribeProjects = onSnapshot(
-      projectsQ,
-      (snapshot) => {
-        const projects = snapshot.docs
-          .map((doc) => ({ id: doc.id, ...doc.data() }))
-          .sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
+    const unsubscribeProjects = store.watch(
+      "projects",
+      { where: [["userId", "==", user.uid]], orderBy: ["timestamp", "desc"] },
+      (projects, meta) => {
         setUserProjects(projects);
         setIsFetchingProjects(false);
-        // Data arriving from Firestore is the strongest proof of a working
+        // Data arriving from the server is the strongest proof of a working
         // connection there is, and it keeps arriving — so the badge corrects
         // itself rather than relying on one probe at startup.
-        if (!snapshot.metadata.fromCache) setIsOnline(true);
+        if (!meta.fromCache) setIsOnline(true);
       },
       (error: any) => {
         // Logged and swallowed before, so a broken listener looked exactly
@@ -10395,13 +10388,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       },
     );
 
-    const unsubscribeFolders = onSnapshot(
-      foldersQ,
-      (snapshot) => {
-        const foldersList = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
+    const unsubscribeFolders = store.watch(
+      "folders",
+      { where: [["userId", "==", user.uid]], orderBy: ["timestamp", "desc"] },
+      (foldersList) => {
         setFolders(foldersList);
         setIsFetchingFolders(false);
       },
