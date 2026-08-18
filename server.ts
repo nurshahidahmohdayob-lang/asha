@@ -6,6 +6,7 @@ import { readFileSync } from "fs";
 import http from "http";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { mountDataApi } from "./server/data-api";
 import nodemailer from "nodemailer";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
@@ -30,6 +31,17 @@ async function startServer() {
 
   // JSON parsing
   app.use(express.json({ limit: '50mb' }));
+
+  // The database API. Inert until SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY
+  // are set, so mounting it now changes nothing for the running app.
+  try {
+    const fbCfg = JSON.parse(
+      readFileSync(path.resolve(__dirname, "firebase-applet-config.json"), "utf-8"),
+    );
+    mountDataApi(app, fbCfg.projectId);
+  } catch (e) {
+    console.warn("[data-api] not mounted:", (e as any)?.message || e);
+  }
 
   // API Route for AI Generation (Server-side to protect keys)
   app.post("/api/ai/generate", async (req, res) => {
