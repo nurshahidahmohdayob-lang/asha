@@ -3376,6 +3376,7 @@ const setFirestoreConnected = (val: boolean) => {
 // @zera.edu.my domain is NOT enough -- an address must be on this list to get
 // admin. Everyone else who signs in is a regular educator.
 const ADMIN_EMAILS = [
+  "elliot.y@zera.edu.my",
   "shahidah.a@zera.edu.my",
   "zixin.l@zera.edu.my",
   "wafi.a@zera.edu.my",
