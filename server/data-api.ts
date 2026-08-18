@@ -136,6 +136,14 @@ export function mountDataApi(app: Express, projectId: string) {
   const isReviewer = (roles: string[]) =>
     roles.some((r) => REVIEWER_ROLES.includes(r));
 
+  /** Which column carries the record's id. */
+  const idColumnFor = (table: string): string =>
+    table === "users"
+      ? "uid"
+      : table === "professional_development"
+        ? "user_id"
+        : "id";
+
   function ruleFor(table: string): TableRule {
     const rule = TABLES[table];
     if (!rule)
@@ -159,10 +167,25 @@ export function mountDataApi(app: Express, projectId: string) {
     if (!guardReady(res)) return;
     try {
       const caller = await authenticate(req);
-      const { table, where = [], orderBy } = req.body || {};
+      const { table, where = [], orderBy, select, ids } = req.body || {};
       const rule = ruleFor(table);
 
-      let q = supabase!.from(table).select("*");
+      // "stamps" returns id and updated_at only. A watcher polls that to see
+      // what moved — tens of bytes a row instead of kilobytes — then asks for
+      // the full rows of just those ids. Ownership is applied either way, so
+      // neither mode widens what a caller can see.
+      const idCol = idColumnFor(table);
+      let q =
+        select === "stamps"
+          ? supabase!.from(table).select(`${idCol},updated_at`)
+          : supabase!.from(table).select("*");
+
+      if (Array.isArray(ids)) {
+        // Nothing to fetch is a valid answer, and .in() with an empty list is
+        // not — it would return the whole table.
+        if (!ids.length) return res.json({ rows: [] });
+        q = q.in(idCol, ids.slice(0, 500).map(String));
+      }
 
       // Ownership is applied by the SERVER, not taken from the request, so a
       // caller cannot widen their own reach by editing the query they send.
@@ -240,7 +263,13 @@ export function mountDataApi(app: Express, projectId: string) {
         throw Object.assign(new Error("Not allowed"), { status: 403 });
 
       const idCol = table === "users" ? "uid" : table === "professional_development" ? "user_id" : "id";
-      const record: Record<string, any> = { ...row, [idCol]: id };
+      const record: Record<string, any> = {
+        ...row,
+        [idCol]: id,
+        // Stamped by the SERVER so a watcher cannot be fooled into skipping a
+        // change by a client that forgot, or declined, to move it forward.
+        updated_at: Date.now(),
+      };
       // The owner is stamped from the verified token, never from the body.
       if (rule.owner) record[rule.owner] = caller.uid;
 
@@ -261,7 +290,10 @@ export function mountDataApi(app: Express, projectId: string) {
       const rule = ruleFor(table);
       const idCol = table === "users" ? "uid" : table === "professional_development" ? "user_id" : "id";
 
-      let q = supabase!.from(table).update(changes).eq(idCol, id);
+      let q = supabase!
+        .from(table)
+        .update({ ...changes, updated_at: Date.now() })
+        .eq(idCol, id);
       // A teacher may only patch their own rows; a reviewer may move a
       // submission through the approval flow.
       if (rule.owner && !(rule.reviewersReadAll && isReviewer(caller.roles))) {

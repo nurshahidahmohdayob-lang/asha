@@ -63,6 +63,12 @@ const COLUMNS: Record<string, Record<string, string>> = {
   },
 };
 
+// Every table carries the change marker the watcher polls on, so it belongs in
+// each map rather than being repeated seven times above. Without it a decoded
+// row has no updatedAt, the first delta poll thinks every row has moved, and
+// the whole table is fetched a second time for nothing.
+for (const map of Object.values(COLUMNS)) map.updatedAt = "updated_at";
+
 /** Which column carries the record's id. Matches server/data-api.ts. */
 const idColumn = (table: string): string =>
   table === "users" ? "uid" : table === "professional_development" ? "user_id" : "id";
@@ -193,8 +199,16 @@ const autoId = (): string => {
 /** How often a watcher re-reads. There is no realtime channel here — that
  *  would need a database key in the browser, which is the whole thing this
  *  design avoids — so watching is polling, plus an immediate re-read whenever
- *  the teacher comes back to the tab. */
+ *  the teacher comes back to the tab.
+ *
+ *  A hidden tab polls not at all. Reviewers leave the queue open all day, and
+ *  a background tab re-reading every 15 seconds is pure cost for something
+ *  nobody is looking at; coming back to the tab refetches immediately anyway,
+ *  so nothing is stale by the time it is seen. */
 const POLL_MS = 15000;
+
+const isHidden = (): boolean =>
+  typeof document !== "undefined" && document.visibilityState === "hidden";
 
 /** A blank id is never a legitimate target. Left unchecked it becomes a
  *  delete or a patch aimed at whatever the database happens to match, which is
@@ -210,6 +224,25 @@ const requireId = (table: string, id: string): string => {
 /* ── The store ────────────────────────────────────────────────────────── */
 
 export function createSupabaseStore(getToken: TokenGetter) {
+  /** Full rows, optionally narrowed to specific ids. */
+  const readRows = async (
+    table: string,
+    where: WhereClause[],
+    ids?: string[],
+  ): Promise<Row[]> => {
+    const map = COLUMNS[table] || {};
+    const { rows } = await call(
+      "list",
+      {
+        table,
+        where: where.map(([f, op, v]) => [map[f], op, v]),
+        ...(ids ? { ids } : {}),
+      },
+      getToken,
+    );
+    return (rows || []).map((r: any) => decodeRow(table, r)).filter(Boolean) as Row[];
+  };
+
   const readList = async (table: string, opts?: ListOptions): Promise<Row[]> => {
     const { server, local } = splitWhere(table, opts?.where);
     const map = COLUMNS[table] || {};
@@ -304,6 +337,17 @@ export function createSupabaseStore(getToken: TokenGetter) {
      *
      *  `fromCache` is always false: every row here came from the server just
      *  now, which is what the app uses the flag to decide. */
+    /** Live results. Returns the unsubscribe function.
+     *
+     *  Only the FIRST poll reads whole rows. After that each poll asks for id
+     *  and updated_at alone and fetches full rows for just the ids that are new
+     *  or have moved — because a reviewer watches every submission in the
+     *  school, and re-reading all of them every 15 seconds is about 1 MB a poll
+     *  once a year's submissions have built up, which exhausts the egress
+     *  allowance in days. Stamps are tens of bytes a row.
+     *
+     *  `fromCache` is always false: every row here came from the server, either
+     *  on this poll or on the one that last saw it change. */
     watch(
       table: string,
       opts: ListOptions | undefined,
@@ -312,13 +356,88 @@ export function createSupabaseStore(getToken: TokenGetter) {
     ): () => void {
       let stopped = false;
       let inFlight = false;
+      /** Everything currently known, by id, so a poll need only mend it. */
+      let cache = new Map<string, Row>();
+      let stamps = new Map<string, number>();
+      let primed = false;
+
+      const { server, local } = splitWhere(table, opts?.where);
+      const emit = () => {
+        const rows = [...cache.values()];
+        onRows(
+          sortRows(
+            local.length ? rows.filter((r) => matchesLocal(r, local)) : rows,
+            opts?.orderBy,
+          ),
+          { fromCache: false },
+        );
+      };
 
       const tick = async () => {
-        if (stopped || inFlight) return;
+        if (stopped || inFlight || isHidden()) return;
         inFlight = true;
         try {
-          const rows = await readList(table, opts);
-          if (!stopped) onRows(rows, { fromCache: false });
+          if (!primed) {
+            const rows = await readRows(table, server);
+            if (stopped) return;
+            cache = new Map(rows.map((r) => [r.id, r]));
+            stamps = new Map(rows.map((r) => [r.id, Number(r.updatedAt) || 0]));
+            primed = true;
+            emit();
+            return;
+          }
+
+          const map = COLUMNS[table] || {};
+          const { rows: marks } = await call(
+            "list",
+            {
+              table,
+              select: "stamps",
+              where: server.map(([f, op, v]) => [map[f], op, v]),
+            },
+            getToken,
+          );
+
+          const seen = new Map<string, number>();
+          const stale: string[] = [];
+          for (const m of marks || []) {
+            const id = String(m.id ?? m.uid ?? m.user_id);
+            const at = Number(m.updated_at) || 0;
+            seen.set(id, at);
+            if (stamps.get(id) !== at) stale.push(id);
+          }
+
+          // Rows that vanished are dropped; nothing else has to be fetched to
+          // know that, which is the other half of what makes this cheap.
+          let changed = false;
+          for (const id of [...cache.keys()]) {
+            if (!seen.has(id)) {
+              cache.delete(id);
+              stamps.delete(id);
+              changed = true;
+            }
+          }
+
+          if (stale.length) {
+            const fresh = await readRows(table, server, stale);
+            if (stopped) return;
+            for (const row of fresh) {
+              cache.set(row.id, row);
+              stamps.set(row.id, seen.get(row.id) ?? 0);
+            }
+            // An id that was stale but came back missing was deleted between
+            // the two calls; forget it rather than leave it showing.
+            const returned = new Set(fresh.map((r) => r.id));
+            for (const id of stale) {
+              if (!returned.has(id)) {
+                cache.delete(id);
+                stamps.delete(id);
+              }
+            }
+            changed = true;
+          }
+
+          if (changed) emit();
         } catch (err) {
           if (!stopped) onError?.(err);
         } finally {
@@ -328,13 +447,17 @@ export function createSupabaseStore(getToken: TokenGetter) {
 
       void tick();
       const timer = setInterval(tick, POLL_MS);
-      const onFocus = () => void tick();
-      window.addEventListener("focus", onFocus);
+      // Coming back to the tab refetches at once, so a tab that polled nothing
+      // while hidden is up to date the moment it is looked at again.
+      const wake = () => void tick();
+      window.addEventListener("focus", wake);
+      document.addEventListener("visibilitychange", wake);
 
       return () => {
         stopped = true;
         clearInterval(timer);
-        window.removeEventListener("focus", onFocus);
+        window.removeEventListener("focus", wake);
+        document.removeEventListener("visibilitychange", wake);
       };
     },
 
