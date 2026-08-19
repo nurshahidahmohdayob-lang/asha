@@ -4956,6 +4956,7 @@ const CAMBRIDGE_SUBJECTS = [
       "Art & Design (0400)",
       "Geography (0460)",
       "History (0470)",
+      "Physical Education (0413)",
       "Malay (Foreign Language) (0546)",
       "Life Competencies",
     ],

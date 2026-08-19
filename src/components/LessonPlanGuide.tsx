@@ -65,7 +65,7 @@ const STEPS: Step[] = [
     points: [
       {
         label: "Year Group",
-        text: "Decides the reading level and the kind of thinking asked of the class. Year 1 gets short sentences and concrete examples; Year 9 gets full terminology.",
+        text: "The class this plan is for, from Year 1 to Year 11. Everything the plan produces — objectives, activities and wording — is pitched at that year.",
       },
       {
         label: "Subject",
