@@ -8478,6 +8478,57 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       return { ...prev, lessonPlan: { ...prev.lessonPlan, weeklyBreakdown: next } };
     });
 
+  /** Reshape EVERY week of the open plan to the days chosen.
+   *
+   *  Ticking Monday, Tuesday and Thursday should show those three lessons at
+   *  once — waiting to be written, not waiting on a generate step. The plan is
+   *  the teacher's; the days are simply the shape of their week.
+   *
+   *  Anything already written is kept. A day still ticked keeps its lesson
+   *  untouched; the first newly added day inherits whatever a single
+   *  day-less lesson already held, so a plan half-written before the days were
+   *  picked does not lose it. Unticking a day drops that lesson, which is the
+   *  point of unticking it. */
+  const applyDaysToPlan = (days: string[]) =>
+    setContent((prev) => {
+      if (!prev?.lessonPlan?.weeklyBreakdown?.length) return prev;
+
+      const weeks = prev.lessonPlan.weeklyBreakdown.map((week: any) => {
+        const existing = lessonsOf(week);
+        if (!days.length) {
+          // Back to one lesson a week, keeping whatever lesson one holds.
+          const first = existing[0] || {};
+          return { ...week, lessons: [{ ...first, day: "" }] };
+        }
+        const byDay = new Map(
+          existing.filter((l: any) => l.day).map((l: any) => [l.day, l]),
+        );
+        const spare = existing.find((l: any) => !l.day);
+        let spareUsed = false;
+
+        const lessons = days.map((day) => {
+          const kept = byDay.get(day);
+          if (kept) return kept;
+          if (spare && !spareUsed) {
+            spareUsed = true;
+            return { ...spare, day };
+          }
+          return {
+            day,
+            period: "",
+            focus: "",
+            introduction: "",
+            activities: "",
+            assessment: "",
+            resources: "",
+          };
+        });
+        return { ...week, lessons };
+      });
+
+      return { ...prev, lessonPlan: { ...prev.lessonPlan, weeklyBreakdown: weeks } };
+    });
+
   // --- Resource attachments -------------------------------------------------
   // Files a teacher attaches to a week's resources: pictures, PDFs,
   // spreadsheets, Word documents, slides. Two ways in — upload one straight
@@ -35818,7 +35869,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   </label>
                   {lpDays.length > 0 && (
                     <button
-                      onClick={() => setLpDays([])}
+                      onClick={() => {
+                        setLpDays([]);
+                        applyDaysToPlan([]);
+                      }}
                       className="text-[8px] font-bold text-[#059669] hover:underline"
                     >
                       Clear
@@ -35833,13 +35887,17 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         key={d}
                         type="button"
                         title={d}
-                        onClick={() =>
-                          setLpDays((prev) =>
-                            prev.includes(d)
-                              ? prev.filter((x) => x !== d)
-                              : [...prev, d],
-                          )
-                        }
+                        onClick={() => {
+                          // Weekday order however they were ticked, so Monday
+                          // is always lesson one.
+                          const next = LESSON_DAYS.filter((x) =>
+                            x === d ? !lpDays.includes(d) : lpDays.includes(x),
+                          );
+                          setLpDays(next);
+                          // Straight into the plan: the lessons appear now,
+                          // not after a generate step.
+                          applyDaysToPlan(next);
+                        }}
                         className={
                           "flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 transition-colors " +
                           (on
@@ -35853,8 +35911,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   })}
                 </div>
                 <p className="mt-1.5 text-[9px] text-[#064E3B]/40 leading-snug">
-                  {lpDays.length > 1
-                    ? `${lpDays.length} lessons per week — each day gets its own activities.`
+                  {lpDays.length > 0
+                    ? `${lpDays.length} lesson${lpDays.length > 1 ? "s" : ""} per week — added to every week below.`
                     : "Leave blank for one lesson per week."}
                 </p>
               </div>
