@@ -11762,6 +11762,22 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       activities: "",
       assessment: "",
       resources: "",
+      // The DAYS carry over, the writing does not. The teacher asked for
+      // Monday/Wednesday/Friday, so their blank plan should already have those
+      // three lessons waiting — with the AI's version beside it to copy from.
+      ...((w as any).lessons?.length
+        ? {
+            lessons: (w as any).lessons.map((l: any) => ({
+              day: l?.day || "",
+              period: "",
+              focus: "",
+              introduction: "",
+              activities: "",
+              assessment: "",
+              resources: "",
+            })),
+          }
+        : {}),
     })),
     subTopic: "",
     strandSummary: "",
@@ -11801,6 +11817,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         checkedBy: lpCheckedBy,
         unit: lpUnit.map((u) => u.trim() || undefined),
         topics: lpWeeklyTopics.map((t) => t.trim() || undefined),
+        // Kept in weekday order however they were ticked, so Monday's lesson
+        // is lesson one whether or not it was chosen first.
+        days: LESSON_DAYS.filter((d) => lpDays.includes(d)),
       });
       if (result) {
         // The AI plan is a set of copyable suggestions; the teacher gets an
@@ -13663,6 +13682,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const [lpClass, setLpClass] = useState("");
   const [lpPreparedBy, setLpPreparedBy] = useState("");
   const [lpCheckedBy, setLpCheckedBy] = useState("");
+  /** Days this subject is on the timetable. Ticking three of them asks the
+   *  generator for three lessons a week rather than one, each on its own day.
+   *  Empty means one lesson a week, which is how it behaved before. */
+  const [lpDays, setLpDays] = useState<string[]>([]);
   // AI-generated lesson plan shown as copyable suggestions on the side, so the
   // teacher types/copies content into their own (empty) plan rather than having
   // it filled in automatically.
@@ -35784,6 +35807,58 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               </div>
               </div>
 
+              {/* Which days this subject is taught. Sits with the generate
+                  button because that is what it changes: tick three days and
+                  the plan comes back with three lessons a week, one per day,
+                  instead of a single lesson for the whole week. */}
+              <div className="shrink-0 px-4 pt-3 bg-white">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[9px] font-black uppercase text-[#064E3B]/40">
+                    Days taught each week
+                  </label>
+                  {lpDays.length > 0 && (
+                    <button
+                      onClick={() => setLpDays([])}
+                      className="text-[8px] font-bold text-[#059669] hover:underline"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div className="flex gap-1">
+                  {LESSON_DAYS.map((d) => {
+                    const on = lpDays.includes(d);
+                    return (
+                      <button
+                        key={d}
+                        type="button"
+                        title={d}
+                        onClick={() =>
+                          setLpDays((prev) =>
+                            prev.includes(d)
+                              ? prev.filter((x) => x !== d)
+                              : [...prev, d],
+                          )
+                        }
+                        className={
+                          "flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 transition-colors " +
+                          (on
+                            ? "bg-[#059669] text-white border-[#059669]"
+                            : "bg-[#F0FDF4] text-[#064E3B]/50 border-[#D1FAE5] hover:border-[#059669]")
+                        }
+                      >
+                        {d.slice(0, 3)}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-1.5 text-[9px] text-[#064E3B]/40 leading-snug">
+                  {lpDays.length > 1
+                    ? `${lpDays.length} lessons per week — each day gets its own activities.`
+                    : "Leave blank for one lesson per week."}
+                </p>
+              </div>
+
               {/* Primary action stays reachable without scrolling the pane */}
               <div className="shrink-0 p-4 border-t-2 border-[#D1FAE5] bg-white">
                 <button
@@ -36177,27 +36252,40 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                                       ? `Lesson ${li2 + 1}`
                                                       : "Lesson"}
                                                   </span>
-                                                  <select
-                                                    value={lesson.day || ""}
-                                                    onChange={(e) =>
-                                                      updateWeekLesson(
-                                                        idx,
-                                                        li2,
-                                                        "day",
-                                                        e.target.value,
-                                                      )
-                                                    }
-                                                    className="text-[12px] font-bold text-[#064E3B] bg-white border border-[#D1FAE5] rounded px-2 py-1 outline-none"
-                                                  >
-                                                    <option value="">
-                                                      Day…
-                                                    </option>
-                                                    {LESSON_DAYS.map((d) => (
-                                                      <option key={d} value={d}>
-                                                        {d}
-                                                      </option>
-                                                    ))}
-                                                  </select>
+                                                  {/* Every day on screen at
+                                                      once: a teacher picking
+                                                      Monday/Wednesday/Friday
+                                                      should see the week, not
+                                                      open a menu three times. */}
+                                                  <div className="flex items-center gap-1">
+                                                    {LESSON_DAYS.map((d) => {
+                                                      const on =
+                                                        lesson.day === d;
+                                                      return (
+                                                        <button
+                                                          key={d}
+                                                          type="button"
+                                                          title={d}
+                                                          onClick={() =>
+                                                            updateWeekLesson(
+                                                              idx,
+                                                              li2,
+                                                              "day",
+                                                              on ? "" : d,
+                                                            )
+                                                          }
+                                                          className={
+                                                            "px-2 py-1 rounded-md text-[11px] font-black uppercase tracking-wider border transition-colors " +
+                                                            (on
+                                                              ? "bg-[#059669] text-white border-[#059669]"
+                                                              : "bg-white text-[#6B7280] border-[#D1FAE5] hover:border-[#059669] hover:text-[#064E3B]")
+                                                          }
+                                                        >
+                                                          {d.slice(0, 3)}
+                                                        </button>
+                                                      );
+                                                    })}
+                                                  </div>
                                                   <input
                                                     value={lesson.period || ""}
                                                     onChange={(e) =>

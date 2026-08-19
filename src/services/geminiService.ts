@@ -165,6 +165,10 @@ function bahasaMelayuFormatGuide(subject?: string): string {
 }
 
 export interface EduOptions {
+  /** Days the subject is taught each week, e.g. ["Monday","Wednesday"].
+   *  When given, each week comes back with one lesson per day instead of a
+   *  single lesson for the whole week. */
+  days?: string[];
   yearGroup: string;
   lexileLevel: string;
   subject: string;
@@ -1825,6 +1829,21 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
     // Cambridge Life Competencies is a cross-curricular FRAMEWORK, not a coded
     // syllabus, so its objectives must never carry Stage+Strand+Number codes.
     const isLifeCompetencies = /life\s*competenc/i.test(options.subject || "");
+    /* One lesson per taught day. Teachers tick the days a subject is on the
+       timetable; without that the model writes one lesson for the whole week,
+       which is what a three-lessons-a-week subject could not express. */
+    const chosenDays = (options.days || []).filter(Boolean);
+    const dayClause = chosenDays.length
+      ? `
+        - "lessons": Array of EXACTLY ${chosenDays.length} objects, one per taught day, in this order: ${chosenDays.join(", ")}. Each with:
+          - "day": string (exactly one of: ${chosenDays.join(", ")})
+          - "focus": string (what THIS lesson covers — a distinct slice of the week's topic)
+          - "introduction": string (how this particular lesson starts)
+          - "activities": string (what the class does in THIS lesson — detailed, complete sentences)
+          - "assessment": string (how this lesson is checked)
+        The lessons must be DIFFERENT from one another and build across the week towards the week's learning objective. Do not repeat the same activity on each day. The week's own "introduction"/"activities"/"assessment" stay as a summary of the whole week.`
+      : "";
+
     const mainPrompt = `As an expert Cambridge Educator, create a professional, detailed ${weekCount}-WEEK Lesson Plan for a ${options.yearGroup} class.
       ${options.fileContext ? `
       THE TEACHER HAS UPLOADED THEIR OWN DOCUMENT — IT OUTRANKS EVERYTHING ELSE IN THIS PROMPT:
@@ -1888,7 +1907,7 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
         - "introduction": string (detailed overview of what this topic is about)
         - "activities": string (specific activities that the teacher can do for this topic. Be very detailed and write complete sentences.)
         - "assessment": string (what worksheet, quiz, exam or activity for this topic. Be very detailed and write complete sentences.)
-        - "resources": string (teaching materials and references; include a Cambridge Learning Standard code ONLY if it is from an uploaded scheme of work or you are certain it is the exact official code — never fabricate one)
+        - "resources": string (teaching materials and references; include a Cambridge Learning Standard code ONLY if it is from an uploaded scheme of work or you are certain it is the exact official code — never fabricate one)${dayClause}
     `;
     contents.push(mainPrompt);
 
@@ -1929,7 +1948,24 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
                   introduction: { type: Type.STRING },
                   activities: { type: Type.STRING },
                   assessment: { type: Type.STRING },
-                  resources: { type: Type.STRING }
+                  resources: { type: Type.STRING },
+                  // One entry per taught day. Not required: a week without it
+                  // is read as a single lesson, exactly like every plan
+                  // written before this existed.
+                  lessons: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        day: { type: Type.STRING },
+                        focus: { type: Type.STRING },
+                        introduction: { type: Type.STRING },
+                        activities: { type: Type.STRING },
+                        assessment: { type: Type.STRING }
+                      },
+                      required: ["day", "activities"]
+                    }
+                  }
                 },
                 required: ["week", "unit", "topic", "subTopic", "strand", "learningObjective", "introduction", "activities", "assessment", "resources"]
               }
