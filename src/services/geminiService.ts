@@ -1,8 +1,50 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { EduContent, SlideContent, WorksheetSection, ReadingProgram, LessonPlan, WeeklyPlan, LessonActivityPack } from "../types";
 
-// The platform injects GEMINI_API_KEY into the process.env at runtime.
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY as string });
+/* ── The Gemini client ────────────────────────────────────────────────────
+   Built on first use, never at import, and never in the browser.
+
+   This module is bundled twice: once for the browser and once (by
+   scripts/build-api.mjs) for the Vercel functions. Constructing the client at
+   import meant the key had to exist at import in BOTH — so vite.config.ts
+   inlined it into the browser bundle, where anyone could read it out of
+   devtools. It is a billable key with no per-origin restriction, so that was
+   a real exposure, not a theoretical one.
+
+   Nothing in the browser needs it: every generator goes through /api/ai/*,
+   and the one direct Gemini call left (the image fallback below) is reached
+   only after generatePosterImage has already returned for window callers.
+   Reading the key lazily lets the browser bundle carry this code without
+   carrying the secret. */
+/** `process` does not exist in the browser, and these values are deliberately
+ *  no longer inlined into the bundle — every generator runs server-side, so
+ *  the browser has no use for them. Reading them through this keeps the module
+ *  LOADABLE in both places: the Node bundles under api/ find real values, the
+ *  browser gets "".
+ *
+ *  Without the guard, `process.env.GROQ_API_KEY` at module scope threw
+ *  ReferenceError as soon as the browser evaluated this file, which took the
+ *  whole app down to a blank page before React could mount. */
+const fromEnv = (name: string): string => {
+  try {
+    return (typeof process !== "undefined" && process.env?.[name]) || "";
+  } catch {
+    return "";
+  }
+};
+
+let geminiClient: GoogleGenAI | null = null;
+
+function gemini(): GoogleGenAI {
+  const key = fromEnv("GEMINI_API_KEY");
+  if (!key) {
+    throw new Error(
+      "GEMINI_API_KEY is not set on the server. Add it to .env locally, or to " +
+        "the Vercel project's environment variables, and redeploy.",
+    );
+  }
+  return (geminiClient ||= new GoogleGenAI({ apiKey: key }));
+}
 
 // Utility to call the server-side proxy (Fallback if frontend key fails)
 async function callAiProxy(type: string, lessonInput: string, options: any) {
@@ -2717,7 +2759,7 @@ async function mapLimit<T, R>(
 // existing caller keeps working unchanged. The key stays SERVER-SIDE (it is not
 // injected into the browser bundle); the browser falls back to the /api/ai
 // proxy which holds the key.
-const GROQ_API_KEY = (process.env.GROQ_API_KEY as string) || "";
+const GROQ_API_KEY = fromEnv("GROQ_API_KEY");
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 /* The models this account can actually reach, biggest first so the fallback is
@@ -3516,7 +3558,7 @@ ${directive}`;
   // Most reliable path: our Cloudflare Worker generates the image via its AI
   // binding (no API token needed, so it can't break when tokens are rolled).
   const WORKER_IMAGE_URL =
-    (process.env.WORKER_IMAGE_URL as string) ||
+    fromEnv("WORKER_IMAGE_URL") ||
     "https://zworksheets.nurshahidahmohdayob.workers.dev/image";
   try {
     const r = await fetch(WORKER_IMAGE_URL, {
@@ -3535,7 +3577,7 @@ ${directive}`;
   }
 
   // Fallbacks: OpenAI gpt-image-1, then Cloudflare Flux (token), then Gemini.
-  const openaiKey = (process.env.OPENAI_API_KEY as string) || "";
+  const openaiKey = fromEnv("OPENAI_API_KEY");
   if (openaiKey) {
     try {
       const res = await fetch("https://api.openai.com/v1/images/generations", {
@@ -3568,8 +3610,8 @@ ${directive}`;
   // image) fall through to Gemini instead of throwing — otherwise a misconfigured
   // Cloudflare token (401) blocks the whole chain and image generation never
   // reaches the Gemini fallback.
-  const cfAccount = (process.env.CLOUDFLARE_ACCOUNT_ID as string) || "";
-  const cfToken = (process.env.CLOUDFLARE_API_TOKEN as string) || "";
+  const cfAccount = fromEnv("CLOUDFLARE_ACCOUNT_ID");
+  const cfToken = fromEnv("CLOUDFLARE_API_TOKEN");
   if (cfAccount && cfToken) {
     try {
       const res = await fetch(
@@ -3602,7 +3644,7 @@ ${directive}`;
   let lastErr: any;
   for (const model of models) {
     try {
-      const response = await ai.models.generateContent({
+      const response = await gemini().models.generateContent({
         model,
         contents: fullPrompt,
         config: { responseModalities: ["IMAGE", "TEXT"] },

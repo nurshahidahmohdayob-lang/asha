@@ -1,19 +1,23 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig, loadEnv} from 'vite';
+import {defineConfig} from 'vite';
 
-export default defineConfig(({mode}) => {
-  const env = loadEnv(mode, '.', '');
+export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
-    define: {
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || ''),
-      // No Supabase values are exposed here. The browser holds no database
-      // key at all: it calls this app's own /api/data/* endpoints with the
-      // teacher's Firebase ID token, and the server does the talking with the
-      // service_role key. See server/data-api.ts.
-    },
+    // NOTHING secret is defined here, and nothing secret should be.
+    //
+    // GEMINI_API_KEY used to be inlined into the browser bundle, which put a
+    // live billable key in a file anyone could open in devtools. Generation
+    // already runs server-side through /api/ai/*, so the browser has no use
+    // for it; src/services/geminiService.ts now reads it lazily and only the
+    // Node bundles ever find it there.
+    //
+    // No Supabase values are exposed either. The browser holds no database key
+    // at all: it calls this app's own /api/data/* endpoints with the teacher's
+    // Firebase ID token, and the server does the talking with the service_role
+    // key. See server/data-api.ts.
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
