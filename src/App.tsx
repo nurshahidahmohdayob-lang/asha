@@ -3717,12 +3717,48 @@ const buildLessonPlanEditableHTML = (lp: any, title: string): string => {
   for (let i = 0; i < all.length; i += 6) chunks.push(all.slice(i, i + 6));
 
   const weekBlock = (w: any, i: number) => {
-    const rows = [
-      ["Introduction / Do Now", w?.introduction],
-      ["Activities", w?.activities],
-      ["Assessment", w?.assessment],
-      ["Curriculum Link", w?.strand],
-    ];
+    // A week may hold several taught lessons, one per day. Older plans have no
+    // `lessons` array and are read as the single lesson their own fields
+    // describe, so they print exactly as they always did.
+    const lessons: any[] =
+      Array.isArray(w?.lessons) && w.lessons.length
+        ? w.lessons
+        : [
+            {
+              day: "",
+              introduction: w?.introduction,
+              activities: w?.activities,
+              assessment: w?.assessment,
+            },
+          ];
+    const many = lessons.length > 1;
+    const lessonBlocks = lessons
+      .map((l: any, li: number) => {
+        const head = [
+          many ? `Lesson ${li + 1}` : "",
+          l?.day || "",
+          l?.period || "",
+          l?.focus || "",
+        ]
+          .filter(Boolean)
+          .join(" &bull; ");
+        const body = [
+          ["Introduction / Do Now", l?.introduction],
+          ["Activities", l?.activities],
+          ["Assessment", l?.assessment],
+          ...(l?.resources ? [["Resources", l.resources]] : []),
+        ]
+          .map(([lb, v]) => row(lb as string, v, "w22"))
+          .join("");
+        // A single unlabelled lesson keeps the old flat look; anything with a
+        // day or several lessons gets a heading so the week reads as a week.
+        return head
+          ? `<tr><th class="lbl w22">${esc(head)}</th><td><table>${body}</table></td></tr>`
+          : body;
+      })
+      .join("");
+
+    const rows = [["Curriculum Link", w?.strand]];
     const attachments = (w?.attachments || []).length
       ? `<div class="atts">${(w.attachments || [])
           .map(
@@ -3739,6 +3775,7 @@ const buildLessonPlanEditableHTML = (lp: any, title: string): string => {
       </div>
       <table>
         ${w?.unit ? row("Unit", w.unit, "w22") : ""}
+        ${lessonBlocks}
         ${rows.map(([l, v]) => row(l as string, v, "w22")).join("")}
         <tr><th class="lbl w22">Resources (Attachment: File, Picture, Video)</th>
           <td><span contenteditable="true">${esc(w?.resources).replace(/\n/g, "<br>")}</span>${attachments}</td></tr>
@@ -8343,6 +8380,103 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       };
     });
   };
+
+  /* --- Lessons within a week ------------------------------------------------
+     A subject timetabled three times a week needs three lessons under one
+     week, each on its own day. The week keeps what they share — unit, topic,
+     learning objective, curriculum link — so it is written once.
+
+     Plans written before this have no `lessons` array and are read as a single
+     lesson using the week's own fields. The first time a teacher adds a day,
+     those fields are moved into lesson one rather than left behind, so nothing
+     they have already written disappears. */
+
+  const LESSON_DAYS = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+  ];
+
+  /** The week's lessons, treating an older single-lesson week as one lesson. */
+  const lessonsOf = (week: any): any[] =>
+    Array.isArray(week?.lessons) && week.lessons.length
+      ? week.lessons
+      : [
+          {
+            day: "",
+            focus: "",
+            introduction: week?.introduction || "",
+            activities: week?.activities || "",
+            assessment: week?.assessment || "",
+            resources: week?.resources || "",
+          },
+        ];
+
+  const setWeekLessons = (weekIdx: number, lessons: any[]) =>
+    setContent((prev) => {
+      if (!prev?.lessonPlan) return prev;
+      const next = [...prev.lessonPlan.weeklyBreakdown];
+      next[weekIdx] = { ...next[weekIdx], lessons } as any;
+      return { ...prev, lessonPlan: { ...prev.lessonPlan, weeklyBreakdown: next } };
+    });
+
+  const updateWeekLesson = (
+    weekIdx: number,
+    lessonIdx: number,
+    field: string,
+    value: any,
+  ) =>
+    setContent((prev) => {
+      if (!prev?.lessonPlan) return prev;
+      const next = [...prev.lessonPlan.weeklyBreakdown];
+      const week: any = next[weekIdx];
+      const lessons = [...lessonsOf(week)];
+      lessons[lessonIdx] = { ...lessons[lessonIdx], [field]: value };
+      next[weekIdx] = { ...week, lessons };
+      return { ...prev, lessonPlan: { ...prev.lessonPlan, weeklyBreakdown: next } };
+    });
+
+  /** Add a lesson, defaulting to the next weekday not already used. */
+  const addWeekLesson = (weekIdx: number) =>
+    setContent((prev) => {
+      if (!prev?.lessonPlan) return prev;
+      const next = [...prev.lessonPlan.weeklyBreakdown];
+      const week: any = next[weekIdx];
+      // lessonsOf folds an older week's own fields into lesson one, so this is
+      // also the migration: after the first add, nothing lives on the week.
+      const lessons = [...lessonsOf(week)];
+      const used = new Set(lessons.map((l) => l.day).filter(Boolean));
+      const day = LESSON_DAYS.find((d) => !used.has(d)) || "";
+      lessons.push({
+        day,
+        focus: "",
+        introduction: "",
+        activities: "",
+        assessment: "",
+        resources: "",
+      });
+      next[weekIdx] = { ...week, lessons };
+      return { ...prev, lessonPlan: { ...prev.lessonPlan, weeklyBreakdown: next } };
+    });
+
+  const removeWeekLesson = (weekIdx: number, lessonIdx: number) =>
+    setContent((prev) => {
+      if (!prev?.lessonPlan) return prev;
+      const next = [...prev.lessonPlan.weeklyBreakdown];
+      const week: any = next[weekIdx];
+      const lessons = lessonsOf(week).filter((_, i) => i !== lessonIdx);
+      // Never leave a week with no lesson at all — one empty lesson is the
+      // floor, which is also what an untouched week looks like.
+      next[weekIdx] = {
+        ...week,
+        lessons: lessons.length
+          ? lessons
+          : [{ day: "", focus: "", introduction: "", activities: "", assessment: "", resources: "" }],
+      };
+      return { ...prev, lessonPlan: { ...prev.lessonPlan, weeklyBreakdown: next } };
+    });
 
   // --- Resource attachments -------------------------------------------------
   // Files a teacher attaches to a week's resources: pictures, PDFs,
@@ -35955,15 +36089,25 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           <div className="space-y-5">
                             {chunk.items.map((week, li) => {
                               const idx = chunk.start - 1 + li;
+                              // Fields that describe ONE taught lesson move
+                              // into the day cards below; Curriculum Link
+                              // stays on the week because it is shared.
                               const rows: { label: string; field: string }[] = [
+                                { label: "Curriculum Link", field: "strand" },
+                              ];
+                              const dayFields: {
+                                label: string;
+                                field: string;
+                              }[] = [
                                 {
                                   label: "Introduction / Do Now",
                                   field: "introduction",
                                 },
                                 { label: "Activities", field: "activities" },
                                 { label: "Assessment", field: "assessment" },
-                                { label: "Curriculum Link", field: "strand" },
                               ];
+                              const weekLessons = lessonsOf(week);
+                              const multi = weekLessons.length > 1;
                               return (
                                 <div
                                   key={idx}
@@ -36012,6 +36156,137 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                           </td>
                                         </tr>
                                       ) : null}
+                                      {/* One block per taught lesson. A
+                                          subject timetabled three times a week
+                                          gets three, each on its own day. */}
+                                      <tr>
+                                        <td
+                                          className={cellCls}
+                                          colSpan={2}
+                                          style={{ padding: 0 }}
+                                        >
+                                          <div className="p-2 space-y-2 bg-[#FAFDFB]">
+                                            {weekLessons.map((lesson, li2) => (
+                                              <div
+                                                key={li2}
+                                                className="border border-[#D1FAE5] rounded-lg bg-white overflow-hidden"
+                                              >
+                                                <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-[#F0FDF4] border-b border-[#D1FAE5]">
+                                                  <span className="text-[10px] font-black uppercase tracking-wider text-[#059669]">
+                                                    {multi
+                                                      ? `Lesson ${li2 + 1}`
+                                                      : "Lesson"}
+                                                  </span>
+                                                  <select
+                                                    value={lesson.day || ""}
+                                                    onChange={(e) =>
+                                                      updateWeekLesson(
+                                                        idx,
+                                                        li2,
+                                                        "day",
+                                                        e.target.value,
+                                                      )
+                                                    }
+                                                    className="text-[12px] font-bold text-[#064E3B] bg-white border border-[#D1FAE5] rounded px-2 py-1 outline-none"
+                                                  >
+                                                    <option value="">
+                                                      Day…
+                                                    </option>
+                                                    {LESSON_DAYS.map((d) => (
+                                                      <option key={d} value={d}>
+                                                        {d}
+                                                      </option>
+                                                    ))}
+                                                  </select>
+                                                  <input
+                                                    value={lesson.period || ""}
+                                                    onChange={(e) =>
+                                                      updateWeekLesson(
+                                                        idx,
+                                                        li2,
+                                                        "period",
+                                                        e.target.value,
+                                                      )
+                                                    }
+                                                    placeholder="Period / time"
+                                                    className="w-[110px] text-[12px] bg-transparent outline-none border-b border-transparent focus:border-[#D1FAE5]"
+                                                  />
+                                                  <input
+                                                    value={lesson.focus || ""}
+                                                    onChange={(e) =>
+                                                      updateWeekLesson(
+                                                        idx,
+                                                        li2,
+                                                        "focus",
+                                                        e.target.value,
+                                                      )
+                                                    }
+                                                    placeholder="Focus for this lesson"
+                                                    className="flex-1 min-w-[140px] text-[12px] bg-transparent outline-none border-b border-transparent focus:border-[#D1FAE5]"
+                                                  />
+                                                  {multi && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() =>
+                                                        removeWeekLesson(
+                                                          idx,
+                                                          li2,
+                                                        )
+                                                      }
+                                                      className="text-[10px] font-bold text-red-600 hover:underline"
+                                                      title="Remove this lesson"
+                                                    >
+                                                      Remove
+                                                    </button>
+                                                  )}
+                                                </div>
+                                                <table className="w-full border-collapse text-[12px]">
+                                                  <tbody className="align-top">
+                                                    {dayFields.map((f) => (
+                                                      <tr key={f.field}>
+                                                        <td
+                                                          className={
+                                                            labelCls +
+                                                            " w-[22%]"
+                                                          }
+                                                        >
+                                                          {f.label}
+                                                        </td>
+                                                        <td className={cellCls}>
+                                                          <textarea
+                                                            value={
+                                                              lesson[f.field] ||
+                                                              ""
+                                                            }
+                                                            onChange={(e) =>
+                                                              updateWeekLesson(
+                                                                idx,
+                                                                li2,
+                                                                f.field,
+                                                                e.target.value,
+                                                              )
+                                                            }
+                                                            className={taCls}
+                                                          />
+                                                        </td>
+                                                      </tr>
+                                                    ))}
+                                                  </tbody>
+                                                </table>
+                                              </div>
+                                            ))}
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                addWeekLesson(idx)
+                                              }
+                                              className="text-[11px] font-black uppercase tracking-wider text-[#059669] hover:text-[#064E3B]"
+                                            >
+                                              + Add a lesson this week
+                                            </button>
+                                          </div>
+                                        </td>
+                                      </tr>
                                       {rows.map((r) => (
                                         <tr key={r.field}>
                                           <td className={labelCls + " w-[22%]"}>

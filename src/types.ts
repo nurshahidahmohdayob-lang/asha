@@ -271,6 +271,25 @@ export interface LessonResourceAttachment {
   uploadedAt: number;
 }
 
+/** One taught lesson inside a week.
+ *
+ *  A subject timetabled three times a week has three of these. The week around
+ *  them still carries what they share — unit, topic, learning objective,
+ *  curriculum link — so a teacher writes that once rather than three times. */
+export interface DayLesson {
+  /** Monday–Friday. Free text rather than an enum so a school running a
+   *  Saturday or a double period can still say so. */
+  day: string;
+  /** Optional period or time, e.g. "Period 3" or "08:40–09:20". */
+  period?: string;
+  /** What this particular lesson covers, within the week's topic. */
+  focus?: string;
+  introduction?: string;
+  activities?: string;
+  assessment?: string;
+  resources?: string;
+}
+
 export interface WeeklyPlan {
   week: number;
   unit: string;
@@ -285,6 +304,11 @@ export interface WeeklyPlan {
   activities: string;
   assessment: string;
   resources: string;
+  /** The individual lessons taught this week, for subjects timetabled more
+   *  than once. Absent on every plan written before this existed, which is
+   *  read as a single lesson using the fields above — so old plans keep
+   *  rendering exactly as they did. */
+  lessons?: DayLesson[];
 }
 
 export interface LessonPlan {
