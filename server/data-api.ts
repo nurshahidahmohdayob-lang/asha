@@ -12,7 +12,7 @@
    their passwords. This file is the bridge between the two. */
 
 import type { Express, Request, Response } from "express";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createDriver, type DbDriver } from "./db-driver";
 import jwt from "jsonwebtoken";
 
 /* ── Verifying a Firebase ID token without firebase-admin ────────────────
@@ -90,22 +90,16 @@ const TABLES: Record<string, TableRule> = {
 const REVIEWER_ROLES = ["admin", "hod", "coordinator"];
 
 export function mountDataApi(app: Express, projectId: string) {
-  const url = process.env.SUPABASE_URL || "";
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-
   // Absent config is not an error — the app runs on Firestore until the
-  // switch is flipped, and these routes simply say so if called.
-  let supabase: SupabaseClient | null = null;
-  if (url && serviceKey) {
-    supabase = createClient(url, serviceKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-    console.log("[data-api] Supabase backend ready.");
-  } else {
-    console.log(
-      "[data-api] SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set — data API disabled, app stays on Firestore.",
-    );
-  }
+  // switch is flipped, and these routes simply say so if called. Which
+  // database answers is decided in db-driver.ts; everything below is about
+  // WHO may touch WHAT, which is the same either way.
+  const { driver, why } = createDriver();
+  console.log(
+    driver
+      ? `[data-api] backend ready: ${why}.`
+      : "[data-api] no database configured — data API disabled, app stays on Firestore.",
+  );
 
   /** Verify the caller and look up their roles. */
   async function authenticate(req: Request): Promise<Caller & { roles: string[] }> {
@@ -122,13 +116,15 @@ export function mountDataApi(app: Express, projectId: string) {
     // Roles come from the database, never from the request — a caller cannot
     // promote themselves by claiming to be an admin.
     let roles: string[] = ["educator"];
-    if (supabase) {
-      const { data } = await supabase
-        .from("users")
-        .select("roles")
-        .eq("uid", caller.uid)
-        .maybeSingle();
-      if (Array.isArray(data?.roles) && data.roles.length) roles = data.roles;
+    if (driver) {
+      const row = await driver.get("users", "uid", caller.uid);
+      // MySQL hands back a JSON column parsed; a string would mean an older
+      // server or a hand-written row, so parse defensively rather than trust.
+      let stored = row?.roles;
+      if (typeof stored === "string") {
+        try { stored = JSON.parse(stored); } catch { stored = null; }
+      }
+      if (Array.isArray(stored) && stored.length) roles = stored;
     }
     return { ...caller, roles };
   }
@@ -155,7 +151,7 @@ export function mountDataApi(app: Express, projectId: string) {
     res.status(err?.status || 500).json({ error: err?.message || String(err) });
 
   const guardReady = (res: Response) => {
-    if (!supabase) {
+    if (!driver) {
       res.status(503).json({ error: "Supabase backend is not configured." });
       return false;
     }
@@ -175,35 +171,32 @@ export function mountDataApi(app: Express, projectId: string) {
       // the full rows of just those ids. Ownership is applied either way, so
       // neither mode widens what a caller can see.
       const idCol = idColumnFor(table);
-      let q =
-        select === "stamps"
-          ? supabase!.from(table).select(`${idCol},updated_at`)
-          : supabase!.from(table).select("*");
-
-      if (Array.isArray(ids)) {
-        // Nothing to fetch is a valid answer, and .in() with an empty list is
-        // not — it would return the whole table.
-        if (!ids.length) return res.json({ rows: [] });
-        q = q.in(idCol, ids.slice(0, 500).map(String));
-      }
 
       // Ownership is applied by the SERVER, not taken from the request, so a
       // caller cannot widen their own reach by editing the query they send.
       const mayReadAll =
         !rule.owner || (rule.reviewersReadAll && isReviewer(caller.roles));
-      if (!mayReadAll) q = q.eq(rule.owner!, caller.uid);
+      const filters: [string, unknown][] = [];
+      if (!mayReadAll) filters.push([rule.owner!, caller.uid]);
 
       for (const [field, , value] of where as [string, string, any][]) {
         // A filter on the owner column is redundant once the server has
         // pinned it, and must not be able to point at someone else.
         if (rule.owner && field === rule.owner && !mayReadAll) continue;
-        q = q.eq(field, value);
+        filters.push([field, value]);
       }
 
-      const { data, error } = await q;
-      if (error) throw error;
+      // Nothing to fetch is a valid answer, and must not be read as "no
+      // filter" — that would return the whole table.
+      if (Array.isArray(ids) && !ids.length) return res.json({ rows: [] });
 
-      let rows = data || [];
+      let rows = await driver!.list({
+        table,
+        idCol,
+        filters,
+        ids: Array.isArray(ids) ? ids.slice(0, 500).map(String) : undefined,
+        stampsOnly: select === "stamps",
+      });
       if (orderBy) {
         const [field, dir] = orderBy as [string, "asc" | "desc"];
         rows = [...rows].sort((a: any, b: any) => {
@@ -230,12 +223,7 @@ export function mountDataApi(app: Express, projectId: string) {
       const rule = ruleFor(table);
       const idCol = table === "users" ? "uid" : table === "professional_development" ? "user_id" : "id";
 
-      const { data, error } = await supabase!
-        .from(table)
-        .select("*")
-        .eq(idCol, id)
-        .maybeSingle();
-      if (error) throw error;
+      const data = await driver!.get(table, idCol, id);
       if (!data) return res.json({ row: null });
 
       const mayRead =
@@ -273,8 +261,7 @@ export function mountDataApi(app: Express, projectId: string) {
       // The owner is stamped from the verified token, never from the body.
       if (rule.owner) record[rule.owner] = caller.uid;
 
-      const { error } = await supabase!.from(table).upsert(record);
-      if (error) throw error;
+      await driver!.upsert(table, idCol, record);
       res.json({ ok: true, id });
     } catch (err: any) {
       send(res, err);
@@ -290,17 +277,19 @@ export function mountDataApi(app: Express, projectId: string) {
       const rule = ruleFor(table);
       const idCol = table === "users" ? "uid" : table === "professional_development" ? "user_id" : "id";
 
-      let q = supabase!
-        .from(table)
-        .update({ ...changes, updated_at: Date.now() })
-        .eq(idCol, id);
       // A teacher may only patch their own rows; a reviewer may move a
       // submission through the approval flow.
-      if (rule.owner && !(rule.reviewersReadAll && isReviewer(caller.roles))) {
-        q = q.eq(rule.owner, caller.uid);
-      }
-      const { error } = await q;
-      if (error) throw error;
+      const pinOwner =
+        rule.owner && !(rule.reviewersReadAll && isReviewer(caller.roles))
+          ? ([rule.owner, caller.uid] as [string, unknown])
+          : undefined;
+      await driver!.update(
+        table,
+        idCol,
+        id,
+        { ...changes, updated_at: Date.now() },
+        pinOwner,
+      );
       res.json({ ok: true });
     } catch (err: any) {
       send(res, err);
@@ -316,12 +305,11 @@ export function mountDataApi(app: Express, projectId: string) {
       const rule = ruleFor(table);
       const idCol = table === "users" ? "uid" : table === "professional_development" ? "user_id" : "id";
 
-      let q = supabase!.from(table).delete().eq(idCol, id);
-      if (rule.owner && !isReviewer(caller.roles)) {
-        q = q.eq(rule.owner, caller.uid);
-      }
-      const { error } = await q;
-      if (error) throw error;
+      const pinOwner =
+        rule.owner && !isReviewer(caller.roles)
+          ? ([rule.owner, caller.uid] as [string, unknown])
+          : undefined;
+      await driver!.remove(table, idCol, id, pinOwner);
       res.json({ ok: true });
     } catch (err: any) {
       send(res, err);
@@ -330,8 +318,12 @@ export function mountDataApi(app: Express, projectId: string) {
 
   /* ── Health, so the switch can be tested before it is flipped ────────── */
   app.get("/api/data/health", async (_req, res) => {
-    if (!supabase) return res.json({ ready: false, reason: "not configured" });
-    const { error } = await supabase.from("users").select("uid").limit(1);
-    res.json({ ready: !error, reason: error?.message || null });
+    if (!driver) return res.json({ ready: false, reason: "not configured" });
+    try {
+      await driver.ping();
+      res.json({ ready: true, reason: null, backend: driver.kind });
+    } catch (err: any) {
+      res.json({ ready: false, reason: err?.message || String(err), backend: driver.kind });
+    }
   });
 }

@@ -21,26 +21,37 @@ begin
     'users','school_config','professional_development'
   ] loop
     execute format('alter table public.%I add column if not exists updated_at bigint', t);
-    -- Seed it so the first poll has a baseline rather than a table of nulls.
-    execute format(
-      'update public.%I set updated_at = coalesce(updated_at, %s, 0) where updated_at is null',
-      t,
-      case when t in ('projects','folders','submitted_plans') then 'timestamp'
-           when t = 'submitted_folders' then 'created_at'
-           else '0' end);
     execute format(
       'create index if not exists %I on public.%I (updated_at desc)',
       t || '_updated_idx', t);
   end loop;
 end $$;
 
+-- Seed it so the first poll has a baseline rather than a table of nulls.
+--
+-- "timestamp" MUST be quoted. Unquoted it parses as the TYPE name rather than
+-- the column, and the statement fails with a syntax error — which, because the
+-- editor runs a script as one transaction, silently takes the ALTERs with it.
+-- Written out per table rather than generated, so a mistake like that is
+-- visible in the statement instead of buried in a format() argument.
+update public.projects
+  set updated_at = coalesce(updated_at, "timestamp", 0) where updated_at is null;
+update public.folders
+  set updated_at = coalesce(updated_at, "timestamp", 0) where updated_at is null;
+update public.submitted_plans
+  set updated_at = coalesce(updated_at, "timestamp", 0) where updated_at is null;
+update public.submitted_folders
+  set updated_at = coalesce(updated_at, created_at, 0) where updated_at is null;
+update public.users
+  set updated_at = coalesce(updated_at, 0) where updated_at is null;
+update public.school_config
+  set updated_at = coalesce(updated_at, 0) where updated_at is null;
+update public.professional_development
+  set updated_at = coalesce(updated_at, 0) where updated_at is null;
+
 -- ── Check it ─────────────────────────────────────────────────────────────
--- Expect: every table listed, nulls = 0.
-select
-  table_name,
-  (xpath('/row/c/text()',
-    query_to_xml(format('select count(*) as c from public.%I where updated_at is null', table_name),
-    false, true, '')))[1]::text::int as nulls
+-- Expect seven rows, one per table, all bigint.
+select table_name, data_type
 from information_schema.columns
 where table_schema = 'public'
   and column_name = 'updated_at'
