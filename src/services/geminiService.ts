@@ -1839,7 +1839,7 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
           - "day": string (exactly one of: ${chosenDays.join(", ")})
           - "focus": string (what THIS lesson covers — a distinct slice of the week's topic)
           - "introduction": string (how this particular lesson starts)
-          - "activities": string (what the class does in THIS lesson — detailed, complete sentences)
+          - "activities": string (what the class does in THIS lesson only — detailed, complete sentences, EACH STEP ON ITS OWN LINE separated by a newline; do NOT put a whole week of activities here)
           - "assessment": string (how this lesson is checked)
         The lessons must be DIFFERENT from one another and build across the week towards the week's learning objective. Do not repeat the same activity on each day. The week's own "introduction"/"activities"/"assessment" stay as a summary of the whole week.`
       : "";
@@ -1905,7 +1905,7 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
         - "strand": string (the curriculum strand)
         - "learningObjective": string (one clear, numbered learning objective, e.g., "1. Identify the parts of a plant")
         - "introduction": string (detailed overview of what this topic is about)
-        - "activities": string (specific activities that the teacher can do for this topic. Be very detailed and write complete sentences.)
+        - "activities": string (specific activities that the teacher can do for this topic. Be very detailed and write complete sentences. Put EACH numbered step on its own line, separated by a newline, so it reads as a list rather than a paragraph.)
         - "assessment": string (what worksheet, quiz, exam or activity for this topic. Be very detailed and write complete sentences.)
         - "resources": string (teaching materials and references; include a Cambridge Learning Standard code ONLY if it is from an uploaded scheme of work or you are certain it is the exact official code — never fabricate one)${dayClause}
     `;

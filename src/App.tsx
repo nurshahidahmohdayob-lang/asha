@@ -36904,17 +36904,62 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           "Curriculum Link",
                           t(w.strand),
                         )}
-                        {renderSug(
-                          `w${i}-intro`,
-                          "Introduction / Do Now",
-                          t(w.introduction),
-                        )}
-                        {renderSug(`w${i}-act`, "Activities", t(w.activities))}
-                        {renderSug(
-                          `w${i}-assess`,
-                          "Assessment",
-                          t(w.assessment),
-                        )}
+                        {/* Where days were chosen the suggestion is split by
+                            day, because that is how the teacher will write it:
+                            Monday's activities copied into Monday, not one
+                            numbered list to be pulled apart by hand. */}
+                        {((w as any).lessons || []).length
+                          ? ((w as any).lessons || []).map(
+                              (l: any, li: number) => (
+                                <div
+                                  key={li}
+                                  className="border border-[#D1FAE5] rounded-lg p-2 bg-[#F0FDF4]/50 space-y-2"
+                                >
+                                  <div className="text-[11px] font-black uppercase tracking-wider text-[#059669]">
+                                    {l?.day || `Lesson ${li + 1}`}
+                                    {l?.focus ? (
+                                      <span className="ml-1 font-bold normal-case tracking-normal text-[#064E3B]/70">
+                                        · {l.focus}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  {renderSug(
+                                    `w${i}-l${li}-intro`,
+                                    "Introduction / Do Now",
+                                    t(l?.introduction),
+                                  )}
+                                  {renderSug(
+                                    `w${i}-l${li}-act`,
+                                    "Activities",
+                                    t(l?.activities),
+                                  )}
+                                  {renderSug(
+                                    `w${i}-l${li}-assess`,
+                                    "Assessment",
+                                    t(l?.assessment),
+                                  )}
+                                </div>
+                              ),
+                            )
+                          : (
+                            <>
+                              {renderSug(
+                                `w${i}-intro`,
+                                "Introduction / Do Now",
+                                t(w.introduction),
+                              )}
+                              {renderSug(
+                                `w${i}-act`,
+                                "Activities",
+                                t(w.activities),
+                              )}
+                              {renderSug(
+                                `w${i}-assess`,
+                                "Assessment",
+                                t(w.assessment),
+                              )}
+                            </>
+                          )}
                         {renderSug(`w${i}-res`, "Resources", t(w.resources))}
                       </div>
                     ))}
