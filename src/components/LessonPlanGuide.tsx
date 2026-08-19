@@ -19,6 +19,7 @@ import {
   Mail,
   Plus,
   CalendarDays,
+  MonitorPlay,
   Presentation,
   Save,
   Sparkles,
@@ -36,6 +37,11 @@ type Step = {
   /** The one thing that most often trips people up on this step. */
   tip?: string;
 };
+
+/** The same guide as a slide deck, published on the school's share host: no
+ *  login, so it can be sent to staff or put on the staffroom screen. Press P
+ *  on that page to print the whole manual. */
+const SLIDES_URL = "https://zera-4ag.pages.dev/lessonplan";
 
 const STEPS: Step[] = [
   {
@@ -272,6 +278,18 @@ export default function LessonPlanGuide({ onClose }: { onClose: () => void }) {
               Eight steps, in the order you'll work through them. Keep this open
               beside the page — every step names the button it means.
             </p>
+            {/* The same eight steps as slides, for briefing a room rather than
+                reading alone. Opens in its own tab so the guide stays put, and
+                needs no login, so it can be sent to staff as it is. */}
+            <a
+              href={SLIDES_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-3 inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white text-[11px] font-black uppercase tracking-wider transition-colors focus:outline-none focus:ring-2 focus:ring-[#FACC15]"
+            >
+              <MonitorPlay size={14} />
+              Open as slides
+            </a>
           </div>
           <button
             onClick={onClose}
