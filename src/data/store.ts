@@ -32,7 +32,7 @@ import { createSupabaseStore, type TokenGetter } from "./supabase-store";
 /** Which backend is serving the app. Flipped in one place when Supabase is
  *  ready; until then this is the only supported value. */
 export type Backend = "firestore" | "supabase";
-export const ACTIVE_BACKEND: Backend = "firestore";
+export const ACTIVE_BACKEND: Backend = "supabase";
 
 export type WhereClause = [field: string, op: "==", value: unknown];
 export type OrderClause = [field: string, dir: "asc" | "desc"];
