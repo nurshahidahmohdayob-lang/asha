@@ -45,6 +45,29 @@ export interface DbDriver {
   remove(table: string, idCol: string, id: string, owner?: Filter): Promise<void>;
   /** Throws if the database cannot be queried; that is what health reports. */
   ping(): Promise<void>;
+  /** Whether this table has the updated_at change marker.
+   *
+   *  It is optional on purpose. Adding it needs a migration run by hand, and
+   *  until that happens writes must still work — stamping a column that is not
+   *  there fails the whole write, which would mean no teacher could save. So
+   *  the marker is used when present and skipped when not; watchers fall back
+   *  to reading full rows, which costs bandwidth but is correct.
+   *
+   *  Answered once per table and remembered: it cannot change while running. */
+  supportsStamps(table: string): Promise<boolean>;
+}
+
+/** Shared by both drivers — the question is asked once per table. */
+function rememberPerTable(probe: (table: string) => Promise<boolean>) {
+  const known = new Map<string, Promise<boolean>>();
+  return (table: string): Promise<boolean> => {
+    let answer = known.get(table);
+    if (!answer) {
+      answer = probe(table).catch(() => false);
+      known.set(table, answer);
+    }
+    return answer;
+  };
 }
 
 /** MySQL wants JSON columns written as strings and returns them parsed.
@@ -152,6 +175,15 @@ class MysqlDriver implements DbDriver {
   async ping(): Promise<void> {
     await this.pool.query("select 1 from `users` limit 1");
   }
+
+  supportsStamps = rememberPerTable(async (table: string) => {
+    const [rows] = await this.pool.query(
+      `select count(*) as n from information_schema.columns
+       where table_schema = database() and table_name = ? and column_name = 'updated_at'`,
+      [table],
+    );
+    return Number((rows as any[])[0]?.n) > 0;
+  });
 }
 
 /* ── Supabase ─────────────────────────────────────────────────────────── */
@@ -211,6 +243,13 @@ class SupabaseDriver implements DbDriver {
     const { error } = await this.sb.from("users").select("uid").limit(1);
     if (error) throw error;
   }
+
+  supportsStamps = rememberPerTable(async (table: string) => {
+    // Asking for the column is the cheapest reliable probe; PostgREST answers
+    // 42703 / PGRST204 when it does not exist.
+    const { error } = await this.sb.from(table).select("updated_at").limit(1);
+    return !error;
+  });
 }
 
 /* ── Choosing one ─────────────────────────────────────────────────────── */

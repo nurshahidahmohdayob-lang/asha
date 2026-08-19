@@ -358,7 +358,7 @@ export function createSupabaseStore(getToken: TokenGetter) {
       let inFlight = false;
       /** Everything currently known, by id, so a poll need only mend it. */
       let cache = new Map<string, Row>();
-      let stamps = new Map<string, number>();
+      let stamps_ = new Map<string, number>();
       let primed = false;
 
       const { server, local } = splitWhere(table, opts?.where);
@@ -381,14 +381,14 @@ export function createSupabaseStore(getToken: TokenGetter) {
             const rows = await readRows(table, server);
             if (stopped) return;
             cache = new Map(rows.map((r) => [r.id, r]));
-            stamps = new Map(rows.map((r) => [r.id, Number(r.updatedAt) || 0]));
+            stamps_ = new Map(rows.map((r) => [r.id, Number(r.updatedAt) || 0]));
             primed = true;
             emit();
             return;
           }
 
           const map = COLUMNS[table] || {};
-          const { rows: marks } = await call(
+          const { rows: marks, stamps } = await call(
             "list",
             {
               table,
@@ -398,13 +398,27 @@ export function createSupabaseStore(getToken: TokenGetter) {
             getToken,
           );
 
+          // The marker column is optional. Where it is absent the server sends
+          // full rows and says so, and the honest response is to use them as
+          // the whole picture rather than diff against stamps that do not
+          // exist. Costs bandwidth; keeps working.
+          if (stamps === false) {
+            const rows = (marks || [])
+              .map((r: any) => decodeRow(table, r))
+              .filter(Boolean) as Row[];
+            cache = new Map(rows.map((r) => [r.id, r]));
+            stamps_.clear();
+            emit();
+            return;
+          }
+
           const seen = new Map<string, number>();
           const stale: string[] = [];
           for (const m of marks || []) {
             const id = String(m.id ?? m.uid ?? m.user_id);
             const at = Number(m.updated_at) || 0;
             seen.set(id, at);
-            if (stamps.get(id) !== at) stale.push(id);
+            if (stamps_.get(id) !== at) stale.push(id);
           }
 
           // Rows that vanished are dropped; nothing else has to be fetched to
@@ -413,7 +427,7 @@ export function createSupabaseStore(getToken: TokenGetter) {
           for (const id of [...cache.keys()]) {
             if (!seen.has(id)) {
               cache.delete(id);
-              stamps.delete(id);
+              stamps_.delete(id);
               changed = true;
             }
           }
@@ -423,7 +437,7 @@ export function createSupabaseStore(getToken: TokenGetter) {
             if (stopped) return;
             for (const row of fresh) {
               cache.set(row.id, row);
-              stamps.set(row.id, seen.get(row.id) ?? 0);
+              stamps_.set(row.id, seen.get(row.id) ?? 0);
             }
             // An id that was stale but came back missing was deleted between
             // the two calls; forget it rather than leave it showing.
@@ -431,7 +445,7 @@ export function createSupabaseStore(getToken: TokenGetter) {
             for (const id of stale) {
               if (!returned.has(id)) {
                 cache.delete(id);
-                stamps.delete(id);
+                stamps_.delete(id);
               }
             }
             changed = true;

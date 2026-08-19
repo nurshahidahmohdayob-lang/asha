@@ -188,14 +188,20 @@ export function mountDataApi(app: Express, projectId: string) {
 
       // Nothing to fetch is a valid answer, and must not be read as "no
       // filter" — that would return the whole table.
-      if (Array.isArray(ids) && !ids.length) return res.json({ rows: [] });
+      if (Array.isArray(ids) && !ids.length) return res.json({ rows: [], stamps: true });
+
+      // Stamps need the marker column. Without it the honest answer is full
+      // rows plus a flag, so the watcher stops trying to diff and reads
+      // everything — slower, but it works rather than failing.
+      const wantsStamps = select === "stamps";
+      const canStamp = wantsStamps ? await driver!.supportsStamps(table) : false;
 
       let rows = await driver!.list({
         table,
         idCol,
         filters,
         ids: Array.isArray(ids) ? ids.slice(0, 500).map(String) : undefined,
-        stampsOnly: select === "stamps",
+        stampsOnly: canStamp,
       });
       if (orderBy) {
         const [field, dir] = orderBy as [string, "asc" | "desc"];
@@ -208,7 +214,7 @@ export function mountDataApi(app: Express, projectId: string) {
           return (av > bv ? 1 : -1) * (dir === "desc" ? -1 : 1);
         });
       }
-      res.json({ rows });
+      res.json({ rows, stamps: wantsStamps ? canStamp : true });
     } catch (err: any) {
       send(res, err);
     }
@@ -251,13 +257,12 @@ export function mountDataApi(app: Express, projectId: string) {
         throw Object.assign(new Error("Not allowed"), { status: 403 });
 
       const idCol = table === "users" ? "uid" : table === "professional_development" ? "user_id" : "id";
-      const record: Record<string, any> = {
-        ...row,
-        [idCol]: id,
-        // Stamped by the SERVER so a watcher cannot be fooled into skipping a
-        // change by a client that forgot, or declined, to move it forward.
-        updated_at: Date.now(),
-      };
+      const record: Record<string, any> = { ...row, [idCol]: id };
+      // Stamped by the SERVER so a watcher cannot be fooled into skipping a
+      // change by a client that forgot, or declined, to move it forward — and
+      // only where the column exists, because stamping one that does not fails
+      // the entire write and no teacher could save.
+      if (await driver!.supportsStamps(table)) record.updated_at = Date.now();
       // The owner is stamped from the verified token, never from the body.
       if (rule.owner) record[rule.owner] = caller.uid;
 
@@ -283,13 +288,9 @@ export function mountDataApi(app: Express, projectId: string) {
         rule.owner && !(rule.reviewersReadAll && isReviewer(caller.roles))
           ? ([rule.owner, caller.uid] as [string, unknown])
           : undefined;
-      await driver!.update(
-        table,
-        idCol,
-        id,
-        { ...changes, updated_at: Date.now() },
-        pinOwner,
-      );
+      const patched = { ...changes };
+      if (await driver!.supportsStamps(table)) patched.updated_at = Date.now();
+      await driver!.update(table, idCol, id, patched, pinOwner);
       res.json({ ok: true });
     } catch (err: any) {
       send(res, err);
@@ -321,7 +322,10 @@ export function mountDataApi(app: Express, projectId: string) {
     if (!driver) return res.json({ ready: false, reason: "not configured" });
     try {
       await driver.ping();
-      res.json({ ready: true, reason: null, backend: driver.kind });
+      // Surfaced because it is invisible otherwise: reads and writes work
+      // without the marker, and only the bandwidth cost of watching changes.
+      const stamps = await driver.supportsStamps("submitted_plans");
+      res.json({ ready: true, reason: null, backend: driver.kind, stamps });
     } catch (err: any) {
       res.json({ ready: false, reason: err?.message || String(err), backend: driver.kind });
     }

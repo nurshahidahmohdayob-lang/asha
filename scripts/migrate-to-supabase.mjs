@@ -129,6 +129,12 @@ for (const table of TABLES) {
   totalRead += docs.length;
   totalSkipped += skipped;
 
+  // The change marker is optional — supabase/updated-at.sql may not have been
+  // run. Stripping it where the column is absent keeps the migration working
+  // either way, rather than failing every table on a column nobody needs yet.
+  const { error: probe } = await supabase.from(table).select("updated_at").limit(1);
+  if (probe) for (const row of rows) delete row.updated_at;
+
   if (!DRY && rows.length) {
     // In batches, so one oversized request cannot fail the whole table.
     const SIZE = 200;
