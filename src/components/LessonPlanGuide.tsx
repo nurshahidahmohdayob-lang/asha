@@ -1,9 +1,9 @@
 /* ═══════════ Teacher's guide to building a lesson plan ═══════════════════
    A walkthrough of the Lesson Design page in the order a teacher actually
    works: set up the plan, choose how to build it, generate, edit what came
-   back, then turn it into the week's teaching. Every step names the button
-   it is talking about, so the guide can be followed with the page open
-   beside it. */
+   back, plan each day it is taught, then turn it into the week's teaching.
+   Every step names the button it is talking about, so the guide can be
+   followed with the page open beside it. */
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
@@ -18,6 +18,7 @@ import {
   Lightbulb,
   Mail,
   Plus,
+  CalendarDays,
   Presentation,
   Save,
   Sparkles,
@@ -97,6 +98,10 @@ const STEPS: Step[] = [
         text: "In Whole Term, this is where you say what matters to you — more hands-on work, a weekly assessment, a textbook to follow, pacing notes.",
       },
       {
+        label: "Days taught each week",
+        text: "The five day buttons just above Generate. Tick the days this subject is on your timetable — English on Monday, Tuesday and Thursday, tick those three. Every week of the plan then gets three lessons, one per day. Leave them all off for one lesson a week.",
+      },
+      {
         label: "Lesson Focus / Methodology",
         text: "In Whole Term, under Instructions. One line about how you teach — active learning, inquiry, textbook-led. In Week By Week each week card has its own Activities & Lesson Focus box instead.",
       },
@@ -126,6 +131,35 @@ const STEPS: Step[] = [
   },
   {
     n: 5,
+    title: "Plan each day you teach",
+    lead: "A subject taught three times a week is three lessons, not one. Each week in the plan holds one lesson per day, and the days you ticked are already there waiting.",
+    icon: CalendarDays,
+    points: [
+      {
+        label: "Mon Tue Wed Thu Fri",
+        text: "The day buttons on each lesson. The chosen day is filled in green. Click it again to clear it, or click another day to move that lesson.",
+      },
+      {
+        label: "Period / time and Focus",
+        text: "Optional. Period or time is for your timetable slot; Focus is the one line saying what that particular lesson covers, so Monday and Thursday don't read the same.",
+      },
+      {
+        label: "Introduction, Activities, Assessment",
+        text: "These belong to the single lesson, so each day gets its own. Unit, Topic, Learning Objective, Curriculum Link and Resources stay on the week — write them once and all the day's lessons share them.",
+      },
+      {
+        label: "+ Add a lesson this week",
+        text: "Adds another day to that week only. Use it for a week that differs from your usual timetable — an extra period before an assessment, say. Remove takes one away.",
+      },
+      {
+        label: "AI Suggestions, by day",
+        text: "Generate with days ticked and the suggestions come back split by day, each with its own Copy button — Monday's activities copy into Monday.",
+      },
+    ],
+    tip: "Changing the days at the top re-applies that pattern to EVERY week, so set your usual days first and adjust individual weeks afterwards. Anything you have already written is kept.",
+  },
+  {
+    n: 6,
     title: "Turn a week into teaching",
     lead: "Each week in the plan has its own buttons. This is where a plan becomes something you can stand in front of a class with.",
     icon: Presentation,
@@ -146,7 +180,7 @@ const STEPS: Step[] = [
     tip: "Slide Studio builds from the plan you have open. Generate the plan first and the slides follow it; open Slide Studio with nothing planned and it has only the topic to work from.",
   },
   {
-    n: 6,
+    n: 7,
     title: "Save, share and download",
     lead: "In the Lesson Workspace under Share & Save.",
     icon: Save,
@@ -170,7 +204,7 @@ const STEPS: Step[] = [
     ],
   },
   {
-    n: 7,
+    n: 8,
     title: "Submit to your Head of Department",
     lead: "Under Submit to Admin. Choose the week the plan is for first — that's what your HOD sees it filed under.",
     icon: CheckCircle,
@@ -235,7 +269,7 @@ export default function LessonPlanGuide({ onClose }: { onClose: () => void }) {
               Building a lesson plan
             </h2>
             <p className="mt-2 text-sm font-medium text-white/70 leading-snug">
-              Seven steps, in the order you'll work through them. Keep this open
+              Eight steps, in the order you'll work through them. Keep this open
               beside the page — every step names the button it means.
             </p>
           </div>
