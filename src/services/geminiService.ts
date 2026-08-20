@@ -165,6 +165,10 @@ function bahasaMelayuFormatGuide(subject?: string): string {
 }
 
 export interface EduOptions {
+  /** The language the work is written in, e.g. "Mandarin Chinese (Simplified)".
+   *  Empty or English keeps the British-English house style. Anything else
+   *  replaces it — a Mandarin paper insisting on -ise endings is nonsense. */
+  language?: string;
   /** Days the subject is taught each week, e.g. ["Monday","Wednesday"].
    *  When given, each week comes back with one lesson per day instead of a
    *  single lesson for the whole week. */
@@ -643,6 +647,122 @@ const QTYPE_INSTRUCTION: Record<string, string> = {
   "short-answer": "Answer each question in the space provided.",
   drawing: "Draw your answer in the box.",
 };
+/* The section scaffolding — "Section A", "(3 Marks)", the type names and their
+   instructions — is assembled HERE, in code, not by the model. So a Mandarin
+   paper came back with Chinese questions under English headings. These are the
+   same labels in each language the picker offers.
+
+   Adding a language is this table plus one line in the Assessment Hub's list;
+   anything not listed falls back to English scaffolding, which is wrong-looking
+   but never breaks a paper. */
+type SectionLabels = {
+  section: string;
+  mark: string;
+  marks: string;
+  titles: Record<string, string>;
+  instructions: Record<string, string>;
+  trueFalse: [string, string];
+};
+
+const LOCALISED: Record<string, SectionLabels> = {
+  zh: {
+    section: "第",
+    mark: "分",
+    marks: "分",
+    titles: {
+      "multiple-choice": "选择题",
+      "true-false": "判断题",
+      "fill-in-the-blanks": "填空题",
+      matching: "配对题",
+      sorting: "分类题",
+      "cut-and-paste": "剪贴题",
+      scenario: "情境题",
+      "short-answer": "简答题",
+      drawing: "绘图题",
+    },
+    instructions: {
+      "multiple-choice": "选出最合适的答案。",
+      "true-false": "正确写「对」，错误写「错」。",
+      "fill-in-the-blanks": "用上面词库中的词语填空。",
+      matching: "把每一项与正确的答案配对。",
+      sorting: "把每一项归入正确的类别。",
+      "cut-and-paste": "剪下每一项并贴到正确的位置。",
+      scenario: "阅读每个情境并回答问题。",
+      "short-answer": "在横线上回答每个问题。",
+      drawing: "在方框中画出你的答案。",
+    },
+    trueFalse: ["对", "错"],
+  },
+  zhTW: {
+    section: "第",
+    mark: "分",
+    marks: "分",
+    titles: {
+      "multiple-choice": "選擇題",
+      "true-false": "判斷題",
+      "fill-in-the-blanks": "填空題",
+      matching: "配對題",
+      sorting: "分類題",
+      "cut-and-paste": "剪貼題",
+      scenario: "情境題",
+      "short-answer": "簡答題",
+      drawing: "繪圖題",
+    },
+    instructions: {
+      "multiple-choice": "選出最合適的答案。",
+      "true-false": "正確寫「對」，錯誤寫「錯」。",
+      "fill-in-the-blanks": "用上面詞庫中的詞語填空。",
+      matching: "把每一項與正確的答案配對。",
+      sorting: "把每一項歸入正確的類別。",
+      "cut-and-paste": "剪下每一項並貼到正確的位置。",
+      scenario: "閱讀每個情境並回答問題。",
+      "short-answer": "在橫線上回答每個問題。",
+      drawing: "在方框中畫出你的答案。",
+    },
+    trueFalse: ["對", "錯"],
+  },
+  ms: {
+    section: "Bahagian",
+    mark: "Markah",
+    marks: "Markah",
+    titles: {
+      "multiple-choice": "Soalan Aneka Pilihan",
+      "true-false": "Betul atau Salah",
+      "fill-in-the-blanks": "Isi Tempat Kosong",
+      matching: "Soalan Padanan",
+      sorting: "Pengelasan",
+      "cut-and-paste": "Gunting dan Tampal",
+      scenario: "Soalan Situasi",
+      "short-answer": "Soalan Jawapan Pendek",
+      drawing: "Lukisan",
+    },
+    instructions: {
+      "multiple-choice": "Pilih jawapan yang paling tepat.",
+      "true-false": "Tulis B untuk Betul atau S untuk Salah.",
+      "fill-in-the-blanks": "Isi tempat kosong menggunakan perkataan di dalam Bank Perkataan di atas.",
+      matching: "Padankan setiap item dengan jawapan yang betul.",
+      sorting: "Kelaskan setiap item ke dalam kumpulan yang betul.",
+      "cut-and-paste": "Gunting setiap item dan tampalkan di tempat yang betul.",
+      scenario: "Baca setiap situasi dan jawab soalan.",
+      "short-answer": "Jawab setiap soalan di ruang yang disediakan.",
+      drawing: "Lukis jawapan anda di dalam kotak.",
+    },
+    trueFalse: ["Betul", "Salah"],
+  },
+};
+
+/** Which label set a chosen language uses, or null for English. */
+function labelsFor(language?: string): SectionLabels | null {
+  const l = (language || "").toLowerCase();
+  if (!l || l.startsWith("english")) return null;
+  // Traditional gets its own labels; serving simplified forms to a
+  // traditional paper is the same kind of wrong as serving English.
+  if (/traditional|繁體/.test(l)) return LOCALISED.zhTW;
+  if (/mandarin|chinese|中文/.test(l)) return LOCALISED.zh;
+  if (/melayu|malay|bahasa/.test(l)) return LOCALISED.ms;
+  return null;
+}
+
 function normQType(t: any): string {
   const s = String(t || "short-answer").toLowerCase();
   if (s.includes("multiple") || s.includes("mcq") || s.includes("choice")) return "multiple-choice";
@@ -834,7 +954,7 @@ function normalizeFillBlanks<T extends { sections?: any[] }>(ws: T): T {
   }
   return ws;
 }
-function organizeByType<T extends { sections?: any[] }>(ws: T): T {
+function organizeByType<T extends { sections?: any[] }>(ws: T, language?: string): T {
   if (!ws || !Array.isArray(ws.sections)) return ws;
   const all = ws.sections.flatMap((s: any) => s?.questions || []);
   if (!all.length) return ws;
@@ -849,12 +969,47 @@ function organizeByType<T extends { sections?: any[] }>(ws: T): T {
   const ordered: string[] = [];
   for (const k of QTYPE_ORDER) if (groups[k]?.length) ordered.push(k);
   for (const k of Object.keys(groups)) if (!QTYPE_ORDER.includes(k)) ordered.push(k);
+  const L = labelsFor(language);
   const sections = ordered.map((k, i) => {
     const qs = groups[k];
-    const name = QTYPE_TITLE[k] || "Questions";
     const marks = qs.length;
+    const letter = LETTERS[i] || String(i + 1);
+    if (L) {
+      const name = L.titles[k] || L.titles["short-answer"];
+      // Chinese numbers its sections 第一部分 rather than "Section A".
+      const head =
+        L.section === "第"
+          ? `第${"一二三四五六七八九十"[i] || i + 1}部分：${name}（${marks}${L.marks}）`
+          : `${L.section} ${letter}: ${name} (${marks} ${marks === 1 ? L.mark : L.marks})`;
+      return {
+        title: head,
+        instructions: L.instructions[k] || "",
+        // The model was told to answer in the target language but writes the
+        // fixed True/False pair in English often enough to be worth mapping.
+        questions: qs.map((q: any) =>
+          k === "true-false" && Array.isArray(q?.options)
+            ? {
+                ...q,
+                options: q.options.map((o: any) =>
+                  /^true$/i.test(String(o).trim())
+                    ? L.trueFalse[0]
+                    : /^false$/i.test(String(o).trim())
+                      ? L.trueFalse[1]
+                      : o,
+                ),
+                answer: /^true$/i.test(String(q.answer).trim())
+                  ? L.trueFalse[0]
+                  : /^false$/i.test(String(q.answer).trim())
+                    ? L.trueFalse[1]
+                    : q.answer,
+              }
+            : q,
+        ),
+      };
+    }
+    const name = QTYPE_TITLE[k] || "Questions";
     return {
-      title: `Section ${LETTERS[i] || i + 1}: ${name} (${marks} ${marks === 1 ? "Mark" : "Marks"})`,
+      title: `Section ${letter}: ${name} (${marks} ${marks === 1 ? "Mark" : "Marks"})`,
       instructions: QTYPE_INSTRUCTION[k] || "",
       questions: qs,
     };
@@ -898,6 +1053,14 @@ function filterWorksheetTypes<T extends { sections?: any[] }>(ws: T, allowed: Se
     questions: (s?.questions || []).filter((q: any) => allowed.has(normQType(q?.type))),
   }));
   return { ...ws, sections };
+}
+
+/** Restates the chosen language next to the task. Returns "" for English or
+ *  when nothing was chosen, which leaves every existing prompt untouched. */
+function languageDirective(language?: string): string {
+  const l = (language || "").trim();
+  if (!l || /^english/i.test(l)) return "";
+  return `\n\nLANGUAGE (MANDATORY): Write EVERY part of this worksheet in ${l} — the title, the section headings, the instructions, the questions, all answer options and any reading passage. Do not produce English text anywhere except proper nouns with no accepted translation.`;
 }
 
 function isBahasaMelayu(subject?: string): boolean {
@@ -1022,6 +1185,7 @@ Return ONLY a JSON object in exactly this shape: {"title": "<a short, fitting pa
         config: {
           thinkingConfig: { thinkingBudget: 0 },
           responseMimeType: "application/json",
+          language: options.language,
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -1109,6 +1273,9 @@ Return ONLY a JSON object in exactly this shape: {"title": "<a short, fitting pa
     }
     mainPrompt += bahasaMelayuDirective(options.subject);
     mainPrompt += bahasaMelayuFormatGuide(options.subject);
+    // Said in the prompt as well as the system rule: the model follows a
+    // language instruction far more reliably when it appears beside the task.
+    mainPrompt += languageDirective(options.language);
 
     // When a file was uploaded, its text is included below as "UPLOADED DOCUMENT
     // CONTENT". Override the generic "about the topic <filename>" instructions
@@ -1198,6 +1365,7 @@ Only use the types that appear in the "Allowed Types" list above.`;
           // entirely to minimise latency.
           thinkingConfig: { thinkingBudget: 0 },
           responseMimeType: "application/json",
+          language: options.language,
           responseSchema: fullWsSchema,
         },
       });
@@ -1321,6 +1489,7 @@ Only use the types that appear in the "Allowed Types" list above.`;
             config: {
               thinkingConfig: { thinkingBudget: 0 },
               responseMimeType: "application/json",
+          language: options.language,
               // A 12-question batch fits comfortably; a tight cap keeps these
               // snappy so parallel batches don't trip rate limits.
               maxOutputTokens: 2400,
@@ -1403,7 +1572,7 @@ Only use the types that appear in the "Allowed Types" list above.`;
       // standard exam-style "Section A: Multiple Choice…" grouping.
       const capped = isBahasaMelayu(options.subject)
         ? capWorksheetQuestions(ws, want)
-        : organizeByType(capByTypeCounts(ws, options.typeCounts, want));
+        : organizeByType(capByTypeCounts(ws, options.typeCounts, want), options.language);
       return normalizeSorting(cleanMultipleChoice(normalizeFillBlanks(capped)));
     }
 
@@ -1444,6 +1613,7 @@ Return ONLY: "title" (a concise worksheet title), "readingPassage" (as above), "
       config: {
         thinkingConfig: { thinkingBudget: 0 },
         responseMimeType: "application/json",
+          language: options.language,
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -1480,6 +1650,7 @@ Return ONLY a "sections" array containing exactly ONE section with exactly ${rg.
           // disable thinking to minimise latency per batch.
           thinkingConfig: { thinkingBudget: 0 },
           responseMimeType: "application/json",
+          language: options.language,
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -2864,6 +3035,23 @@ const UK_ENGLISH = `WRITE IN BRITISH ENGLISH (UK). This is not optional — the 
 // this is a stalled connection, so abort and let the retry logic take over.
 const GROQ_CALL_TIMEOUT_MS = 60000;
 
+/** Which language rule goes in the system prompt.
+ *
+ *  British English is the house style for a Cambridge school, but it is the
+ *  wrong instruction for a Mandarin or Malay paper — telling the model to write
+ *  "colour, not color" while it writes Chinese is at best noise and at worst
+ *  pulls the output back towards English. So a chosen language replaces the
+ *  English rule rather than sitting beside it. */
+function languageRule(language?: string): string {
+  const l = (language || "").trim();
+  if (!l || /^english/i.test(l)) return UK_ENGLISH;
+  return `WRITE ENTIRELY IN ${l.toUpperCase()}. This is not optional — the work is for a class taught in ${l}, and every word a pupil reads must be in that language.
+- EVERY part of the output: titles, headings, section names, instructions, questions, answer options, reading passages, explanations and any worked examples.
+- Do NOT mix in English. The only exceptions are proper nouns with no accepted translation, and technical notation such as numerals or formulae.
+- Use the natural register a teacher of ${l} would use for this year group — not translated-sounding English.
+- If the topic was given to you in English, translate it and answer in ${l} regardless.`;
+}
+
 // Groq ignores Gemini's responseSchema, so we derive a compact JSON skeleton
 // from it and put that in the prompt — this keeps the output shape correct for
 // callers that were written against a Gemini responseSchema (reading programs,
@@ -2943,8 +3131,8 @@ async function groqGenerate(
   messages.push({
     role: "system",
     content: wantsJson
-      ? `You are an expert Cambridge educator. Respond with a SINGLE valid JSON object only — no markdown, no code fences, no commentary.\n\n${UK_ENGLISH}`
-      : `You are an expert Cambridge educator.\n\n${UK_ENGLISH}`,
+      ? `You are an expert Cambridge educator. Respond with a SINGLE valid JSON object only — no markdown, no code fences, no commentary.\n\n${languageRule(request?.config?.language)}`
+      : `You are an expert Cambridge educator.\n\n${languageRule(request?.config?.language)}`,
   });
   messages.push({ role: "user", content: promptText });
   // Give enough room for large worksheets (e.g. 50 questions). The 70B model

@@ -7363,6 +7363,17 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     useState<number>(-1);
   const [numSlides, setNumSlides] = useState(10);
   const [numQuestions, setNumQuestions] = useState(8);
+  /* The language the assessment is written in. Empty means British English,
+     which is the house style and what every existing worksheet used, so this
+     changes nothing until a teacher picks something. A Mandarin or Malay class
+     needs the whole paper in that language, not an English paper about it. */
+  const ASSESSMENT_LANGUAGES = [
+    { value: "", label: "English (UK) — default" },
+    { value: "Mandarin Chinese (Simplified)", label: "中文 · Mandarin (Simplified)" },
+    { value: "Mandarin Chinese (Traditional)", label: "中文 · Mandarin (Traditional)" },
+    { value: "Bahasa Melayu", label: "Bahasa Melayu" },
+  ];
+  const [assessmentLanguage, setAssessmentLanguage] = useState("");
   // Whether the generated document is framed as a "Worksheet" or "Assessment".
   const [docKind, setDocKind] = useState<"worksheet" | "assessment">(
     "worksheet",
@@ -11301,6 +11312,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         metadataHints: content?.worksheet,
         fileContext: fileData,
         targetWordCount,
+        language: assessmentLanguage,
       },
       basedOnSlides ? content?.slides : undefined,
       // PHASED RENDERING: paint the worksheet as each phase lands so it feels
@@ -30497,6 +30509,39 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         </option>
                       </select>
                     </div>
+                  )}
+                </div>
+
+                {/* Language sits with the other settings that shape the whole
+                    paper, above the question mix, because it changes every
+                    word of the output rather than one part of it. */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black uppercase text-[#064E3B] tracking-wide">
+                      Language
+                    </label>
+                    {assessmentLanguage && (
+                      <span className="text-[9px] font-bold text-[#059669] bg-[#D1FAE5] px-1.5 py-0.5 rounded-md">
+                        Whole paper
+                      </span>
+                    )}
+                  </div>
+                  <select
+                    value={assessmentLanguage}
+                    onChange={(e) => setAssessmentLanguage(e.target.value)}
+                    className="w-full p-2 text-xs font-bold bg-white rounded-xl border border-[#D1FAE5] outline-none focus:border-[#059669]"
+                  >
+                    {ASSESSMENT_LANGUAGES.map((l) => (
+                      <option key={l.value} value={l.value}>
+                        {l.label}
+                      </option>
+                    ))}
+                  </select>
+                  {assessmentLanguage && (
+                    <p className="text-[9px] text-[#064E3B]/40 leading-snug">
+                      Questions, options, instructions and any reading passage
+                      are all written in {assessmentLanguage.split(" (")[0]}.
+                    </p>
                   )}
                 </div>
 
