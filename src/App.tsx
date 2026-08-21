@@ -3385,6 +3385,7 @@ const ADMIN_EMAILS = [
   "roshini.m@zera.edu.my",
   "shiryn.g@zera.edu.my",
   "carol.p@zera.edu.my",
+  "yeenn.s@zera.edu.my",
 ];
 
 const isAdminEmail = (email?: string | null): boolean => {
