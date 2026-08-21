@@ -242,7 +242,7 @@ Cambridge Primary (Stages 1–6) & Lower Secondary (Stages 7–9) SUBJECT CODES:
 - Mathematics (0096/0862)
 - Science (0097/0893)
 - Digital Literacy (0072/0082)
-- Computing (0059/0860)
+- Information and Communication Technology (0059/0860)
 
 OFFICIAL LEARNING OBJECTIVE (LO) CODE FORMAT:
 Objectives MUST follow the [Stage][Strand].[Number] format. 
@@ -276,8 +276,8 @@ STRAND INITIALS BY SUBJECT:
    - Earth and Space (Es)
    *Correct Examples: 3TW.01, 3Bs.02*
 
-Cambridge Primary: Art & Design (0067), Computing (0059), Digital Literacy (0072), English (0058), English as a Second Language (0057), Global Perspectives (0838), Humanities (0065), Mathematics (0096), Modern Foreign Language (0064), Music (0068), Physical Education (0069), Science (0097), Wellbeing (0034).
-Cambridge Lower Secondary: Art & Design (0073), Computing (0860), Digital Literacy (0082), English (0861), English as a Second Language (0876), Global Perspectives (1129), Humanities (0896), Mathematics (0862), Modern Foreign Language (0897), Music (0078), Physical Education (0081), Science (0893), Wellbeing (0859).
+Cambridge Primary: Art & Design (0067), Information and Communication Technology (0059), Digital Literacy (0072), English (0058), English as a Second Language (0057), Global Perspectives (0838), Humanities (0065), Mathematics (0096), Modern Foreign Language (0064), Music (0068), Physical Education (0069), Science (0097), Wellbeing (0034).
+Cambridge Lower Secondary: Art & Design (0073), Information and Communication Technology (0860), Digital Literacy (0082), English (0861), English as a Second Language (0876), Global Perspectives (1129), Humanities (0896), Mathematics (0862), Modern Foreign Language (0897), Music (0078), Physical Education (0081), Science (0893), Wellbeing (0859).
 Cambridge IGCSE / Upper Secondary: Physics (0625), Biology (0610), Chemistry (0620), Mathematics (0580), Physical Education (0413), Music (0410), etc.
 
 CRITICAL — DO NOT INVENT LEARNING OBJECTIVE CODES:
