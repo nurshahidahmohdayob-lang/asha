@@ -4991,6 +4991,7 @@ const CAMBRIDGE_SUBJECTS = [
       "Computer Science (0478)",
       "ICT (0417)",
       "Art & Design (0400)",
+      "Music (0410)",
       "Geography (0460)",
       "History (0470)",
       "Physical Education (0413)",
