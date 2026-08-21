@@ -11898,21 +11898,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
     setGeneratingMessage("Generating Lesson Plan...");
     setIsGenerating(true);
-    // A school's own scheme of work beats anything the model can infer from a
-    // subject code. generateLessonPlan already accepts one and treats it as the
-    // highest-priority source; nothing was passing it in, so the option existed
-    // and never reached the model.
-    let planSource: any = undefined;
-    if (fileContext) {
-      try {
-        planSource = await prepareFileForGemini(fileContext.data);
-      } catch (err) {
-        console.error("Could not read the uploaded scheme of work:", err);
-      }
-    }
     try {
       const result = await generateLessonPlan(focus, {
-        fileContext: planSource,
         yearGroup,
         lexileLevel,
         subject: lpSubject,
@@ -35949,56 +35936,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
                 </div>
               </div>
-              </div>
-
-              {/* A school's own scheme of work, when it has one. The ICT
-                  curriculum is a good example: the Cambridge code alone tells
-                  the model very little, whereas the school's actual scheme
-                  gives it the units and the order they are taught in. */}
-              <div className="shrink-0 px-4 pt-3 bg-white">
-                <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
-                  Scheme of work{" "}
-                  <span className="normal-case font-bold text-[#7C7A65]/60">
-                    (optional)
-                  </span>
-                </label>
-                {!fileContext ? (
-                  <label className="mt-1.5 flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 border-dashed border-[#D1FAE5] hover:border-[#059669] cursor-pointer transition-colors">
-                    <Upload size={14} className="text-[#059669] shrink-0" />
-                    <span className="text-[10px] font-bold text-[#064E3B]/60 leading-snug">
-                      Upload a PDF or document — the plan follows it instead of
-                      guessing from the subject
-                    </span>
-                    <input
-                      type="file"
-                      accept=".pdf,.doc,.docx,.txt,.md,image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file)
-                          setFileContext({
-                            name: file.name,
-                            mimeType: file.type || "application/octet-stream",
-                            data: file,
-                          });
-                      }}
-                    />
-                  </label>
-                ) : (
-                  <div className="mt-1.5 flex items-center gap-2 px-3 py-2.5 rounded-xl bg-[#F0FDF4] border-2 border-[#D1FAE5]">
-                    <FileText size={14} className="text-[#059669] shrink-0" />
-                    <span className="flex-1 min-w-0 truncate text-[10px] font-bold text-[#064E3B]">
-                      {fileContext.name}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setFileContext(null)}
-                      className="text-[9px] font-black uppercase text-red-600 hover:underline shrink-0"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                )}
               </div>
 
               {/* Which days this subject is taught. Sits with the generate
