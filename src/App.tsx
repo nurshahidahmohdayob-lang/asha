@@ -7764,6 +7764,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     setUser(null);
     setTeacherName("Teacher");
     clearWorkspace();
+    // clearWorkspace seeds "Prepared by" from teacherName, and inside it that
+    // is still the CLOSURE's value — the teacher who is leaving. On a shared
+    // staffroom laptop that name then sat in the next teacher's plan, so their
+    // submission went to the HOD under someone else's name. Blank it here; the
+    // next sign-in fills it with whoever actually signed in.
+    setLpPreparedBy("");
     setCurrentView("home");
   };
 
@@ -7826,6 +7832,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             const data = userDoc;
             if (data.teacherName) {
               setTeacherName(data.teacherName);
+              // Only when blank, so a teacher who typed a different preparer
+              // keeps it. The functional form matters — a plain read here sees
+              // the previous render's value.
+              setLpPreparedBy((prev) => prev || data.teacherName);
             }
 
             let consolidatedRoles = data.roles ? [...data.roles] : ["educator"];
@@ -7886,6 +7896,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         }
       } else {
         setTeacherName("Guest");
+        setLpPreparedBy("");
       }
       setAuthLoading(false);
     });
@@ -9736,6 +9747,23 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
   // Identity stamped onto every submission, so the weekly tracker can tick the
   // right teacher / subject / year group row without guessing.
+  /** A plan about to be submitted, with "Prepared by" reading as the account
+   *  that is sending it.
+   *
+   *  Plans made before the sign-out leak was fixed still carry the previous
+   *  teacher's name, and that name is what a Head of Department sees on the
+   *  paper. The account is the only trustworthy answer to who submitted it. */
+  const signPlanForSubmission = (c: any) =>
+    c?.lessonPlan
+      ? {
+          ...c,
+          lessonPlan: {
+            ...c.lessonPlan,
+            preparedBy: teacherName || c.lessonPlan.preparedBy || "",
+          },
+        }
+      : c;
+
   const submissionIdentity = () => ({
     teacherId: findMyTeacherRecord()?.id || "",
     subject:
@@ -9923,7 +9951,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         const previous =
           submittedProjects.find((p: any) => p.id === revisionTargetId) || {};
         await store.patch("submitted_plans", revisionTargetId, {
-          content,
+          content: signPlanForSubmission(content),
           timestamp: Date.now(),
           weekId: selectedWeekForSubmission,
           title: buildSubmissionTitle(content, selectedWeekForSubmission),
@@ -9972,7 +10000,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           userId: user.uid,
           folderId,
           timestamp: Date.now(),
-          content,
+          content: signPlanForSubmission(content),
           weekId: selectedWeekForSubmission,
           // A plan is a lesson plan however the teacher arrived at it. Taking
           // this from workspaceMode filed submissions under whatever mode was
@@ -10044,7 +10072,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             folderId: teacherFolderId(p.teacherName || teacherName),
             sourceProjectId: p.id,
             timestamp: Date.now(),
-            content: p.content,
+            content: signPlanForSubmission(p.content),
             weekId: wk,
             category: p.category || "lesson-plan",
             title: buildSubmissionTitle(p.content, wk),
@@ -10055,7 +10083,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             yearGroup:
               p.content?.lessonPlan?.class || p.content?.gradeLevel || "",
             reviewStage: "pending_hod",
-            teacherName: p.teacherName || teacherName,
+            // The signed-in account decides this, not a name stored on the
+            // project when it was made — otherwise a plan started under one
+            // teacher reaches the HOD under theirs.
+            teacherName: teacherName || p.teacherName,
             settings: p.settings || {
               includeStory,
               isTemplateMode,
@@ -10256,7 +10287,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             folderId: teacherFolderId(p.teacherName || teacherName),
             sourceProjectId: p.id,
             timestamp: Date.now(),
-            content: p.content,
+            content: signPlanForSubmission(p.content),
             weekId: wk,
             category: p.category || "lesson-plan",
             title: buildSubmissionTitle(p.content, wk),
@@ -10267,7 +10298,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             yearGroup:
               p.content?.lessonPlan?.class || p.content?.gradeLevel || "",
             reviewStage: "pending_hod",
-            teacherName: p.teacherName || teacherName,
+            // The signed-in account decides this, not a name stored on the
+            // project when it was made — otherwise a plan started under one
+            // teacher reaches the HOD under theirs.
+            teacherName: teacherName || p.teacherName,
             settings: p.settings || {
               includeStory,
               isTemplateMode,
@@ -10297,7 +10331,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         folderId: teacherFolderId(project.teacherName || teacherName),
         sourceProjectId: project.id,
         timestamp: Date.now(),
-        content: project.content,
+        content: signPlanForSubmission(project.content),
         weekId: wk,
         category: project.category || "lesson-plan",
         title: buildSubmissionTitle(project.content, wk),
