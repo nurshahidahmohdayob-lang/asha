@@ -74,7 +74,7 @@ async function startServer() {
       const gsPath = "./src/services/geminiService.ts";
       const gsSpecifier =
         process.env.NODE_ENV === "production" ? gsPath : `${gsPath}?t=${Date.now()}`;
-      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateLessonActivities, generateEduContent, suggestWeeklyInput, generateEduNotes, relevelReadingPassage, generateInteractiveSortingGame, askAI, generatePosterImage, generateLeveledQuestions, relevelWorksheet } = await import(gsSpecifier);
+      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateLessonActivities, generateEduContent, suggestWeeklyInput, importLessonPlan, generateEduNotes, relevelReadingPassage, generateInteractiveSortingGame, askAI, generatePosterImage, generateLeveledQuestions, relevelWorksheet } = await import(gsSpecifier);
       
       let result;
       switch (type) {
@@ -88,6 +88,8 @@ async function startServer() {
         case 'lessonActivities': result = await generateLessonActivities(JSON.parse(lessonInput), options.plan, options, options.half || 'both'); break;
         case 'notes': result = await generateEduNotes(lessonInput, options); break;
         case 'suggest': result = await suggestWeeklyInput(lessonInput as any, options, options.weekNum); break;
+        // The teacher's own plan document, transcribed into the app's structure.
+        case 'importPlan': result = await importLessonPlan(lessonInput, options); break;
         case 'all': result = await generateEduContent(lessonInput, options); break;
         case 'relevelPassage': result = await relevelReadingPassage(lessonInput, options.targetLexile, options.subject, options.yearGroup); break;
         case 'leveledQuestions': result = await generateLeveledQuestions(lessonInput, options.levels, { yearGroup: options.yearGroup, subject: options.subject, numQuestions: options.numQuestions, sourceContent: options.sourceContent }); break;
@@ -153,6 +155,7 @@ async function startServer() {
           weeklyPlan: () => gs.generateWeeklyPlan(lessonInput, options.weekNum, options, options.unit, options.topic),
           notes: () => gs.generateEduNotes(lessonInput, options),
           suggest: () => gs.suggestWeeklyInput(lessonInput, options, options.weekNum),
+          importPlan: () => gs.importLessonPlan(lessonInput, options),
           all: () => gs.generateEduContent(lessonInput, options),
           relevelPassage: () => gs.relevelReadingPassage(lessonInput, options.targetLexile, options.subject, options.yearGroup),
           leveledQuestions: () => gs.generateLeveledQuestions(lessonInput, options.levels, { yearGroup: options.yearGroup, subject: options.subject, numQuestions: options.numQuestions, sourceContent: options.sourceContent }),

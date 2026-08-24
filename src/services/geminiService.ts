@@ -2335,6 +2335,22 @@ export async function importLessonPlan(
     activities: { type: Type.STRING },
     assessment: { type: Type.STRING },
     resources: { type: Type.STRING },
+    // A week timetabled more than once has a row per day, not one row per week.
+    lessons: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          day: { type: Type.STRING },
+          period: { type: Type.STRING },
+          focus: { type: Type.STRING },
+          introduction: { type: Type.STRING },
+          activities: { type: Type.STRING },
+          assessment: { type: Type.STRING },
+          resources: { type: Type.STRING },
+        },
+      },
+    },
   };
 
   const prompt = `You are transcribing a teacher's EXISTING lesson plan into a structured form. This is a transcription task, not a writing task.
@@ -2351,6 +2367,20 @@ RULES — these matter more than completeness:
   rows. Read them from there. "Year 3", "Grade 3", "Y3" and "Stage 3" all mean
   the class is "Year 3".
 - overallTopic is the unit or theme the whole plan covers, if it names one.
+- Most plans carry a SUMMARY BLOCK between the header and the weekly table —
+  rows labelled Strand, Topic, Subtopic, Learning Objective, Success criteria
+  ("I can…"), Essential Questions, Key Competencies, Portfolio Evidence. These
+  describe the WHOLE plan, so put them in strandSummary, overallTopic, subTopic,
+  learningObjectiveSummary, successCriteria, essentialQuestions, keyCompetencies
+  and portfolioEvidence — NOT in the weekly rows. Missing this block is the most
+  common way an imported plan comes back half empty, so look for it.
+- A Reflection or Evaluation section, usually at the very end, goes in reflection.
+- A weekly row labelled "Curriculum Link", "Framework", "LO code" or "Standard"
+  is that week's strand — put it in "strand", never in learningObjective.
+- Where a week names the days it is taught (a "Day" column, or Monday/Tuesday
+  rows inside one week), give that week a "lessons" entry per day, each with its
+  own introduction, activities, assessment and resources. A week taught once
+  needs no "lessons" — its own fields are enough.
 ${options.subject ? `- The teacher says this plan is for: ${options.subject}. Use it unless the document clearly names a different subject.` : ""}
 ${options.yearGroup ? `- The teacher says the class is: ${options.yearGroup}. Use it unless the document clearly names a different class.` : ""}
 
@@ -2376,6 +2406,14 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
           class: { type: Type.STRING },
           preparedBy: { type: Type.STRING },
           overallTopic: { type: Type.STRING },
+          subTopic: { type: Type.STRING },
+          strandSummary: { type: Type.STRING },
+          learningObjectiveSummary: { type: Type.STRING },
+          successCriteria: { type: Type.STRING },
+          essentialQuestions: { type: Type.STRING },
+          keyCompetencies: { type: Type.STRING },
+          portfolioEvidence: { type: Type.STRING },
+          reflection: { type: Type.STRING },
           weeklyBreakdown: {
             type: Type.ARRAY,
             items: { type: Type.OBJECT, properties: weekFields },
@@ -2407,6 +2445,65 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
     );
   }
 
+  const mapped = weeks.map((w: any, i: number) => {
+    const lessons = (Array.isArray(w?.lessons) ? w.lessons : [])
+      .map((l: any) => ({
+        day: str(l?.day),
+        period: str(l?.period),
+        focus: str(l?.focus),
+        introduction: str(l?.introduction),
+        activities: str(l?.activities),
+        assessment: str(l?.assessment),
+        resources: str(l?.resources),
+      }))
+      // A "lesson" with nothing in it prints as an empty day card, which is
+      // worse than no day at all.
+      .filter((l: any) => l.day || l.introduction || l.activities || l.assessment);
+    return {
+      week: Number(w?.week) > 0 ? Number(w.week) : i + 1,
+      unit: str(w?.unit),
+      topic: str(w?.topic),
+      subTopic: str(w?.subTopic),
+      learningObjective: str(w?.learningObjective),
+      strand: str(w?.strand),
+      introduction: str(w?.introduction),
+      activities: str(w?.activities),
+      assessment: str(w?.assessment),
+      resources: str(w?.resources),
+      ...(lessons.length ? { lessons } : {}),
+    };
+  });
+
+  /* The plan document shows the summary block (Strand / Topic / Subtopic /
+     Learning Objective) above the weeks, while the week cards show their own
+     copy of the same three fields. A teacher's document usually fills only ONE
+     of the two — the objective sits at the top OR in the week row — and
+     whichever it is, the other view came back blank.
+
+     So for a SINGLE-week plan the two are the same thing and are mirrored. This
+     copies the teacher's own words between two views of one field; it never
+     writes anything the document did not say. Multi-week plans are left alone:
+     each week there has its own objective, and pasting the summary into all of
+     them would put the wrong text under most weeks. */
+  const one = mapped.length === 1 ? mapped[0] : null;
+  const both = (summary: string, weekly: string) => summary || weekly;
+  const strandSummary = one
+    ? both(str(parsed.strandSummary), one.strand)
+    : str(parsed.strandSummary);
+  const learningObjectiveSummary = one
+    ? both(str(parsed.learningObjectiveSummary), one.learningObjective)
+    : str(parsed.learningObjectiveSummary);
+  const subTopic = one ? both(str(parsed.subTopic), one.subTopic) : str(parsed.subTopic);
+  const overallTopic = one
+    ? both(str(parsed.overallTopic), one.topic)
+    : str(parsed.overallTopic);
+  if (one) {
+    one.strand = one.strand || strandSummary;
+    one.learningObjective = one.learningObjective || learningObjectiveSummary;
+    one.subTopic = one.subTopic || subTopic;
+    one.topic = one.topic || overallTopic;
+  }
+
   return {
     term: str(parsed.term) || "1",
     subject: str(parsed.subject) || options.subject || "",
@@ -2418,19 +2515,16 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
     class: str(parsed.class) || options.yearGroup || "",
     preparedBy: options.teacherName || str(parsed.preparedBy),
     checkedBy: "",
-    overallTopic: str(parsed.overallTopic),
-    weeklyBreakdown: weeks.map((w: any, i: number) => ({
-      week: Number(w?.week) > 0 ? Number(w.week) : i + 1,
-      unit: str(w?.unit),
-      topic: str(w?.topic),
-      subTopic: str(w?.subTopic),
-      learningObjective: str(w?.learningObjective),
-      strand: str(w?.strand),
-      introduction: str(w?.introduction),
-      activities: str(w?.activities),
-      assessment: str(w?.assessment),
-      resources: str(w?.resources),
-    })),
+    overallTopic,
+    subTopic,
+    strandSummary,
+    learningObjectiveSummary,
+    successCriteria: str(parsed.successCriteria),
+    essentialQuestions: str(parsed.essentialQuestions),
+    keyCompetencies: str(parsed.keyCompetencies),
+    portfolioEvidence: str(parsed.portfolioEvidence),
+    reflection: str(parsed.reflection),
+    weeklyBreakdown: mapped,
   } as LessonPlan;
 }
 
