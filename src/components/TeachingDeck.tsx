@@ -29,7 +29,10 @@ import {
   slidesToPptx,
   waitForStage,
 } from "../utils/deckExport";
-import { translateContent } from "../services/geminiService";
+import {
+  translateContent,
+  translationLanguagesFor,
+} from "../services/geminiService";
 import type {
   LessonActivityPack,
   LessonPlan,
@@ -2260,35 +2263,64 @@ export default function TeachingDeck({
   onClose: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  /* ── The lesson in Mandarin ──────────────────────────────────────────
-     A Mandarin class plans in English and teaches in Chinese, so the board
-     needs the same lesson in the other language — not a different lesson.
-     The deck is rebuilt from a translated copy of what it was already built
-     from (the plan header, this week, the pack and any Studio slides), which
+  /* ── The lesson in another language ───────────────────────────────────
+     A Mandarin or Bahasa Melayu class plans in English and teaches in its own
+     language, so the board needs the same lesson in the other language — not a
+     different lesson. The deck is rebuilt from a translated copy of its own
+     sources (the plan header, this week, the pack and any Studio slides), which
      is why the slides, their order and their pictures come out identical.
 
-     The copy is kept, so flipping back and forth costs one translation. */
-  const [zh, setZh] = useState(false);
-  const [zhSource, setZhSource] = useState<{
+     Each language is kept once translated, so flipping between them is instant
+     after the first press. Every translation starts from the ORIGINAL, never
+     from another translation — Chinese via Malay is a game of telephone. */
+  type DeckSource = {
     plan: LessonPlan;
     week: WeeklyPlan;
     pack?: LessonActivityPack;
     studioSlides: SlideContent[];
-  } | null>(null);
-  const [translating, setTranslating] = useState(false);
+  };
+  const languages = translationLanguagesFor(plan?.subject || week?.strand);
+  const [lang, setLang] = useState<string | null>(null);
+  const copies = useRef<Record<string, DeckSource>>({});
+  const [translating, setTranslating] = useState<string | null>(null);
   const [translateError, setTranslateError] = useState<string | null>(null);
 
   // A newly generated pack or a different week is a different lesson, so the
-  // translation held for the last one no longer applies.
+  // translations held for the last one no longer apply.
   useEffect(() => {
-    setZhSource(null);
-    setZh(false);
+    copies.current = {};
+    setLang(null);
   }, [week?.week, pack]);
 
-  // Editing writes back to the lesson itself — the English copy — so it is
-  // offered in English only. Editing a translation would either be lost on
-  // the next translate or, worse, change the English behind the teacher's back.
-  const canEdit = Boolean(pack && onPackChange && !zh);
+  const showLesson = async (id: string | null) => {
+    if (translating) return;
+    setTranslateError(null);
+    setEditing(false);
+    if (id === null || copies.current[id]) {
+      setLang(id);
+      return;
+    }
+    const target = languages.find((l) => l.id === id);
+    if (!target) return;
+    setTranslating(id);
+    try {
+      copies.current[id] = (await translateContent(
+        { plan, week, pack, studioSlides },
+        target.full,
+      )) as DeckSource;
+      setLang(id);
+    } catch (e: any) {
+      setTranslateError(e?.message || `Could not translate into ${target.name}.`);
+    } finally {
+      setTranslating(null);
+    }
+  };
+
+  // Editing writes back to the lesson itself — the original the teacher wrote —
+  // so it is offered in that language only. Editing a translation would either
+  // be lost on the next translate or, worse, change the original behind the
+  // teacher's back.
+  const canEdit = Boolean(pack && onPackChange && !lang);
   const editor = useMemo<DeckEditor | null>(
     () =>
       canEdit
@@ -2306,31 +2338,9 @@ export default function TeachingDeck({
         : null,
     [canEdit, editing, pack, onPackChange, onUploadImage],
   );
-  const toggleMandarin = async () => {
-    if (translating) return;
-    setTranslateError(null);
-    if (zhSource) {
-      setEditing(false);
-      setZh((v) => !v);
-      return;
-    }
-    setEditing(false);
-    setTranslating(true);
-    try {
-      const translated = await translateContent(
-        { plan, week, pack, studioSlides },
-        "Simplified Chinese (Mandarin)",
-      );
-      setZhSource(translated as typeof zhSource);
-      setZh(true);
-    } catch (e: any) {
-      setTranslateError(e?.message || "Could not translate this lesson.");
-    } finally {
-      setTranslating(false);
-    }
-  };
 
-  const shown = zh && zhSource ? zhSource : { plan, week, pack, studioSlides };
+  const shown: DeckSource =
+    (lang && copies.current[lang]) || { plan, week, pack, studioSlides };
   const slides = buildWeekSlides(
     shown.plan,
     shown.week,
@@ -2536,28 +2546,38 @@ export default function TeachingDeck({
               </>
             )}
           </div>
-          <button
-            onClick={toggleMandarin}
-            disabled={translating}
-            className={`grid h-11 min-w-11 place-items-center rounded-2xl px-3 text-sm font-black backdrop-blur transition-all active:scale-90 disabled:opacity-60 ${
-              zh
-                ? "bg-brand-500 text-white hover:bg-brand-600"
-                : onLight
-                  ? "bg-black/10 hover:bg-black/20"
-                  : "bg-white/20 hover:bg-white/30"
-            }`}
-            aria-label={zh ? "Show this lesson in English" : "Show this lesson in Mandarin"}
-            title={
-              translateError ||
-              (translating
-                ? "Translating…"
-                : zh
-                  ? "Back to English"
-                  : "Teach this lesson in Mandarin")
-            }
-          >
-            {translating ? "…" : zh ? "EN" : "中"}
-          </button>
+          {languages.map((l) => {
+            const on = lang === l.id;
+            return (
+              <button
+                key={l.id}
+                onClick={() => showLesson(on ? null : l.id)}
+                disabled={Boolean(translating)}
+                className={`grid h-11 min-w-11 place-items-center rounded-2xl px-3 text-sm font-black backdrop-blur transition-all active:scale-90 disabled:opacity-60 ${
+                  on
+                    ? "bg-brand-500 text-white hover:bg-brand-600"
+                    : onLight
+                      ? "bg-black/10 hover:bg-black/20"
+                      : "bg-white/20 hover:bg-white/30"
+                }`}
+                aria-label={
+                  on
+                    ? "Show this lesson in the language it was written in"
+                    : `Show this lesson in ${l.name}`
+                }
+                title={
+                  translateError ||
+                  (translating === l.id
+                    ? "Translating…"
+                    : on
+                      ? "Back to the original"
+                      : `Teach this lesson in ${l.name}`)
+                }
+              >
+                {translating === l.id ? "…" : l.short}
+              </button>
+            );
+          })}
           <button
             onClick={toggleFs}
             className={`grid h-11 w-11 place-items-center rounded-2xl backdrop-blur transition-all active:scale-90 ${

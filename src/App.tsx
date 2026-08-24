@@ -3327,6 +3327,7 @@ import {
   suggestWeeklyInput,
   importLessonPlan,
   translateContent,
+  translationLanguagesFor,
   relevelReadingPassage,
   relevelWorksheet,
   generateInteractiveSortingGame,
@@ -11113,47 +11114,60 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     setCurrentView("slides");
   };
 
-  /* ── The assessment in Mandarin ─────────────────────────────────────────
-     A Mandarin class writes its papers in English and sits them in Chinese.
-     Rather than generating the worksheet twice, the finished one is translated
-     and BOTH copies are kept: the button swaps between them, and edits made to
-     either side survive the swap. Translation happens once, on first press. */
-  const [wsInMandarin, setWsInMandarin] = useState(false);
-  // The copy that is not on screen.
-  const [wsOtherLanguage, setWsOtherLanguage] = useState<any | null>(null);
-  const [translatingWorksheet, setTranslatingWorksheet] = useState(false);
+  /* ── The assessment in another language ─────────────────────────────────
+     A Mandarin or Bahasa Melayu class writes its papers in English and sits
+     them in its own language. Rather than generating the worksheet twice, the
+     finished one is translated and every copy is KEPT: the buttons swap between
+     them, and edits made to any copy survive the swap.
 
-  const toggleWorksheetMandarin = async () => {
+     Each translation is made from the ORIGINAL, never from another translation,
+     so Bahasa Melayu is never Chinese filtered through English filtered again. */
+  const worksheetLanguages = translationLanguagesFor(subject);
+  // null means the paper as it was written.
+  const [wsLang, setWsLang] = useState<string | null>(null);
+  const wsCopies = useRef<Record<string, any>>({});
+  const [translatingWorksheet, setTranslatingWorksheet] = useState<string | null>(
+    null,
+  );
+
+  const showWorksheetIn = async (id: string | null) => {
     const current = content?.worksheet;
     if (!current || translatingWorksheet) return;
-    if (wsOtherLanguage) {
-      setWsOtherLanguage(current);
-      setContent((prev) => (prev ? { ...prev, worksheet: wsOtherLanguage } : prev));
-      setWsInMandarin((v) => !v);
+    // Park the copy on screen under its own key first, so any edits made to it
+    // are still there when the teacher comes back.
+    wsCopies.current[wsLang ?? "original"] = current;
+
+    if (id === null || wsCopies.current[id]) {
+      const next = wsCopies.current[id ?? "original"];
+      if (next) {
+        setContent((prev) => (prev ? { ...prev, worksheet: next } : prev));
+        setWsLang(id);
+      }
       return;
     }
-    setTranslatingWorksheet(true);
+
+    const target = worksheetLanguages.find((l) => l.id === id);
+    if (!target) return;
+    setTranslatingWorksheet(id);
     try {
-      const translated = await translateContent(
-        current,
-        "Simplified Chinese (Mandarin)",
-      );
-      setWsOtherLanguage(current);
+      const source = wsCopies.current.original || current;
+      const translated = await translateContent(source, target.full);
+      wsCopies.current[id] = translated;
       setContent((prev) => (prev ? { ...prev, worksheet: translated as any } : prev));
-      setWsInMandarin(true);
+      setWsLang(id);
     } catch (e: any) {
       alert(
-        `Could not translate this assessment: ${e?.message || e}\n\nCheck you are online and try again.`,
+        `Could not translate this assessment into ${target.name}: ${e?.message || e}\n\nCheck you are online and try again.`,
       );
     } finally {
-      setTranslatingWorksheet(false);
+      setTranslatingWorksheet(null);
     }
   };
 
   // A different assessment has no business inheriting the last one's translation.
   const forgetWorksheetTranslation = () => {
-    setWsOtherLanguage(null);
-    setWsInMandarin(false);
+    wsCopies.current = {};
+    setWsLang(null);
   };
 
   const resetWorksheet = () => {
@@ -30389,32 +30403,37 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   <Edit2 size={14} /> Journal & Handouts
                 </button>
                 <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
-                {content?.worksheet && (
-                  <button
-                    onClick={toggleWorksheetMandarin}
-                    disabled={translatingWorksheet}
-                    title={
-                      translatingWorksheet
-                        ? "Translating…"
-                        : wsInMandarin
-                          ? "Back to the English paper"
-                          : "Translate this paper into Mandarin"
-                    }
-                    className={cn(
-                      "px-4 py-2 border-2 rounded-xl font-black text-xs uppercase tracking-widest transition-all shadow-sm flex items-center gap-2 disabled:opacity-60 disabled:cursor-wait",
-                      wsInMandarin
-                        ? "bg-[#059669] text-white border-[#059669] hover:bg-[#047857]"
-                        : "bg-white text-[#064E3B] border-[#D1FAE5] hover:bg-[#F0FDF4]",
-                    )}
-                  >
-                    {translatingWorksheet ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <Languages size={14} />
-                    )}
-                    {wsInMandarin ? "English" : "中文"}
-                  </button>
-                )}
+                {content?.worksheet &&
+                  worksheetLanguages.map((l) => {
+                    const on = wsLang === l.id;
+                    return (
+                      <button
+                        key={l.id}
+                        onClick={() => showWorksheetIn(on ? null : l.id)}
+                        disabled={Boolean(translatingWorksheet)}
+                        title={
+                          translatingWorksheet === l.id
+                            ? "Translating…"
+                            : on
+                              ? "Back to the paper as it was written"
+                              : `Translate this paper into ${l.name}`
+                        }
+                        className={cn(
+                          "px-4 py-2 border-2 rounded-xl font-black text-xs uppercase tracking-widest transition-all shadow-sm flex items-center gap-2 disabled:opacity-60 disabled:cursor-wait",
+                          on
+                            ? "bg-[#059669] text-white border-[#059669] hover:bg-[#047857]"
+                            : "bg-white text-[#064E3B] border-[#D1FAE5] hover:bg-[#F0FDF4]",
+                        )}
+                      >
+                        {translatingWorksheet === l.id ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <Languages size={14} />
+                        )}
+                        {on ? "English" : l.label}
+                      </button>
+                    );
+                  })}
                 <button
                   onClick={resetWorksheet}
                   className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-white/80 transition-all shadow-sm flex items-center gap-2"

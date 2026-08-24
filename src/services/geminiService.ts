@@ -4303,6 +4303,41 @@ ${JSON.stringify(texts, null, 0)}`;
   return out.map((v: any, i: number) => (typeof v === "string" && v.trim() ? v : texts[i]));
 }
 
+/** The languages a finished piece of work can be flipped into on the board.
+ *  The school teaches in three: English, Mandarin and Bahasa Melayu. `full` is
+ *  what the translator is asked for; `label` is what the button says. */
+export const TRANSLATION_LANGUAGES = [
+  {
+    id: "zh",
+    label: "\u4e2d\u6587",
+    short: "\u4e2d",
+    name: "Mandarin",
+    full: "Simplified Chinese (Mandarin)",
+    /** Subjects taught in this language, so the button leads with it. */
+    match: /mandarin|chinese|\u534e\u6587|\u4e2d\u6587/i,
+  },
+  {
+    id: "ms",
+    label: "BM",
+    short: "BM",
+    name: "Bahasa Melayu",
+    full: "Bahasa Melayu (Malay)",
+    match: /bahasa\s*melayu|\bmalay\b|\bbm\b|sejarah/i,
+  },
+] as const;
+
+export type TranslationLanguage = (typeof TRANSLATION_LANGUAGES)[number];
+
+/** The languages to offer for a subject, the subject's own language first —
+ *  a Bahasa Melayu class wants BM under the cursor, not second. */
+export function translationLanguagesFor(
+  subject?: string,
+): readonly TranslationLanguage[] {
+  const own = TRANSLATION_LANGUAGES.filter((l) => subject && l.match.test(subject));
+  if (!own.length) return TRANSLATION_LANGUAGES;
+  return [...own, ...TRANSLATION_LANGUAGES.filter((l) => !own.includes(l as any))];
+}
+
 /** Translate a finished worksheet, lesson pack, week or slide deck into
  *  another language, keeping its structure exactly. */
 export async function translateContent<T>(value: T, language: string): Promise<T> {
