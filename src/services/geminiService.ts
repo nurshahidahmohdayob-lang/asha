@@ -164,6 +164,53 @@ function bahasaMelayuFormatGuide(subject?: string): string {
 - Use simple, correct, age-appropriate Malay names and contexts (Aisyah, Amir, Faris, ibu, nenek, perpustakaan, padang, dapur…). Keep every sentence short and natural.`;
 }
 
+// Mandarin here is taught bilingually — the class works from the English and
+// the Chinese together — so a Mandarin worksheet, deck or handout carries both
+// rather than picking one. Returns "" for every other subject.
+function isMandarin(subject?: string): boolean {
+  return !!subject && /mandarin|chinese|华文|中文/i.test(subject);
+}
+
+// A teacher who has explicitly chosen a language for this piece of work meant
+// it, and that choice outranks the subject's bilingual default (languageDirective
+// then asks for that language alone).
+function mandarinDualLanguage(
+  subject?: string,
+  language?: string,
+  kind: "worksheet" | "slides" | "notes" = "worksheet",
+): string {
+  if (!isMandarin(subject)) return "";
+  const chosen = (language || "").trim();
+  if (chosen && !/^english/i.test(chosen)) return "";
+
+  const core = `\n\nDUAL LANGUAGE — ENGLISH + MANDARIN (MANDATORY): The subject is Mandarin Chinese and this class works bilingually. EVERY piece of text you write must appear in BOTH English and Simplified Chinese — never one without the other. Put the English first, then its Chinese translation immediately after, inside full-width parentheses（）, in the SAME field/string.
+- Translate faithfully: the Chinese must say exactly what the English says, so a pupil reading either half arrives at the same answer. Never let the two halves differ in meaning.
+- Use Simplified Chinese characters. Do NOT add pinyin, romanisation, or any third version.
+- Keep both halves short and age-appropriate; do not pad the English to match the Chinese or vice versa.
+- Never leave a field English-only or Chinese-only.`;
+
+  if (kind === "slides") {
+    return `${core}
+- This applies to every slide title and every bullet in "content". Keep the bullet's "key phrase — explanation" shape and make BOTH halves bilingual, e.g. "Water cycle（水循环）— Water moves between the sea, sky and land in a never-ending loop.（水在海洋、天空和陆地之间不断循环流动。）".
+- "illustrationPrompt" is a search query, not pupil-facing: keep it English-only.
+- The "description" and "methodology" metadata are for the teacher: keep them English-only.`;
+  }
+
+  if (kind === "notes") {
+    return `${core}
+- Headings carry both languages on one line, e.g. "## Learning Objectives（学习目标）".
+- For body prose, write the English paragraph or bullet first and put its Chinese translation on the NEXT line (or as the next bullet) instead of using parentheses — a whole paragraph in brackets is unreadable.
+- In the vocabulary table, give the Chinese beside the English term and translate the definition and the example sentence too.`;
+  }
+
+  return `${core}
+- This applies to the title, every section title, every instruction, every question, EVERY answer option, any word bank, and any reading passage.
+- Examples — title: "Animals and Their Homes（动物和它们的家）"; question: "Which animal lives in a nest?（哪种动物住在鸟巢里？）"; option: "Bird（鸟）".
+- Fill-in-the-blank and cloze items keep the "____" blank in BOTH halves, in the same place in the sentence.
+- The Chinese half must not reveal an answer the English half hides.
+- For a reading passage, write the English paragraph first and its Chinese translation as the NEXT paragraph (blank line between) rather than in parentheses.`;
+}
+
 export interface EduOptions {
   /** The language the work is written in, e.g. "Mandarin Chinese (Simplified)".
    *  Empty or English keeps the British-English house style. Anything else
@@ -278,7 +325,7 @@ STRAND INITIALS BY SUBJECT:
 
 Cambridge Primary: Art & Design (0067), Information and Communication Technology (0059), Digital Literacy (0072), English (0058), English as a Second Language (0057), Global Perspectives (0838), Humanities (0065), Mathematics (0096), Modern Foreign Language (0064), Music (0068), Physical Education (0069), Science (0097), Wellbeing (0034).
 Cambridge Lower Secondary: Art & Design (0073), Information and Communication Technology (0860), Digital Literacy (0082), English (0861), English as a Second Language (0876), Global Perspectives (1129), Humanities (0896), Mathematics (0862), Modern Foreign Language (0897), Music (0078), Physical Education (0081), Science (0893), Wellbeing (0859).
-Cambridge IGCSE / Upper Secondary: Physics (0625), Biology (0610), Chemistry (0620), Mathematics (0580), Physical Education (0413), Music (0410), etc.
+Cambridge IGCSE / Upper Secondary: Physics (0625), Biology (0610), Chemistry (0620), Mathematics (0580), Physical Education (0413), Music (0410), Global Perspectives (0457), Chinese as a First Language (0509), Chinese as a Second Language (0523), Chinese as a Foreign Language (0547), Malay as a Foreign Language (0546), etc.
 
 CRITICAL — DO NOT INVENT LEARNING OBJECTIVE CODES:
 - The lists above give ONLY subject codes, strand initials, and the code FORMAT. They do NOT contain the actual objective numbers (the ".01", ".02" part) or what each code means.
@@ -420,6 +467,8 @@ export async function generateSlides(lessonInput: string, options: EduOptions): 
     - DO NOT include or reference "Zera", "Zera Education", "Zera International School", or any Zera brand-specific taglines (such as "From a seed to a mighty tree") or slogans inside the slide titles, bullet points, activities, or descriptions.
     - All generated text, exercises, quiz questions, and activities must be entirely general, neutral, and strictly follow Cambridge Framework standards.
     - The slide templates/design styles handle aesthetic branding, but the actual content itself must be standard and fully universal.`;
+
+    mainPrompt += mandarinDualLanguage(options.subject, options.language, "slides");
 
     contents.push(mainPrompt);
     contents.push(`Format: JSON object with "slides" (array of {title, type, content, illustrationPrompt}) AND "metadata" (object with "description": string, "methodology": string).
@@ -665,6 +714,40 @@ type SectionLabels = {
 };
 
 const LOCALISED: Record<string, SectionLabels> = {
+  // A Mandarin paper is bilingual: the headings carry the English a pupil is
+  // learning from and the Chinese they already read, the same way the questions
+  // themselves do. "Section"/"Marks" stay English so the generic head builder
+  // below produces "Section A: Multiple Choice Questions（选择题）(5 Marks)".
+  enZh: {
+    section: "Section",
+    mark: "Mark",
+    marks: "Marks",
+    titles: {
+      "multiple-choice": "Multiple Choice Questions（选择题）",
+      "true-false": "True or False（判断题）",
+      "fill-in-the-blanks": "Fill in the Blanks（填空题）",
+      matching: "Matching Questions（配对题）",
+      sorting: "Sorting（分类题）",
+      "cut-and-paste": "Cut and Paste（剪贴题）",
+      scenario: "Scenario Questions（情境题）",
+      "short-answer": "Short Answer Questions（简答题）",
+      drawing: "Drawing（绘图题）",
+    },
+    instructions: {
+      "multiple-choice": "Choose the best answer.（选出最合适的答案。）",
+      "true-false": "Write T for True or F for False.（正确写 T，错误写 F。）",
+      "fill-in-the-blanks":
+        "Fill in the blanks using the words from the Word Bank above.（用上面词库中的词语填空。）",
+      matching: "Match each item to the correct answer.（把每一项与正确的答案配对。）",
+      sorting: "Sort each item into the correct group.（把每一项归入正确的类别。）",
+      "cut-and-paste":
+        "Cut out each item and paste it in the correct place.（剪下每一项并贴到正确的位置。）",
+      scenario: "Read each situation and answer the question.（阅读每个情境并回答问题。）",
+      "short-answer": "Answer each question in the space provided.（在横线上回答每个问题。）",
+      drawing: "Draw your answer in the box.（在方框中画出你的答案。）",
+    },
+    trueFalse: ["True（对）", "False（错）"],
+  },
   zh: {
     section: "第",
     mark: "分",
@@ -751,10 +834,12 @@ const LOCALISED: Record<string, SectionLabels> = {
   },
 };
 
-/** Which label set a chosen language uses, or null for English. */
-function labelsFor(language?: string): SectionLabels | null {
+/** Which label set a chosen language uses, or null for English. A Mandarin
+ *  subject with no language picked is bilingual, matching its questions. */
+function labelsFor(language?: string, subject?: string): SectionLabels | null {
   const l = (language || "").toLowerCase();
-  if (!l || l.startsWith("english")) return null;
+  if (!l || l.startsWith("english"))
+    return isMandarin(subject) ? LOCALISED.enZh : null;
   // Traditional gets its own labels; serving simplified forms to a
   // traditional paper is the same kind of wrong as serving English.
   if (/traditional|繁體/.test(l)) return LOCALISED.zhTW;
@@ -954,7 +1039,7 @@ function normalizeFillBlanks<T extends { sections?: any[] }>(ws: T): T {
   }
   return ws;
 }
-function organizeByType<T extends { sections?: any[] }>(ws: T, language?: string): T {
+function organizeByType<T extends { sections?: any[] }>(ws: T, language?: string, subject?: string): T {
   if (!ws || !Array.isArray(ws.sections)) return ws;
   const all = ws.sections.flatMap((s: any) => s?.questions || []);
   if (!all.length) return ws;
@@ -969,7 +1054,7 @@ function organizeByType<T extends { sections?: any[] }>(ws: T, language?: string
   const ordered: string[] = [];
   for (const k of QTYPE_ORDER) if (groups[k]?.length) ordered.push(k);
   for (const k of Object.keys(groups)) if (!QTYPE_ORDER.includes(k)) ordered.push(k);
-  const L = labelsFor(language);
+  const L = labelsFor(language, subject);
   const sections = ordered.map((k, i) => {
     const qs = groups[k];
     const marks = qs.length;
@@ -1172,7 +1257,7 @@ export async function generateWorksheet(lessonInput: string, options: EduOptions
       }
       const passagePrompt = `As an expert Cambridge Educator and reading-level specialist, write ONE engaging, age-appropriate reading passage (around ${passageWordCount}) about "${lessonInput}" for ${options.yearGroup} students. Subject: ${options.subject}.${lexileDirective}
 
-STORY ONLY: output the passage prose and NOTHING else. Do NOT include, anywhere in the output, any of the following: a vocabulary list, glossary, word bank, word definitions or meanings, comprehension or discussion questions, an answer key, quizzes, exercises, activities, headings, section titles, labels, bullet points, or lines such as "Vocabulary:", "Questions:", "Answers:", or "Key words:". Just the story/informational text in plain paragraphs.${bahasaMelayuDirective(options.subject)}
+STORY ONLY: output the passage prose and NOTHING else. Do NOT include, anywhere in the output, any of the following: a vocabulary list, glossary, word bank, word definitions or meanings, comprehension or discussion questions, an answer key, quizzes, exercises, activities, headings, section titles, labels, bullet points, or lines such as "Vocabulary:", "Questions:", "Answers:", or "Key words:". Just the story/informational text in plain paragraphs.${bahasaMelayuDirective(options.subject)}${mandarinDualLanguage(options.subject, options.language)}
 
 Return ONLY a JSON object in exactly this shape: {"title": "<a short, fitting passage title>", "readingPassage": "<the FULL passage text as a single string, paragraphs separated by \\n\\n>"}. The "readingPassage" value MUST contain ONLY the story prose — no vocabulary, no questions, no answers, no headings.`;
       const resp = await generateContentWithRetry({
@@ -1273,6 +1358,7 @@ Return ONLY a JSON object in exactly this shape: {"title": "<a short, fitting pa
     }
     mainPrompt += bahasaMelayuDirective(options.subject);
     mainPrompt += bahasaMelayuFormatGuide(options.subject);
+    mainPrompt += mandarinDualLanguage(options.subject, options.language);
     // Said in the prompt as well as the system rule: the model follows a
     // language instruction far more reliably when it appears beside the task.
     mainPrompt += languageDirective(options.language);
@@ -1482,7 +1568,7 @@ Only use the types that appear in the "Allowed Types" list above.`;
             contents: {
               parts: [
                 {
-                  text: `As an expert Cambridge Educator, write EXACTLY these ADDITIONAL distinct, exam-style assessment questions STRICTLY about the topic "${lessonInput}" (Subject: ${options.subject}, Year Group: ${options.yearGroup}): ${breakdownLine}. EVERY question must be directly about "${lessonInput}" — do not drift off-topic. Use ONLY these exact lowercase "type" values. Every question must be factually accurate, logically sound, and aligned with Cambridge textbooks/past papers, with a clearly correct answer. For multiple-choice, EXACTLY ONE option may be correct — the other options must be clearly WRONG (never also-true or partially-correct) so the student can pick a single unambiguous answer; vary the wording (not all "What/Which/When"). For true-false, write a declarative STATEMENT (not an "Is it true…?" question). They MUST be COMPLETELY different from each other and from these existing questions — different sub-topic, different sentence structure, and different answer choices; do NOT reuse the same template/opening: ${JSON.stringify(existing)}.\n${encodingRules}${bahasaMelayuDirective(options.subject)}${bahasaMelayuFormatGuide(options.subject)}\nReturn ONLY JSON: {"questions": [{"text","type","options"}]}`,
+                  text: `As an expert Cambridge Educator, write EXACTLY these ADDITIONAL distinct, exam-style assessment questions STRICTLY about the topic "${lessonInput}" (Subject: ${options.subject}, Year Group: ${options.yearGroup}): ${breakdownLine}. EVERY question must be directly about "${lessonInput}" — do not drift off-topic. Use ONLY these exact lowercase "type" values. Every question must be factually accurate, logically sound, and aligned with Cambridge textbooks/past papers, with a clearly correct answer. For multiple-choice, EXACTLY ONE option may be correct — the other options must be clearly WRONG (never also-true or partially-correct) so the student can pick a single unambiguous answer; vary the wording (not all "What/Which/When"). For true-false, write a declarative STATEMENT (not an "Is it true…?" question). They MUST be COMPLETELY different from each other and from these existing questions — different sub-topic, different sentence structure, and different answer choices; do NOT reuse the same template/opening: ${JSON.stringify(existing)}.\n${encodingRules}${bahasaMelayuDirective(options.subject)}${bahasaMelayuFormatGuide(options.subject)}${mandarinDualLanguage(options.subject, options.language)}\nReturn ONLY JSON: {"questions": [{"text","type","options"}]}`,
                 },
               ],
             },
@@ -1572,7 +1658,11 @@ Only use the types that appear in the "Allowed Types" list above.`;
       // standard exam-style "Section A: Multiple Choice…" grouping.
       const capped = isBahasaMelayu(options.subject)
         ? capWorksheetQuestions(ws, want)
-        : organizeByType(capByTypeCounts(ws, options.typeCounts, want), options.language);
+        : organizeByType(
+            capByTypeCounts(ws, options.typeCounts, want),
+            options.language,
+            options.subject,
+          );
       return normalizeSorting(cleanMultipleChoice(normalizeFillBlanks(capped)));
     }
 
@@ -1595,7 +1685,7 @@ Only use the types that appear in the "Allowed Types" list above.`;
     // the parallel question batches so each batch sends far fewer input tokens
     // and returns faster — the batches just need the topic/subject/year.
     const sharedCtx = `As an expert Cambridge Educator preparing a worksheet on "${lessonInput}". Subject: ${options.subject}, Year Group: ${options.yearGroup}${lex}.
-Use the subject "${options.subject}" exactly. Keep all content neutral and brand-free, and keep every question concise and direct.${bahasaMelayuDirective(options.subject)}${bahasaMelayuFormatGuide(options.subject)}`;
+Use the subject "${options.subject}" exactly. Keep all content neutral and brand-free, and keep every question concise and direct.${bahasaMelayuDirective(options.subject)}${bahasaMelayuFormatGuide(options.subject)}${mandarinDualLanguage(options.subject, options.language)}`;
     const curriculumNote = `\nCURRICULUM ALIGNMENT: Align with the Cambridge International Framework and Scheme of Work; where natural reference one official LO code (Stage+Strand+Number, e.g. 3TC.01) using: ${CAMBRIDGE_CURRICULUM_INFO}`;
 
     // Header: title + (optional) passage + short description/methodology.
@@ -2755,7 +2845,7 @@ export async function generateEduNotes(lessonInput: string, options: EduOptions)
       4. Vocabulary Table (Term | Detailed Definition | Example Sentence)
       5. Practical Applications / Examples
       6. Student Revision Checklist
-    `;
+    ` + mandarinDualLanguage(options.subject, options.language, "notes");
 
     contents.push(mainPrompt);
     contents.push(`Format: JSON object with "notes" (a long string containing the markdown formatted notes).`);
@@ -2822,7 +2912,8 @@ export async function generateEduNotesStream(
       5. Practical Applications / Examples
       6. Student Revision Checklist
 
-      OUTPUT: Return ONLY the clean Markdown handout — no JSON, no code fences, no preamble or closing remarks.`;
+      OUTPUT: Return ONLY the clean Markdown handout — no JSON, no code fences, no preamble or closing remarks.` +
+    mandarinDualLanguage(options.subject, options.language, "notes");
 
   parts.push({ text: mainPrompt });
 
@@ -3394,13 +3485,13 @@ EXISTING WORKSHEET:
 ${src.slice(0, 8000)}
 """
 
-Return ONLY a JSON object: {"questions":[{"skill":"...","type":"...","text":"...","options":["..."],"pairs":[{"left":"...","right":"..."}]}, ...]} with one array entry per question in the worksheet above.${bahasaMelayuDirective(options.subject)}`
+Return ONLY a JSON object: {"questions":[{"skill":"...","type":"...","text":"...","options":["..."],"pairs":[{"left":"...","right":"..."}]}, ...]} with one array entry per question in the worksheet above.${bahasaMelayuDirective(options.subject)}${mandarinDualLanguage(options.subject)}`
       : `You are an expert Cambridge literacy educator. A ${options.yearGroup} class (${options.subject}) is reading: "${bookTitle}".
 Write exactly ${options.numQuestions} after-reading questions with EXACTLY this mix:
 - 1 DRAWING question (type "drawing"): the student draws a scene, character or idea from the book. No options, no pairs — just a clear drawing instruction.
 - 1 MATCHING question (type "matching"): 3-5 left/right pairs to connect with a line (e.g. character ↔ trait, cause ↔ effect, word ↔ meaning). Put the pairs in the "pairs" field with the CORRECT pairing.
 - The remaining questions split roughly half multiple-choice (type "multiple-choice", 3-4 options) and half open-response (type "open-response").
-Label each with its comprehension skill (Recall, Inference, Sequencing, Vocabulary, Opinion & Evidence, Visualising...). If the book is well known, reference its actual content; otherwise write strong generic book-response questions (characters, setting, problem/solution, prediction, opinion with evidence). Keep questions concise.${bahasaMelayuDirective(options.subject)}`;
+Label each with its comprehension skill (Recall, Inference, Sequencing, Vocabulary, Opinion & Evidence, Visualising...). If the book is well known, reference its actual content; otherwise write strong generic book-response questions (characters, setting, problem/solution, prediction, opinion with evidence). Keep questions concise.${bahasaMelayuDirective(options.subject)}${mandarinDualLanguage(options.subject)}`;
     const baseRes = await generateContentWithRetry({
       contents: { parts: [{ text: basePrompt }] },
       config: {
@@ -3462,7 +3553,7 @@ Label each with its comprehension skill (Recall, Inference, Sequencing, Vocabula
         const rewordPrompt = `You are an expert in differentiated literacy instruction. Below is a fixed set of after-reading questions about "${bookTitle}".
 For EACH of these Lexile bands — ${chunk.join(", ")} — produce one complete reworded copy of the ENTIRE question set, so the LANGUAGE matches that band. Lower bands: short sentences, high-frequency words, direct phrasing. Higher bands: richer vocabulary, more complex syntax.
 STRICT RULES (apply to every band's copy): keep the same order, the same number of questions, the same "type", the same skill, the same intent and the SAME correct answer for each; multiple-choice questions keep the same number of options in the same order; open-response questions stay open-response (no options); drawing questions stay drawing instructions; matching questions keep the SAME number of pairs in the SAME order with the SAME correct pairing — reword both sides of each pair.
-Return exactly ${chunk.length} sets, one per band, with the "lexile" field exactly as given.${bahasaMelayuDirective(options.subject)}
+Return exactly ${chunk.length} sets, one per band, with the "lexile" field exactly as given.${bahasaMelayuDirective(options.subject)}${mandarinDualLanguage(options.subject)}
 
 QUESTIONS (JSON):
 ${baseJson}`;
