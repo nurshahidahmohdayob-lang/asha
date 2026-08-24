@@ -63,6 +63,8 @@ export default async function handler(req: any, res: any) {
         notes: () => gs.generateEduNotes(lessonInput, options),
         suggest: () => gs.suggestWeeklyInput(lessonInput, options, options.weekNum),
         importPlan: () => gs.importLessonPlan(lessonInput, options),
+        translate: () =>
+          gs.translateContent(JSON.parse(lessonInput), options.targetLanguage),
         all: () => gs.generateEduContent(lessonInput, options),
         relevelPassage: () =>
           gs.relevelReadingPassage(lessonInput, options.targetLexile, options.subject, options.yearGroup),

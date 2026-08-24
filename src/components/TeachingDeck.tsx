@@ -29,6 +29,7 @@ import {
   slidesToPptx,
   waitForStage,
 } from "../utils/deckExport";
+import { translateContent } from "../services/geminiService";
 import type {
   LessonActivityPack,
   LessonPlan,
@@ -2259,7 +2260,35 @@ export default function TeachingDeck({
   onClose: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const canEdit = Boolean(pack && onPackChange);
+  /* ── The lesson in Mandarin ──────────────────────────────────────────
+     A Mandarin class plans in English and teaches in Chinese, so the board
+     needs the same lesson in the other language — not a different lesson.
+     The deck is rebuilt from a translated copy of what it was already built
+     from (the plan header, this week, the pack and any Studio slides), which
+     is why the slides, their order and their pictures come out identical.
+
+     The copy is kept, so flipping back and forth costs one translation. */
+  const [zh, setZh] = useState(false);
+  const [zhSource, setZhSource] = useState<{
+    plan: LessonPlan;
+    week: WeeklyPlan;
+    pack?: LessonActivityPack;
+    studioSlides: SlideContent[];
+  } | null>(null);
+  const [translating, setTranslating] = useState(false);
+  const [translateError, setTranslateError] = useState<string | null>(null);
+
+  // A newly generated pack or a different week is a different lesson, so the
+  // translation held for the last one no longer applies.
+  useEffect(() => {
+    setZhSource(null);
+    setZh(false);
+  }, [week?.week, pack]);
+
+  // Editing writes back to the lesson itself — the English copy — so it is
+  // offered in English only. Editing a translation would either be lost on
+  // the next translate or, worse, change the English behind the teacher's back.
+  const canEdit = Boolean(pack && onPackChange && !zh);
   const editor = useMemo<DeckEditor | null>(
     () =>
       canEdit
@@ -2277,7 +2306,37 @@ export default function TeachingDeck({
         : null,
     [canEdit, editing, pack, onPackChange, onUploadImage],
   );
-  const slides = buildWeekSlides(plan, week, studioSlides, pack);
+  const toggleMandarin = async () => {
+    if (translating) return;
+    setTranslateError(null);
+    if (zhSource) {
+      setEditing(false);
+      setZh((v) => !v);
+      return;
+    }
+    setEditing(false);
+    setTranslating(true);
+    try {
+      const translated = await translateContent(
+        { plan, week, pack, studioSlides },
+        "Simplified Chinese (Mandarin)",
+      );
+      setZhSource(translated as typeof zhSource);
+      setZh(true);
+    } catch (e: any) {
+      setTranslateError(e?.message || "Could not translate this lesson.");
+    } finally {
+      setTranslating(false);
+    }
+  };
+
+  const shown = zh && zhSource ? zhSource : { plan, week, pack, studioSlides };
+  const slides = buildWeekSlides(
+    shown.plan,
+    shown.week,
+    shown.studioSlides,
+    shown.pack,
+  );
   const n = slides.length;
   const [i, setI] = useState(0);
   const deckRef = useRef<HTMLDivElement>(null);
@@ -2477,6 +2536,28 @@ export default function TeachingDeck({
               </>
             )}
           </div>
+          <button
+            onClick={toggleMandarin}
+            disabled={translating}
+            className={`grid h-11 min-w-11 place-items-center rounded-2xl px-3 text-sm font-black backdrop-blur transition-all active:scale-90 disabled:opacity-60 ${
+              zh
+                ? "bg-brand-500 text-white hover:bg-brand-600"
+                : onLight
+                  ? "bg-black/10 hover:bg-black/20"
+                  : "bg-white/20 hover:bg-white/30"
+            }`}
+            aria-label={zh ? "Show this lesson in English" : "Show this lesson in Mandarin"}
+            title={
+              translateError ||
+              (translating
+                ? "Translating…"
+                : zh
+                  ? "Back to English"
+                  : "Teach this lesson in Mandarin")
+            }
+          >
+            {translating ? "…" : zh ? "EN" : "中"}
+          </button>
           <button
             onClick={toggleFs}
             className={`grid h-11 w-11 place-items-center rounded-2xl backdrop-blur transition-all active:scale-90 ${

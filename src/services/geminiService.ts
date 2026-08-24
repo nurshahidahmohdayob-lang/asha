@@ -4199,6 +4199,149 @@ export interface ChatTurn {
 
 // General-purpose assistant: ask a question, get an answer (ChatGPT-style).
 // `history` lets the conversation stay contextual across turns.
+/* ── Translating finished work ──────────────────────────────────────────
+   A Mandarin class plans in English and teaches in Chinese. Rather than
+   generating everything twice, a finished worksheet or lesson is handed here
+   and comes back in the target language with its shape untouched: same keys,
+   same arrays, same order, so the page that rendered it renders the
+   translation without knowing anything changed.
+
+   Only human-readable strings travel. A URL, a data URI, an emoji, a number
+   or a code like "3TC.01" is left exactly as it was — translating those is how
+   a deck loses its pictures. */
+
+const NON_TEXT_KEYS = new Set([
+  "image", "images", "img", "src", "url", "href", "poster", "icon", "emoji",
+  "mascot", "id", "type", "layoutType", "design", "mimeType", "data",
+  "illustrationPrompt", "lexile", "level", "color", "accent", "tone", "kind",
+]);
+
+/** Worth sending to a translator? Skips URLs, data URIs, numbers, codes and
+ *  strings made only of emoji or punctuation. */
+function isTranslatable(v: string): boolean {
+  const t = v.trim();
+  if (t.length < 2) return false;
+  if (/^(https?:|data:|blob:|\/|#|\.\/)/i.test(t)) return false;
+  if (/^[\d\s.,:;%+\-/()]+$/.test(t)) return false;
+  // "3TC.01", "0547", "Bs.02" — curriculum codes, not prose.
+  if (/^[0-9]*[A-Za-z]{1,4}[0-9.]+$/.test(t)) return false;
+  // No letters at all (emoji, arrows, dashes) — nothing to translate.
+  if (!/[A-Za-z\u00C0-\u024F]/.test(t)) return false;
+  return true;
+}
+
+/** Every translatable string in the value, in a stable walk order. */
+function collectStrings(value: any, out: string[], key = ""): void {
+  if (typeof value === "string") {
+    if (!NON_TEXT_KEYS.has(key) && isTranslatable(value)) out.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const v of value) collectStrings(v, out, key);
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const k of Object.keys(value)) collectStrings(value[k], out, k);
+  }
+}
+
+/** Rebuild the value with each translatable string replaced by its
+ *  translation. Walks in the same order as collectStrings, so the two agree. */
+function applyStrings(value: any, map: Map<string, string>, key = ""): any {
+  if (typeof value === "string") {
+    if (!NON_TEXT_KEYS.has(key) && isTranslatable(value)) return map.get(value) ?? value;
+    return value;
+  }
+  if (Array.isArray(value)) return value.map((v) => applyStrings(v, map, key));
+  if (value && typeof value === "object") {
+    const out: any = {};
+    for (const k of Object.keys(value)) out[k] = applyStrings(value[k], map, k);
+    return out;
+  }
+  return value;
+}
+
+/** Translate one batch of strings, answering with the same number of strings
+ *  in the same order. */
+async function translateBatch(texts: string[], language: string): Promise<string[]> {
+  const prompt = `Translate each string in the JSON array below into ${language}.
+
+RULES:
+- Answer with a JSON object {"items": [...]} whose "items" array holds the SAME number of strings, in the SAME order. Item 1 translates to item 1.
+- This is classroom material for children. Translate naturally and simply, the way a teacher would say it, not word by word.
+- Keep every "____" blank exactly as it is, in the same place in the sentence.
+- Keep numbers, dates, people's names, curriculum codes (e.g. "3TC.01"), and anything already in ${language}, unchanged.
+- Keep any emoji exactly where it is.
+- Do NOT add, merge, split, explain or omit an item. An item you cannot translate comes back unchanged.
+- Do NOT wrap the answer in markdown fences.
+
+${JSON.stringify(texts, null, 0)}`;
+
+  const res = await generateContentWithRetry({
+    contents: { parts: [{ text: prompt }] },
+    config: {
+      responseMimeType: "application/json",
+      // An object, not a bare array: Groq's JSON mode rejects a top-level array
+      // and the whole batch comes back as a 400.
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: { items: { type: Type.ARRAY, items: { type: Type.STRING } } },
+        required: ["items"],
+      },
+    },
+  });
+  let out: any;
+  try {
+    const parsed = JSON.parse((res.text || "").replace(/^```(?:json)?\s*|\s*```$/g, ""));
+    out = Array.isArray(parsed) ? parsed : parsed?.items;
+  } catch {
+    return texts;
+  }
+  // A batch that came back the wrong length cannot be lined up with its
+  // originals, so it is dropped rather than scrambling the material.
+  if (!Array.isArray(out) || out.length !== texts.length) return texts;
+  return out.map((v: any, i: number) => (typeof v === "string" && v.trim() ? v : texts[i]));
+}
+
+/** Translate a finished worksheet, lesson pack, week or slide deck into
+ *  another language, keeping its structure exactly. */
+export async function translateContent<T>(value: T, language: string): Promise<T> {
+  const target = (language || "").trim();
+  if (!target || value == null) return value;
+
+  if (typeof window !== "undefined") {
+    return callAiProxy("translate", JSON.stringify(value), { targetLanguage: target });
+  }
+
+  const found: string[] = [];
+  collectStrings(value, found);
+  // The same sentence often appears twice (a title and its slide). Translating
+  // it once keeps the two copies identical as well as saving the tokens.
+  const unique = Array.from(new Set(found));
+  if (!unique.length) return value;
+
+  // Batches are sized by characters, not count: forty one-word tiles and forty
+  // paragraphs are very different requests.
+  const batches: string[][] = [];
+  let batch: string[] = [];
+  let chars = 0;
+  for (const t of unique) {
+    if (batch.length >= 40 || chars + t.length > 3000) {
+      if (batch.length) batches.push(batch);
+      batch = [];
+      chars = 0;
+    }
+    batch.push(t);
+    chars += t.length;
+  }
+  if (batch.length) batches.push(batch);
+
+  const results = await mapLimit(batches, 3, (b) => translateBatch(b, target));
+  const map = new Map<string, string>();
+  batches.forEach((b, i) => b.forEach((t, j) => map.set(t, results[i][j] ?? t)));
+  return applyStrings(value, map) as T;
+}
+
 export async function askAI(question: string, history: ChatTurn[] = []): Promise<string> {
   try {
     const systemInstruction = `You are Zera Assistant, a friendly and knowledgeable AI helper built into the Zera Education suite for teachers and school staff.
