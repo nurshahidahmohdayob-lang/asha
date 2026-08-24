@@ -58,6 +58,7 @@ export default async function handler(req: any, res: any) {
       generateLessonActivities,
       generateEduContent,
       suggestWeeklyInput,
+      importLessonPlan,
       generateEduNotes,
       relevelReadingPassage,
       generateInteractiveSortingGame,
@@ -118,6 +119,11 @@ export default async function handler(req: any, res: any) {
         break;
       case "suggest":
         result = await suggestWeeklyInput(lessonInput, options, options.weekNum);
+        break;
+      // The teacher's own plan document, transcribed into the app's structure.
+      // lessonInput carries the extracted text.
+      case "importPlan":
+        result = await importLessonPlan(lessonInput, options);
         break;
       case "all":
         result = await generateEduContent(lessonInput, options);

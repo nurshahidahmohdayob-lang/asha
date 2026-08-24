@@ -3324,6 +3324,7 @@ import {
   generateEduContent,
   generateWeeklyPlan,
   suggestWeeklyInput,
+  importLessonPlan,
   relevelReadingPassage,
   relevelWorksheet,
   generateInteractiveSortingGame,
@@ -3409,8 +3410,8 @@ const isRemovedTeacher = (name?: string | null): boolean =>
 // "Only my teachers" toggle further down, which a reviewer sets for
 // themselves and can switch off. An admin not listed here reviews everyone.
 const ADMIN_TEACHER_SCOPE: Record<string, string[]> = {
-  "shiryn.g@zera.edu.my": ["AARTHI", "IERA"],
-  "carol.p@zera.edu.my": ["AARTHI", "IERA"],
+  "shiryn.g@zera.edu.my": ["AARTHI", "NUR HAZIRAH BINTI SANI"],
+  "carol.p@zera.edu.my": ["AARTHI", "NUR HAZIRAH BINTI SANI"],
 };
 
 /** The teachers this admin may review, or null when they may review all. */
@@ -4285,7 +4286,7 @@ const OFFICIAL_TEACHER_IDS: Record<string, string> = {
   STELLA: "t-27",
   "ZI XIN": "t-28",
   EJANE: "t-29",
-  IERA: "t-30",
+  "NUR HAZIRAH BINTI SANI": "t-30",
   AARTHI: "t-31",
   SHIRYN: "t-32",
   CAROL: "t-33",
@@ -4303,7 +4304,7 @@ const OFFICIAL_NEW_TEACHERS = [
   { id: "t-28", name: "ZI XIN" },
   { id: "t-29", name: "EJANE" },
   // Cambridge Plus / intervention staff
-  { id: "t-30", name: "IERA" },
+  { id: "t-30", name: "NUR HAZIRAH BINTI SANI" },
   { id: "t-31", name: "AARTHI" },
   { id: "t-32", name: "SHIRYN" },
   { id: "t-33", name: "CAROL" },
@@ -4530,6 +4531,33 @@ const OFFICIAL_SUBJECT_TEACHERS: Record<string, Record<string, string>> = {
   },
 };
 
+/** Words that turn up in a great many names and identify nobody.
+ *
+ *  This list is the whole reason the length filter below is not enough.
+ *  "BINTI" is five letters, so it passed — and because two names count as one
+ *  person the moment they share a SINGLE token, every teacher whose full name
+ *  carries it became the same teacher. The fold then picked whichever spelling
+ *  had the most words and built the submissions folder from that, which is how
+ *  Nur Hazirah Binti Sani's lesson plans filed themselves into Nurliana
+ *  Asyikin's folder.
+ *
+ *  Erring towards NOT matching is the safe direction: a teacher who fails to
+ *  fold gets a second folder, which an admin can merge. A teacher who folds
+ *  into someone else has her work filed under another person's name. */
+const NAME_PARTICLES = new Set([
+  // Malay / Arabic patronymics
+  "binti", "binte", "bint", "bin", "ibnu", "ibni", "ibn",
+  // Indian and Iban patronymics ("a/p", "a/l" survive as single letters and
+  // are dropped by the length filter; "anak" is not)
+  "anak",
+  // Given-name prefixes common enough to be meaningless on their own
+  "mohd", "muhd", "muhamad", "mohamad", "mohamed", "mohammad", "muhammad",
+  "abdul", "abdullah", "abd",
+  "nur", "nurul", "noor", "siti",
+  // Honorifics and titles
+  "puan", "encik", "cikgu", "madam", "miss", "mrs", "teacher",
+]);
+
 // Names arrive spelled every which way — "shahidah.a", "NUR SHAHIDAH",
 // "Ms Shahidah". Compare on meaningful word chunks instead of substrings so
 // those all resolve to the same person, while "NUR" alone never matches.
@@ -4537,7 +4565,7 @@ const nameTokens = (name: string): string[] =>
   (name || "")
     .toLowerCase()
     .split(/[^a-z]+/i)
-    .filter((t) => t.length >= 4);
+    .filter((t) => t.length >= 4 && !NAME_PARTICLES.has(t));
 
 const sameTeacherName = (a?: string, b?: string): boolean => {
   const ta = nameTokens(a || "");
@@ -4583,6 +4611,20 @@ const TEACHER_ALIASES: { full: string; aliases: string[] }[] = [
   {
     full: "NUR SHAHIDAH",
     aliases: ["SHA", "SHAHIDAH", "NUR SHAHIDAH", "NURSHAHIDAH", "SHAHIDAH.A"],
+  },
+  {
+    // She is in the directory twice — once under the classroom name "IERA"
+    // and once as "NUR HAZIRAH" — and signs in with her full name. Letters
+    // alone cannot connect IERA to either of the others, so it is pinned
+    // here; without this she keeps a folder under each spelling.
+    full: "NUR HAZIRAH BINTI SANI",
+    aliases: [
+      "IERA",
+      "HAZIRAH",
+      "NUR HAZIRAH",
+      "NURHAZIRAH",
+      "NUR HAZIRAH BINTI SANI",
+    ],
   },
 ];
 
@@ -5000,6 +5042,7 @@ const CAMBRIDGE_SUBJECTS = [
       "Geography (0460)",
       "History (0470)",
       "Global Perspectives (0457)",
+      "Travel & Tourism (0471)",
       "Physical Education (0413)",
       "Chinese as a First Language (0509)",
       "Chinese as a Second Language (0523)",
@@ -5007,6 +5050,14 @@ const CAMBRIDGE_SUBJECTS = [
       "Malay as a Foreign Language (0546)",
       "Life Competencies",
     ],
+  },
+  {
+    // Taught alongside the Cambridge syllabuses and carrying no Cambridge
+    // code, so they sit in their own group rather than being listed under a
+    // stage they do not belong to. Available to every year group, which is
+    // why "History" appears here as well as the coded IGCSE syllabus above.
+    group: "National & Other Subjects",
+    subjects: ["Islamic Studies", "History", "Sejarah"],
   },
 ];
 
@@ -9751,8 +9802,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const findMyTeacherRecord = () =>
     teachers.find(
       (t) =>
-        sameTeacherName(t.name, teacherName) ||
-        sameTeacherName(t.name, user?.email || ""),
+        sameTeacherIdentity(t.name, teacherName) ||
+        sameTeacherIdentity(t.name, user?.email || ""),
     );
 
   // Identity stamped onto every submission, so the weekly tracker can tick the
@@ -10233,6 +10284,74 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
   // Spin up one blank plan per year group in a single click, e.g. Science for
   // Year 1, Year 2 and Year 3 → three cards ready to fill in.
+  // A plan the teacher already wrote, brought onto the board as a card.
+  //
+  // It lands as a normal saved lesson plan — same shape as a blank draft, same
+  // editor, same Submit — because anything less means a teacher with a term of
+  // planning in Word retypes it purely to be allowed to submit it.
+  const [lpImportBusy, setLpImportBusy] = useState(false);
+  const importPlanFromFile = async (file: File | null | undefined) => {
+    if (!file || !user) return;
+    setLpImportBusy(true);
+    try {
+      const part = await prepareFileForGemini(file);
+      // A scanned PDF or an image comes back as bytes, not text. Nothing can
+      // be read out of it here, and saying so beats filing an empty card.
+      if (!/^text\//i.test(part.mimeType)) {
+        alert(
+          `"${file.name}" has no readable text — if it is a scan or a photo, this cannot read it yet. A Word, Excel, PowerPoint, PDF-with-text or plain text file works.`,
+        );
+        return;
+      }
+      let text = "";
+      try {
+        text = decodeURIComponent(escape(atob(part.data)));
+      } catch {
+        text = "";
+      }
+
+      const plan = await importLessonPlan(text, {
+        subject: lpQuickSubject,
+        teacherName,
+      });
+
+      const subj = plan.subject || lpQuickSubject || "General";
+      const yearGroupLabel = plan.class || "General";
+      const id = Math.random().toString(36).substring(2, 15);
+      const content = {
+        ...makeBlankLessonPlanContent(subj, yearGroupLabel),
+        lessonTitle: plan.overallTopic || file.name.replace(/\.[^.]+$/, ""),
+        lessonPlan: plan,
+      } as EduContent;
+
+      await store.put("projects", id, {
+        id,
+        userId: user.uid,
+        folderId: activeFolderId,
+        timestamp: Date.now(),
+        title: deriveProjectTitle(content),
+        category: "lesson-plan",
+        status: "draft",
+        teacherName: teacherName,
+        content,
+        settings: {
+          includeStory,
+          isTemplateMode,
+          workspaceMode: "lesson-plan",
+        },
+      });
+      alert(
+        `Imported "${file.name}" as a lesson plan with ${plan.weeklyBreakdown.length} week(s). Open the card to check it, then submit.`,
+      );
+    } catch (err: any) {
+      // The service already explains the readable cases (no text, no weekly
+      // rows, unreadable layout); anything else is worth showing as-is.
+      alert(`Could not import that plan.\n\n${err?.message || err}`);
+    } finally {
+      setLpImportBusy(false);
+    }
+  };
+
   const createLessonPlanDrafts = async (subj: string, years: string[]) => {
     if (!user || !subj || years.length === 0) return;
     setLpBoardBusy(true);
@@ -10700,7 +10819,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   scoped.some(
                     (n) =>
                       p?.folderId === teacherFolderId(n) ||
-                      sameTeacherName(p?.teacherName, n),
+                      sameTeacherIdentity(p?.teacherName, n),
                   ),
                 )
               : visible,
@@ -10725,7 +10844,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               ? visibleFolders.filter((f: any) =>
                   scoped.some(
                     (n) =>
-                      f?.id === teacherFolderId(n) || sameTeacherName(f?.name, n),
+                      f?.id === teacherFolderId(n) ||
+                      sameTeacherIdentity(f?.name, n),
                   ),
                 )
               : visibleFolders,
@@ -13562,7 +13682,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const submissionIsFrom = (p: any, names: string[]): boolean =>
     names.some(
       (n) =>
-        p?.folderId === teacherFolderId(n) || sameTeacherName(p?.teacherName, n),
+        p?.folderId === teacherFolderId(n) ||
+        sameTeacherIdentity(p?.teacherName, n),
     );
 
   // Does this submission belong to a teacher the reviewer supervises?
@@ -13577,7 +13698,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
   /** Is this teacher one the reviewer may see at all? */
   const isVisibleTeacherName = (name?: string): boolean =>
-    !myScopedTeachers || myScopedTeachers.some((n) => sameTeacherName(name, n));
+    !myScopedTeachers ||
+    myScopedTeachers.some((n) => sameTeacherIdentity(name, n));
 
   // One-off cleanup: "SHA", "SHAHIDAH" and "Shahidah.A" are the same person.
   // Fold them into the record named SHA, moving every subject, quota, timetable
@@ -30409,6 +30531,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       "Year 10",
                       "Year 11",
                       "Year 12",
+                      "COMBINE (PRIMARY)",
                     ].map((y) => (
                       <option key={y} value={y}>
                         {y}
@@ -32739,6 +32862,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       "Year 10",
                       "Year 11",
                       "Year 12",
+                      "COMBINE (PRIMARY)",
                     ].map((y) => (
                       <option key={y} value={y}>
                         {y}
@@ -34678,6 +34802,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       "Year 9",
       "Year 10",
       "Year 11",
+      "COMBINE (PRIMARY)",
     ];
     const chip =
       "px-2 py-0.5 rounded-full bg-[#F0FDF4] border border-[#D1FAE5] text-[9px] font-black uppercase tracking-wider text-[#064E3B]/70";
@@ -34788,6 +34913,38 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     {allTicked ? "Untick All" : "Tick All"}
                   </button>
                 )}
+                <label
+                  className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all active:scale-95 border-2 shadow-sm ${
+                    lpImportBusy
+                      ? "bg-[#F0FDF4] text-[#064E3B]/40 border-[#D1FAE5] cursor-wait"
+                      : "bg-white text-[#064E3B] border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] cursor-pointer"
+                  }`}
+                  title="Word, Excel, PowerPoint, PDF with text, or plain text"
+                >
+                  {lpImportBusy ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Reading…
+                    </>
+                  ) : (
+                    <>
+                      <Upload size={16} /> Upload A Plan
+                    </>
+                  )}
+                  <input
+                    type="file"
+                    className="hidden"
+                    disabled={lpImportBusy}
+                    accept=".doc,.docx,.pdf,.xls,.xlsx,.csv,.ppt,.pptx,.txt,.md,.html"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      // Cleared so choosing the SAME file again still fires a
+                      // change event — otherwise a failed import cannot be
+                      // retried without picking a different file first.
+                      e.target.value = "";
+                      void importPlanFromFile(f);
+                    }}
+                  />
+                </label>
                 <button
                   onClick={() => setLpQuickAddOpen((v) => !v)}
                   className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all active:scale-95 bg-[#FACC15] text-[#064E3B] hover:bg-yellow-300 shadow-sm"
@@ -35459,6 +35616,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           "Year 9",
                           "Year 10",
                           "Year 11",
+                          "COMBINE (PRIMARY)",
                         ].map((y) => (
                           <option key={y} value={y}>
                             {y}

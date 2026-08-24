@@ -2280,6 +2280,12 @@ export async function suggestWeeklyInput(type: 'unit' | 'topic' | 'subtopic' | '
   try {
     const response = await generateContentWithRetry({
       contents: { parts: [{ text: prompt }] },
+      // A suggestion is a phrase, not an essay. The output cap counts towards
+      // the per-minute allowance, so reserving the default 7,000 tokens for a
+      // one-line answer was on its own enough to rule out every model but the
+      // largest — and to fail once that one was busy. Asking for what it
+      // actually needs puts the whole fallback chain back in play.
+      config: { maxOutputTokens: 300 },
     });
 
     return response.text?.trim() || "";
@@ -2289,6 +2295,143 @@ export async function suggestWeeklyInput(type: 'unit' | 'topic' | 'subtopic' | '
     }
     throw err;
   }
+}
+
+/** Turn a lesson plan the teacher already wrote into a plan this app can hold.
+ *
+ *  Teachers arrive with terms of planning in Word, Excel or PDF, and retyping
+ *  it into the board just to be able to submit it is work that produces
+ *  nothing new. This reads the document and fills the same structure the
+ *  board's own drafts use, so an imported plan is indistinguishable from one
+ *  written here — it opens in the editor, and Submit goes through unchanged.
+ *
+ *  It TRANSCRIBES, it does not write. The teacher's wording, sequence and week
+ *  numbering are what get filed under their name and reviewed by a Head of
+ *  Department, so inventing content would put words they never wrote into
+ *  their submission. Anything the document does not say is left empty for them
+ *  to fill in. */
+export async function importLessonPlan(
+  documentText: string,
+  options: { subject?: string; yearGroup?: string; teacherName?: string } = {},
+): Promise<LessonPlan> {
+  const text = (documentText || "").trim();
+  if (!text) throw new Error("That file had no readable text in it.");
+
+  // The browser holds no AI key, so the work happens server-side. Going
+  // straight to the proxy rather than failing first and catching keeps the
+  // one slow call to one round trip.
+  if (typeof window !== "undefined") {
+    return callAiProxy("importPlan", text, options);
+  }
+
+  const weekFields = {
+    week: { type: Type.NUMBER },
+    unit: { type: Type.STRING },
+    topic: { type: Type.STRING },
+    subTopic: { type: Type.STRING },
+    learningObjective: { type: Type.STRING },
+    strand: { type: Type.STRING },
+    introduction: { type: Type.STRING },
+    activities: { type: Type.STRING },
+    assessment: { type: Type.STRING },
+    resources: { type: Type.STRING },
+  };
+
+  const prompt = `You are transcribing a teacher's EXISTING lesson plan into a structured form. This is a transcription task, not a writing task.
+
+RULES — these matter more than completeness:
+- Use the teacher's OWN words, headings and sequence. Copy them across.
+- Do NOT invent units, topics, objectives, activities or assessments. If the document does not say something, return an empty string for that field.
+- Keep the document's own week numbering. If it covers weeks 3 to 8, return weeks 3 to 8 — do not renumber them from 1.
+- One entry in weeklyBreakdown per week the document covers, in the document's order.
+- Where the document uses a table, each row is usually one week.
+- Bullet lists stay as separate lines within the field (newline-separated).
+- subject, class, term, duration, academicYear and preparedBy are usually in a
+  HEADER line or a small box at the TOP of the document, not in the weekly
+  rows. Read them from there. "Year 3", "Grade 3", "Y3" and "Stage 3" all mean
+  the class is "Year 3".
+- overallTopic is the unit or theme the whole plan covers, if it names one.
+${options.subject ? `- The teacher says this plan is for: ${options.subject}. Use it unless the document clearly names a different subject.` : ""}
+${options.yearGroup ? `- The teacher says the class is: ${options.yearGroup}. Use it unless the document clearly names a different class.` : ""}
+
+THE DOCUMENT:
+<<<
+${text.slice(0, 24000)}
+>>>
+
+Return the plan as JSON. Leave any field the document does not cover as "".`;
+
+  const response = await generateContentWithRetry({
+    contents: { parts: [{ text: prompt }] },
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          term: { type: Type.STRING },
+          subject: { type: Type.STRING },
+          duration: { type: Type.STRING },
+          date: { type: Type.STRING },
+          academicYear: { type: Type.STRING },
+          class: { type: Type.STRING },
+          preparedBy: { type: Type.STRING },
+          overallTopic: { type: Type.STRING },
+          weeklyBreakdown: {
+            type: Type.ARRAY,
+            items: { type: Type.OBJECT, properties: weekFields },
+          },
+        },
+      },
+    },
+  });
+
+  const raw = response.text;
+  if (!raw) throw new Error("Nothing came back from the import.");
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(
+      "The plan could not be read as a structured document. It may be a scan, or laid out in a way this cannot follow yet.",
+    );
+  }
+
+  const str = (v: any): string => (typeof v === "string" ? v.trim() : "");
+  const weeks = Array.isArray(parsed?.weeklyBreakdown) ? parsed.weeklyBreakdown : [];
+
+  // A plan with no weeks would show as an empty card the teacher cannot tell
+  // apart from a blank draft, so say so instead of filing it.
+  if (!weeks.length) {
+    throw new Error(
+      "No weekly rows could be found in that document. Check it contains a plan table or week-by-week sections.",
+    );
+  }
+
+  return {
+    term: str(parsed.term) || "1",
+    subject: str(parsed.subject) || options.subject || "",
+    duration: str(parsed.duration) || "60 mins",
+    date: str(parsed.date) || new Date().toISOString().split("T")[0],
+    academicYear:
+      str(parsed.academicYear) ||
+      `${new Date().getFullYear()}/${new Date().getFullYear() + 1}`,
+    class: str(parsed.class) || options.yearGroup || "",
+    preparedBy: options.teacherName || str(parsed.preparedBy),
+    checkedBy: "",
+    overallTopic: str(parsed.overallTopic),
+    weeklyBreakdown: weeks.map((w: any, i: number) => ({
+      week: Number(w?.week) > 0 ? Number(w.week) : i + 1,
+      unit: str(w?.unit),
+      topic: str(w?.topic),
+      subTopic: str(w?.subTopic),
+      learningObjective: str(w?.learningObjective),
+      strand: str(w?.strand),
+      introduction: str(w?.introduction),
+      activities: str(w?.activities),
+      assessment: str(w?.assessment),
+      resources: str(w?.resources),
+    })),
+  } as LessonPlan;
 }
 
 export async function generateWeeklyPlan(activity: string, weekNum: number, options: EduOptions, unit?: string, topic?: string): Promise<WeeklyPlan> {
@@ -3164,10 +3307,13 @@ function schemaToHint(schema: any): any {
   return schema.description ? `string — ${schema.description}` : "string";
 }
 
-async function groqGenerate(
-  request: { contents: any; config?: any },
-  model: string,
-): Promise<{ text: string }> {
+/** The user-role prompt exactly as it will be sent.
+ *
+ *  Split out of groqGenerate so the model chooser can measure the very text
+ *  that goes out. Estimating from anything else drifts, and a size estimate
+ *  that disagrees with the real request is worse than none: it picks a model
+ *  that then answers 413. */
+function groqPromptText(request: { contents: any; config?: any }): string {
   const rawParts = request?.contents?.parts;
   const parts = Array.isArray(rawParts) ? rawParts : rawParts ? [rawParts] : [];
   let promptText = parts
@@ -3217,6 +3363,50 @@ async function groqGenerate(
       /* schema too exotic to serialise — json_object mode still applies */
     }
   }
+  return promptText;
+}
+
+/** Tokens per minute each model allows on this tier.
+ *
+ *  A request larger than the allowance is refused with 413 however many times
+ *  it is retried, so the chooser skips such a model rather than spending an
+ *  attempt proving it. This is what turned a busy leader into "AI Error: Groq
+ *  413" in front of a class: the chain fell through to the small models, both
+ *  refused a 9,000-token lesson-plan prompt, and the last refusal — naming
+ *  gpt-oss-20b, a model that never had a chance — was the one the teacher saw.
+ *
+ *  Unlisted models are assumed small, which errs towards not sending. */
+const GROQ_MODEL_TPM: Record<string, number> = {
+  "groq/compound-mini": 70000,
+  "openai/gpt-oss-120b": 8000,
+  "openai/gpt-oss-20b": 8000,
+};
+const GROQ_DEFAULT_TPM = 8000;
+
+const tpmFor = (model: string): number =>
+  GROQ_MODEL_TPM[model] ?? GROQ_DEFAULT_TPM;
+
+/** Roughly four characters to the token for English prose. This only has to
+ *  separate a 9,000-token prompt from a 3,000-token one. */
+const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
+
+/** The models that could actually hold this request, biggest allowance first.
+ *
+ *  The allowance covers input AND the reply, so the output cap counts too.
+ *  When nothing fits, the largest is returned anyway — a long shot beats
+ *  refusing to try, and its error is at least the honest one. */
+function groqModelsFor(models: string[], neededTokens: number): string[] {
+  const viable = models.filter((m) => tpmFor(m) >= neededTokens);
+  if (viable.length) return viable;
+  return [[...models].sort((a, b) => tpmFor(b) - tpmFor(a))[0]].filter(Boolean);
+}
+
+async function groqGenerate(
+  request: { contents: any; config?: any },
+  model: string,
+): Promise<{ text: string }> {
+  const promptText = groqPromptText(request);
+  const wantsJson = request?.config?.responseMimeType === "application/json";
   const messages: any[] = [];
   // Applied to every generation, JSON or not, so no prompt can miss it.
   messages.push({
@@ -3291,6 +3481,45 @@ function backoffMs(message: string, isRateLimit: boolean, attempt: number): numb
   return Math.min((isRateLimit ? 4000 : 800) * (attempt + 1), 8000);
 }
 
+/** Gemini's free tier, as a second pool behind Groq.
+ *
+ *  Groq's free allowance is per-minute and shared across the school, so at
+ *  9am on a planning day it runs out and a teacher gets an error for no
+ *  reason they can see or fix. Gemini's free tier has its own separate quota,
+ *  so the two are very unlikely to be exhausted at the same moment.
+ *
+ *  Server-side only. The browser holds no Gemini key by design and reaches
+ *  generation through /api/ai/* anyway, where this runs. */
+async function geminiFallback(
+  systemInstruction: string,
+  promptText: string,
+  wantsJson: boolean,
+): Promise<string> {
+  const res: any = await gemini().models.generateContent({
+    model: "gemini-3.5-flash",
+    contents: promptText,
+    config: {
+      systemInstruction,
+      ...(wantsJson ? { responseMimeType: "application/json" } : {}),
+    },
+  });
+  // The SDK exposes .text on newer versions and parts on older ones.
+  const direct = typeof res?.text === "string" ? res.text : "";
+  if (direct.trim()) return direct.trim();
+  const parts = res?.candidates?.[0]?.content?.parts || [];
+  return parts
+    .map((p: any) => p?.text || "")
+    .join("")
+    .trim();
+}
+
+/** The system prompt, identical on both providers so the house style and the
+ *  JSON-only rule do not change with whichever one happens to answer. */
+const houseSystemPrompt = (wantsJson: boolean, language?: string): string =>
+  wantsJson
+    ? `You are an expert Cambridge educator. Respond with a SINGLE valid JSON object only — no markdown, no code fences, no commentary.\n\n${languageRule(language)}`
+    : `You are an expert Cambridge educator.\n\n${languageRule(language)}`;
+
 async function generateContentWithRetry(
   request: { contents: any; config?: any },
   models: string[] = GROQ_MODELS,
@@ -3301,9 +3530,23 @@ async function generateContentWithRetry(
       "GROQ_API_KEY is not configured. Add it to .env and restart the server.",
     );
   }
+  // Size the request once, then only talk to models that could hold it. The
+  // allowance covers the reply as well as the prompt, so the output cap is
+  // part of the bill.
+  const outputCap =
+    Number(request?.config?.maxOutputTokens) > 0
+      ? Math.min(Number(request.config.maxOutputTokens), 7000)
+      : 7000;
+  const needed = estimateTokens(groqPromptText(request)) + outputCap;
+  const chain = groqModelsFor(models, needed);
+  // With one model left there is nothing to fall through to, so waiting out a
+  // rate limit is the only way through — worth more attempts than usual. The
+  // backoff already honours the "try again in Xs" Groq sends back.
+  const attempts = chain.length === 1 ? Math.max(attemptsPerModel, 4) : attemptsPerModel;
+
   let lastErr: any;
-  for (const model of models) {
-    for (let attempt = 0; attempt < attemptsPerModel; attempt++) {
+  for (const model of chain) {
+    for (let attempt = 0; attempt < attempts; attempt++) {
       try {
         return await groqGenerate(request, model);
       } catch (err: any) {
@@ -3325,6 +3568,33 @@ async function generateContentWithRetry(
         await sleep(backoffMs(msg, isRateLimit, attempt));
       }
     }
+  }
+  // Groq is spent — busy, rate-limited or refusing the size. Before failing,
+  // ask the other free provider. A teacher waiting on a suggestion does not
+  // care which service answers, only that one does.
+  try {
+    const text = await geminiFallback(
+      houseSystemPrompt(
+        request?.config?.responseMimeType === "application/json",
+        request?.config?.language,
+      ),
+      groqPromptText(request),
+      request?.config?.responseMimeType === "application/json",
+    );
+    if (text) return { text };
+  } catch {
+    // Report the Groq failure rather than this one: it is the limit the
+    // teacher actually hit, and the fallback being unconfigured is not news.
+  }
+
+  // Both pools are spent. Raw provider JSON in an alert box tells a teacher
+  // nothing they can do; say what would actually help.
+  if (modelCannotServe(String(lastErr?.message || lastErr || ""))) {
+    throw new Error(
+      "This is too large for the AI service's current per-minute limit. " +
+        "Try generating fewer weeks at once, shortening the input, or waiting " +
+        "a minute before trying again.",
+    );
   }
   throw lastErr;
 }
@@ -3354,10 +3624,19 @@ async function groqChat(
     if (!t || !t.text) continue;
     messages.push({ role: t.role === "model" ? "assistant" : "user", content: t.text });
   }
+  // Same sizing rule as generateContentWithRetry: a chat whose history has
+  // grown past a model's allowance is refused outright, so do not spend an
+  // attempt on it.
+  const needed =
+    estimateTokens(messages.map((m: any) => String(m?.content || "")).join("\n")) +
+    7000;
+  const chain = groqModelsFor(models, needed);
+  const attempts = chain.length === 1 ? Math.max(attemptsPerModel, 4) : attemptsPerModel;
+
   let lastErr: any;
-  for (const model of models) {
+  for (const model of chain) {
     const maxTokens = /8b|instant/i.test(model) ? 2600 : 7000;
-    for (let attempt = 0; attempt < attemptsPerModel; attempt++) {
+    for (let attempt = 0; attempt < attempts; attempt++) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), GROQ_CALL_TIMEOUT_MS);
       try {
@@ -3401,6 +3680,20 @@ async function groqChat(
         clearTimeout(timer);
       }
     }
+  }
+  // Groq is spent. Ask the other free pool before failing the teacher.
+  try {
+    const text = await geminiFallback(
+      systemInstruction ? `${systemInstruction}\n\n${UK_ENGLISH}` : UK_ENGLISH,
+      turns
+        .filter((t) => t && t.text)
+        .map((t) => `${t.role === "model" ? "Assistant" : "Teacher"}: ${t.text}`)
+        .join("\n\n"),
+      false,
+    );
+    if (text) return text;
+  } catch {
+    /* keep the Groq error — it is the one that describes what was hit */
   }
   throw lastErr;
 }
