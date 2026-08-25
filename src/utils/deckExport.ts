@@ -61,14 +61,170 @@ export function oklchToRgb(oklchStr: string): string {
   }
 }
 
-/** Rewrite every oklch colour in a cloned document to rgb, and freeze the
- *  deck's entrance animations so a slide is never photographed mid-pop. */
-function prepareClone(clonedDoc: Document) {
+/** Every property html2canvas reads that can carry a colour.
+ *
+ *  HYPHENATED, and that matters: getComputedStyle().getPropertyValue only
+ *  answers to the CSS name, so asking it for "backgroundColor" returns an
+ *  empty string. Three copies of this code asked exactly that, which is why
+ *  background colours were never converted at all.
+ *
+ *  background-image and box-shadow are here because a Tailwind gradient or
+ *  ring is a whole expression with colours buried inside it, not a colour. */
+const COLOUR_PROPS = [
+  "color",
+  "background-color",
+  "background-image",
+  "border-top-color",
+  "border-right-color",
+  "border-bottom-color",
+  "border-left-color",
+  "outline-color",
+  "text-decoration-color",
+  "column-rule-color",
+  "caret-color",
+  "-webkit-text-fill-color",
+  "box-shadow",
+  "fill",
+  "stroke",
+  "stop-color",
+];
+
+/** The colour syntaxes html2canvas 1.4 cannot parse.
+ *
+ *  It is not just oklch. Tailwind 4 writes EVERY opacity modifier as
+ *  `color-mix(in oklab, …)` — 302 of them in this app's stylesheet against 185
+ *  oklch — and puts `in oklab` interpolation hints in gradients. Converting
+ *  oklch alone fixed the first crash and left the second waiting. */
+const COLOUR_FN = /(oklch|oklab|lch|lab|color-mix|color)\(/i;
+
+/** Gradient interpolation hints: `linear-gradient(in oklab, …)`. Valid CSS,
+ *  meaningless to html2canvas, and removable without changing the stops. */
+const INTERPOLATION =
+  /\bin\s+(?:oklab|oklch|srgb(?:-linear)?|display-p3|a98-rgb|prophoto-rgb|rec2020|xyz(?:-d50|-d65)?|hsl|hwb|lab|lch)(?:\s+(?:shorter|longer|increasing|decreasing)\s+hue)?\s*,\s*/gi;
+
+/** Anything worth rewriting before a capture. */
+const needsWork = (value: string): boolean =>
+  /oklch|oklab|\blch\(|\blab\(|color-mix|color\(/i.test(value);
+
+let sharedProbe: CanvasRenderingContext2D | null | undefined;
+const colourProbe = (): CanvasRenderingContext2D | null => {
+  if (sharedProbe === undefined) {
+    try {
+      sharedProbe = document.createElement("canvas").getContext("2d");
+    } catch {
+      sharedProbe = null;
+    }
+  }
+  return sharedProbe;
+};
+
+/** Ask the browser what a colour actually is, and know when it could not say.
+ *
+ *  Assigning an unsupported value to fillStyle leaves the previous one in
+ *  place, so a single read cannot tell "this is black" from "this did not
+ *  parse". Running it twice from opposite sentinels can: a value that parsed
+ *  gives the same answer both times, one that did not gives back whichever
+ *  sentinel preceded it. */
+function probeColour(value: string): string | null {
+  const ctx = colourProbe();
+  if (!ctx) return null;
+  try {
+    ctx.fillStyle = "#000000";
+    ctx.fillStyle = value;
+    const fromBlack = String(ctx.fillStyle);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = value;
+    const fromWhite = String(ctx.fillStyle);
+    return fromBlack === fromWhite ? fromBlack : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Replace every modern colour call in a value with plain rgb, leaving the
+ *  rest of the expression — a gradient's stops, a shadow's offsets — alone. */
+function replaceColourCalls(value: string): string {
+  let out = value;
+  // Bounded: each pass removes one call, and a stylesheet value never holds
+  // anywhere near this many.
+  for (let guard = 0; guard < 64; guard++) {
+    const m = COLOUR_FN.exec(out);
+    if (!m) break;
+    const start = m.index;
+    let depth = 0;
+    let end = -1;
+    for (let k = start + m[0].length - 1; k < out.length; k++) {
+      if (out[k] === "(") depth++;
+      else if (out[k] === ")") {
+        depth--;
+        if (depth === 0) {
+          end = k;
+          break;
+        }
+      }
+    }
+    if (end < 0) break; // unbalanced; leave it rather than mangle it
+    const call = out.slice(start, end + 1);
+    const rgb = probeColour(call) || oklchToRgb(call);
+    out = out.slice(0, start) + rgb + out.slice(end + 1);
+  }
+  return out;
+}
+
+/** A value html2canvas can read. */
+const plainColour = (value: string): string =>
+  replaceColourCalls(value).replace(INTERPOLATION, "");
+
+/** Walk a stylesheet, including inside @media / @supports / @layer.
+ *
+ *  Nested rules used to fall into the catch and get the whole block deleted,
+ *  which took most of Tailwind's styles with it. Recursing keeps the styles
+ *  and still removes the colours html2canvas chokes on. */
+function scrubRules(rules: CSSRuleList, sheet: CSSStyleSheet) {
+  for (let j = rules.length - 1; j >= 0; j--) {
+    const rule = rules[j] as any;
+    if (!rule?.cssText || !needsWork(rule.cssText)) continue;
+    if (rule.cssRules) {
+      scrubRules(rule.cssRules as CSSRuleList, sheet);
+      continue;
+    }
+    const style = rule.style as CSSStyleDeclaration | undefined;
+    if (!style) continue;
+    try {
+      for (let k = 0; k < style.length; k++) {
+        const prop = style[k];
+        const val = style.getPropertyValue(prop);
+        // Custom properties are enumerated here too, which is the important
+        // part: Tailwind holds its palette in --color-* variables, so fixing
+        // them at the source fixes everything that refers to them.
+        if (val && needsWork(val)) {
+          style.setProperty(
+            prop,
+            plainColour(val),
+            style.getPropertyPriority(prop),
+          );
+        }
+      }
+    } catch {
+      try {
+        sheet.deleteRule(j);
+      } catch {
+        /* cross-origin sheet; nothing to do */
+      }
+    }
+  }
+}
+
+/** Rewrite every colour html2canvas cannot parse in a cloned document.
+ *
+ *  Shared by every capture in the app — the deck, the timetable, the lesson
+ *  plan and the image download — because separate copies drifted, two of them
+ *  looked properties up by a name the DOM does not answer to, and one had no
+ *  conversion at all. */
+export function stripUnsupportedColours(clonedDoc: Document) {
   clonedDoc.querySelectorAll("style").forEach((tag) => {
-    if (tag.textContent?.includes("oklch")) {
-      tag.textContent = tag.textContent.replace(/oklch\([^)]+\)/gi, (m) =>
-        oklchToRgb(m),
-      );
+    if (tag.textContent && needsWork(tag.textContent)) {
+      tag.textContent = plainColour(tag.textContent);
     }
   });
 
@@ -76,57 +232,34 @@ function prepareClone(clonedDoc: Document) {
     const sheet = clonedDoc.styleSheets[i];
     try {
       const rules = sheet.cssRules || sheet.rules;
-      if (!rules) continue;
-      for (let j = rules.length - 1; j >= 0; j--) {
-        const rule = rules[j] as CSSStyleRule;
-        if (!rule.cssText?.includes("oklch")) continue;
-        try {
-          const style = rule.style;
-          if (!style) continue;
-          for (let k = 0; k < style.length; k++) {
-            const prop = style[k];
-            const val = style.getPropertyValue(prop);
-            if (val?.includes("oklch"))
-              style.setProperty(prop, oklchToRgb(val));
-          }
-        } catch {
-          // Write-protected rule — dropping it beats crashing the capture.
-          try {
-            sheet.deleteRule(j);
-          } catch {
-            /* cross-origin sheet; nothing to do */
-          }
-        }
-      }
+      if (rules) scrubRules(rules, sheet);
     } catch {
       /* cross-origin stylesheet — not ours to fix */
     }
   }
 
-  const probe = clonedDoc.createElement("canvas").getContext("2d");
+  const view = clonedDoc.defaultView || window;
   const els = clonedDoc.getElementsByTagName("*");
   for (let i = 0; i < els.length; i++) {
     const el = els[i] as HTMLElement;
-    const computed = clonedDoc.defaultView?.getComputedStyle(el);
-    if (!computed) continue;
-    for (const prop of ["color", "backgroundColor", "borderColor", "fill", "stroke"]) {
+    let computed: CSSStyleDeclaration;
+    try {
+      computed = view.getComputedStyle(el);
+    } catch {
+      continue;
+    }
+    for (const prop of COLOUR_PROPS) {
       const val = computed.getPropertyValue(prop);
-      if (!val?.includes("oklch")) continue;
-      let safe = oklchToRgb(val);
-      if (probe) {
-        try {
-          probe.fillStyle = val;
-          safe = probe.fillStyle as string;
-        } catch {
-          /* keep the converted value */
-        }
-      }
-      el.style.setProperty(prop, safe, "important");
+      if (!val || !needsWork(val)) continue;
+      el.style.setProperty(prop, plainColour(val), "important");
     }
   }
+}
 
-  // Slides animate in. Without this a capture lands at whatever frame the
-  // entrance happened to be on — half-faded, slightly scaled.
+/** The deck's own clone step: colours, then freeze the entrance animations so
+ *  a slide is never photographed mid-pop. */
+function prepareClone(clonedDoc: Document) {
+  stripUnsupportedColours(clonedDoc);
   const freeze = clonedDoc.createElement("style");
   freeze.textContent = `*,*::before,*::after{animation:none !important;transition:none !important;}`;
   clonedDoc.head.appendChild(freeze);

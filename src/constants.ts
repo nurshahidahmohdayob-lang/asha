@@ -4,6 +4,23 @@ import { AppTheme } from './types';
 // chrome and personality — not just a recolor of the same slide.
 export const THEMES: AppTheme[] = [
   {
+    // The Parent Guide look, taken from the published deck at
+    // reading-phonics.vercel.app/parent-slides.html: warm paper ground, forest
+    // and gold, serif headlines over sans body, and a dark "feature" ground
+    // for the opener and any section divider.
+    id: 'tpl-guide',
+    name: 'Parent Guide',
+    designType: 'guide',
+    bgColor: '#FAF5E9',
+    cardBg: '#FFFDF6',
+    textColor: '#16221B',
+    accentColor: '#0A4F29',
+    secondaryColor: '#F7B917',
+    titleColor: '#16221B',
+    patternType: 'none',
+    emoji: '🌱',
+  },
+  {
     // Matches the projected Project Lesson deck, so a slide edited here looks
     // like the lesson the class will actually see.
     id: 'tpl-deck',

@@ -129,6 +129,11 @@ import {
 } from "docx";
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
+import {
+  stripUnsupportedColours,
+  captureSlide,
+  waitForStage,
+} from "./utils/deckExport";
 import { ZeraBrandLogo } from "./components/ZeraBrandLogo";
 import { InteractiveOrganizerWorksheet } from "./components/InteractiveOrganizerWorksheet";
 import TeachingDeck from "./components/TeachingDeck";
@@ -138,21 +143,53 @@ import ProfessionalDevelopment from "./components/ProfessionalDevelopment";
 import mammoth from "mammoth";
 import JSZip from "jszip";
 
+/** Text out of a .docx, with any hyperlink's ADDRESS kept beside its words.
+ *
+ *  extractRawText returns only what is visible on the page, and in Word a
+ *  resource is normally a few words with the address hidden behind them — so
+ *  "Plants worksheet" arrived with nothing to click and the link was simply
+ *  lost. Converting to HTML first is the only way to see the href at all. */
 const extractTextFromDocx = async (file: File): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const arrayBuffer = event.target?.result as ArrayBuffer;
-      try {
-        const result = await mammoth.extractRawText({ arrayBuffer });
-        resolve(result.value);
-      } catch (err) {
-        reject(err);
-      }
-    };
-    reader.onerror = reject;
-    reader.readAsArrayBuffer(file);
-  });
+  const arrayBuffer = await file.arrayBuffer();
+  let html = "";
+  try {
+    html = (await mammoth.convertToHtml({ arrayBuffer })).value || "";
+  } catch {
+    // Whatever defeated the HTML conversion, the plain text is still worth
+    // having — better a plan with no links than no plan.
+    return (await mammoth.extractRawText({ arrayBuffer })).value || "";
+  }
+  return (
+    html
+      // An anchor becomes "words <address>", so the address survives as text
+      // and reads as belonging to those words.
+      .replace(
+        /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,
+        (_m, href, inner) => {
+          const words = String(inner).replace(/<[^>]+>/g, "").trim();
+          const url = String(href).trim();
+          if (!url || /^(mailto:|#)/i.test(url)) return words;
+          // Bare, NOT wrapped in angle brackets. Wrapping it looked tidy and
+          // then the tag stripper further down deleted the address as if it
+          // were markup — the link survived every step but the last one.
+          return words && words !== url ? `${words} - ${url}` : url;
+        },
+      )
+      .replace(/<\/(p|div|li|tr|h[1-6])>/gi, "\n")
+      .replace(/<\/t[dh]>/gi, " | ")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&amp;/gi, "&")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'")
+      .split("\n")
+      .map((l) => l.replace(/[ \t]+/g, " ").trim())
+      .filter(Boolean)
+      .join("\n")
+  );
 };
 
 const extractTextFromExcel = async (file: File): Promise<string> => {
@@ -221,7 +258,26 @@ const extractTextFromPdf = async (file: File): Promise<string> => {
       .map((l) => l.replace(/[ \t]+/g, " ").trim())
       .filter(Boolean)
       .join("\n");
-    if (tidy) pages.push(`--- Page ${n} ---\n${tidy}`);
+    // A link in a PDF is an annotation over the text, not part of it, so the
+    // address never appears above however the page is read. Collected here and
+    // listed with the page, which is enough for a resource to keep its link.
+    let links: string[] = [];
+    try {
+      const annots = await page.getAnnotations();
+      links = Array.from(
+        new Set(
+          (annots as any[])
+            .map((a) => a?.url || a?.unsafeUrl || "")
+            .filter((u: string) => /^https?:\/\//i.test(u)),
+        ),
+      );
+    } catch {
+      // Annotations are optional; a page without them still has its text.
+    }
+    const block = links.length
+      ? `${tidy}\nLINKS ON THIS PAGE: ${links.join(" ")}`
+      : tidy;
+    if (block) pages.push(`--- Page ${n} ---\n${block}`);
   }
   await pdf.destroy?.();
   return pages.join("\n\n");
@@ -2055,6 +2111,81 @@ const renderSlideDecor = (
           );
         })()}
 
+      {/* Parent Guide — the published deck's look. Two grounds, as there:
+          the opener sits on deep forest with a gold hairline, every other
+          slide on warm paper with a forest rule under the headline. Painted,
+          not an asset, so it opens with nothing to load. */}
+      {design === "guide" &&
+        (() => {
+          const isOpener = slideIdx === 0;
+          const PAPER = "#FAF5E9";
+          const FOREST_1 = "#0B5730";
+          const FOREST_2 = "#063A1E";
+          const GOLD = "#F7B917";
+          return isOpener ? (
+            <>
+              <div
+                className="absolute inset-0"
+                style={{
+                  background: `linear-gradient(155deg, ${FOREST_1}, ${FOREST_2})`,
+                }}
+              />
+              {/* A slow warm bloom, so the flat colour has some depth. */}
+              <div
+                className="absolute inset-0"
+                style={{
+                  background:
+                    "radial-gradient(70% 60% at 30% 30%, rgba(247,185,23,.10), transparent 70%)",
+                }}
+              />
+              <div
+                className="absolute"
+                style={{
+                  left: "7%",
+                  right: "7%",
+                  bottom: "9%",
+                  height: 1,
+                  background: `linear-gradient(90deg, ${GOLD}66, transparent)`,
+                }}
+              />
+            </>
+          ) : (
+            <>
+              <div className="absolute inset-0" style={{ background: PAPER }} />
+              {/* The paper is not flat in the reference; it warms towards the
+                  foot of the slide. */}
+              <div
+                className="absolute inset-0"
+                style={{
+                  background:
+                    "linear-gradient(180deg, rgba(242,233,211,0) 55%, rgba(242,233,211,.75) 100%)",
+                }}
+              />
+              <div
+                className="absolute"
+                style={{
+                  left: "7%",
+                  width: "13%",
+                  top: "26%",
+                  height: 3,
+                  borderRadius: 2,
+                  background: FOREST_1,
+                }}
+              />
+              <div
+                className="absolute"
+                style={{
+                  left: "7%",
+                  right: "7%",
+                  bottom: "8.5%",
+                  height: 1,
+                  background: "rgba(22,34,27,.14)",
+                }}
+              />
+            </>
+          );
+        })()}
+
       {design === "band" && (
         <>
           <div
@@ -3505,9 +3636,12 @@ const WeekSelector = ({
         selectClassName,
       )}
     >
-      {Array.from({ length: 15 }, (_, i) => i + 1).map((num) => (
-        <option key={num} value={num}>
-          Week {num}
+      {/* Straight from TERM_WEEKS. This was a hardcoded count of 15, so a
+          16-week term left the last week unselectable — and the dates were
+          nowhere, leaving the teacher to work out which week they were in. */}
+      {TERM_WEEKS.map((w) => (
+        <option key={w.id} value={w.id}>
+          Week {w.id} · {termWeekLabel(w)}
         </option>
       ))}
     </select>
@@ -3572,11 +3706,17 @@ const LpSection = ({
  *  is for the teacher who just wants to open and present without PowerPoint
  *  installed, or hand a link to a class. Arrow keys, fullscreen, and one slide
  *  per page when printed. */
-const buildSlidesHTML = (
-  slides: any[],
-  title: string,
-  theme: { accentColor?: string; bgColor?: string; textColor?: string } = {},
-): string => {
+/** A single self-contained HTML deck built from pictures of the real slides.
+ *
+ *  The pictures are the whole point. Rebuilding each slide from its text meant
+ *  writing a second renderer that had to be kept in step with the first, and
+ *  it never was — the download came out in different fonts, different colours
+ *  and a different layout from the deck the teacher had just designed. What is
+ *  captured is what was on screen, so there is nothing left to keep in step.
+ *
+ *  Everything is inlined: it opens from a memory stick, on a classroom machine
+ *  with no network, with no PowerPoint and nothing to install. */
+const buildSlidesHTML = (images: string[], title: string): string => {
   const esc = (v: any) =>
     (v ?? "")
       .toString()
@@ -3584,33 +3724,12 @@ const buildSlidesHTML = (
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
-  const accent = theme.accentColor || "#059669";
-  const ink = theme.textColor || "#12140F";
 
-  const cards = (slides || [])
-    .map((sl: any, i: number) => {
-      const bullets = (sl?.content || [])
-        .map((b: any) => (b ?? "").toString().trim())
-        .filter(Boolean);
-      // Slide 1 is the opener — bigger type, no bullet list furniture.
-      const isTitle = i === 0 && sl?.type === "title";
-      const pic = sl?.imageUrl
-        ? `<img class="pic" src="${esc(sl.imageUrl)}" alt="">`
-        : "";
-      return `<section class="slide${isTitle ? " opener" : ""}" data-i="${i}"
-        style="background:${esc(sl?.backgroundColor || theme.bgColor || "#FFFFFF")}">
-        <div class="inner">
-          <h2>${esc(sl?.title)}</h2>
-          ${
-            bullets.length
-              ? `<ul>${bullets.map((b: string) => `<li>${esc(b)}</li>`).join("")}</ul>`
-              : ""
-          }
-          ${pic}
-        </div>
-        <span class="num">${i + 1} / ${(slides || []).length}</span>
-      </section>`;
-    })
+  const cards = images
+    .map(
+      (src, i) =>
+        `<section class="slide" data-i="${i}"><img src="${src}" alt="Slide ${i + 1}"></section>`,
+    )
     .join("");
 
   return `<!doctype html>
@@ -3621,62 +3740,65 @@ const buildSlidesHTML = (
 <title>${esc(title)}</title>
 <style>
   *{box-sizing:border-box}
-  body{margin:0;background:#0d1f17;color:${ink};
+  body{margin:0;background:#0d1f17;
        font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-  .stage{height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
-  .slide{display:none;width:min(1120px,100%);aspect-ratio:16/9;border-radius:18px;
-         box-shadow:0 24px 60px rgba(0,0,0,.35);position:relative;overflow:hidden}
-  .slide.on{display:flex}
-  .inner{flex:1;display:flex;flex-direction:column;justify-content:center;
-         padding:6% 7%;gap:2.2vh;overflow:hidden}
-  h2{margin:0;font-size:clamp(22px,3.4vw,46px);line-height:1.1;color:${accent};font-weight:800}
-  .opener h2{font-size:clamp(30px,5.4vw,72px);text-align:center}
-  ul{margin:0;padding-left:1.1em;font-size:clamp(14px,1.7vw,26px);line-height:1.45}
-  li{margin-bottom:.55em}
-  .pic{max-height:38%;object-fit:contain;align-self:center;border-radius:12px}
-  .num{position:absolute;right:18px;bottom:14px;font-size:12px;font-weight:800;opacity:.45}
+  .stage{height:100vh;display:flex;align-items:center;justify-content:center;padding:24px 24px 76px}
+  .slide{display:none;width:min(1400px,100%);max-height:100%}
+  .slide.on{display:flex;align-items:center;justify-content:center}
+  /* The picture is the slide. Nothing is drawn over it and nothing crops it,
+     so what opens here is exactly what was designed. */
+  .slide img{display:block;max-width:100%;max-height:calc(100vh - 100px);
+             width:auto;height:auto;object-fit:contain;
+             border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,.35)}
   .bar{position:fixed;left:0;right:0;bottom:0;display:flex;gap:10px;align-items:center;
        justify-content:center;padding:12px;background:rgba(0,0,0,.55);backdrop-filter:blur(6px)}
   .bar button{font:inherit;font-size:12px;font-weight:800;text-transform:uppercase;
               letter-spacing:.08em;border:0;border-radius:10px;padding:9px 16px;cursor:pointer;
               background:rgba(255,255,255,.15);color:#fff}
+  .bar button:hover{background:rgba(255,255,255,.28)}
   .bar .go{background:#FACC15;color:#064E3B}
   .bar span{color:#fff;opacity:.7;font-size:12px;margin:0 6px}
   @media print{
+    /* One slide per page, every slide, however the deck was left on screen. */
     body{background:#fff}
-    .stage{display:block;height:auto;padding:0}
-    .slide{display:flex !important;width:100%;margin:0;border-radius:0;box-shadow:none;
-           page-break-after:always;break-after:page}
     .bar{display:none}
+    .stage{display:block;height:auto;padding:0}
+    .slide{display:block !important;page-break-after:always;break-after:page;width:100%}
+    .slide img{max-height:none;width:100%;border-radius:0;box-shadow:none}
+    .slide:last-child{page-break-after:auto;break-after:auto}
   }
 </style>
 </head>
 <body>
-  <div class="stage">${cards}</div>
-  <div class="bar">
-    <button onclick="go(-1)">&larr; Back</button>
-    <span id="pos"></span>
-    <button onclick="go(1)">Next &rarr;</button>
-    <button class="go" onclick="fs()">Fullscreen</button>
-    <button onclick="window.print()">Print / PDF</button>
-  </div>
+<div class="stage">${cards}</div>
+<div class="bar">
+  <button onclick="go(-1)">&#8592; Prev</button>
+  <span id="count"></span>
+  <button onclick="go(1)">Next &#8594;</button>
+  <button class="go" onclick="full()">Fullscreen</button>
+  <button onclick="window.print()">Print</button>
+</div>
 <script>
-  var i = 0;
-  var all = document.querySelectorAll('.slide');
-  function show(){
-    all.forEach(function(s, n){ s.classList.toggle('on', n === i); });
-    document.getElementById('pos').textContent = (i + 1) + ' / ' + all.length;
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var at = 0;
+  function show(n){
+    at = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach(function(s, i){ s.classList.toggle('on', i === at); });
+    document.getElementById('count').textContent = (at + 1) + ' / ' + slides.length;
   }
-  function go(d){ i = Math.max(0, Math.min(all.length - 1, i + d)); show(); }
-  function fs(){
+  function go(d){ show(at + d); }
+  function full(){
     if (document.fullscreenElement) document.exitFullscreen();
     else document.documentElement.requestFullscreen();
   }
   document.addEventListener('keydown', function(e){
     if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); go(1); }
-    if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(-1); }
+    if (e.key === 'ArrowLeft'  || e.key === 'PageUp')  { e.preventDefault(); go(-1); }
+    if (e.key === 'Home') show(0);
+    if (e.key === 'End')  show(slides.length - 1);
+    if (e.key === 'f')    full();
   });
-  show();
+  show(0);
 </script>
 </body>
 </html>`;
@@ -4747,26 +4869,73 @@ const adminNavLabel = (tab: string): string => {
   return "";
 };
 
+/** The term's teaching weeks — the ONE place this calendar is written down.
+ *
+ *  It used to be three: the tracker's column labels, the date→week lookup and
+ *  the week→date lookup, each with the dates typed out again by hand. Changing
+ *  term meant editing all three in step, and missing one filed a plan under a
+ *  different week from the column it was counted in — which is invisible until
+ *  a Head of Department asks why a week looks empty.
+ *
+ *  Dates are the school's own, not a Monday-plus-seven calculation: the term
+ *  opens on a Wednesday with a three-day week, and a computed calendar would
+ *  quietly get that wrong. */
+const TERM_WEEKS: { id: number; start: string; end: string }[] = [
+  { id: 1, start: "2026-08-26", end: "2026-08-28" }, // short opening week (Wed–Fri)
+  { id: 2, start: "2026-08-31", end: "2026-09-04" },
+  { id: 3, start: "2026-09-07", end: "2026-09-11" },
+  { id: 4, start: "2026-09-14", end: "2026-09-18" },
+  { id: 5, start: "2026-09-21", end: "2026-09-25" },
+  { id: 6, start: "2026-09-28", end: "2026-10-02" },
+  { id: 7, start: "2026-10-05", end: "2026-10-09" },
+  { id: 8, start: "2026-10-12", end: "2026-10-16" },
+  { id: 9, start: "2026-10-19", end: "2026-10-23" },
+  { id: 10, start: "2026-10-26", end: "2026-10-30" },
+  { id: 11, start: "2026-11-02", end: "2026-11-06" },
+  { id: 12, start: "2026-11-09", end: "2026-11-13" },
+  { id: 13, start: "2026-11-16", end: "2026-11-20" },
+  { id: 14, start: "2026-11-23", end: "2026-11-27" },
+  { id: 15, start: "2026-11-30", end: "2026-12-04" },
+  { id: 16, start: "2026-12-07", end: "2026-12-11" },
+];
+
+/** "2026-08-26" → 826. Day-and-month only, so a plan dated in another year
+ *  still lands in the right week rather than falling off the end. Safe here
+ *  because no week in this term crosses into January. */
+const monthDayKey = (iso: string): number => {
+  const [, m, d] = iso.split("-");
+  return Number(m) * 100 + Number(d);
+};
+
+/** "26/8-28/8", the form the tracker column has always shown. */
+const termWeekLabel = (w: { start: string; end: string }): string => {
+  const dm = (iso: string) => {
+    const [, m, d] = iso.split("-");
+    return `${Number(d)}/${Number(m)}`;
+  };
+  return `${dm(w.start)}-${dm(w.end)}`;
+};
+
 const getWeekFromDate = (dateStr: string): number | null => {
   if (!dateStr) return null;
   const cleaned = dateStr.trim();
   if (!cleaned) return null;
 
-  // Try clean standard ISO format parsing first
-  let d = new Date(cleaned);
-
-  // If Date is invalid or has unusual formats, let's try mapping common school date notation (e.g. "13/4", "13/4/2026", "13-4")
-  if (isNaN(d.getTime())) {
-    const parts = cleaned.split(/[-/.]/);
-    if (parts.length >= 2) {
-      const day = parseInt(parts[0], 10);
-      const month = parseInt(parts[1], 10) - 1; // 0-indexed month
-      const year = parts.length >= 3 ? parseInt(parts[2], 10) : 2026;
-      const fullYear = year < 100 ? 2000 + year : year;
-      if (!isNaN(day) && !isNaN(month) && !isNaN(fullYear)) {
-        d = new Date(fullYear, month, day);
-      }
-    }
+  // School date notation is DAY first — "7.9.2026" is the 7th of September,
+  // and the term dates are written that way. It has to be read here rather
+  // than handed to Date, which treats an ambiguous "7.9.2026" as the American
+  // 9th of July and silently files the plan two months and several weeks off.
+  // Anything unambiguous (ISO, or a written-out month) still goes to Date.
+  const dayFirst = /^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?$/.exec(cleaned);
+  let d: Date;
+  if (dayFirst) {
+    const day = parseInt(dayFirst[1], 10);
+    const month = parseInt(dayFirst[2], 10) - 1; // 0-indexed
+    const rawYear = dayFirst[3] ? parseInt(dayFirst[3], 10) : 2026;
+    const fullYear = rawYear < 100 ? 2000 + rawYear : rawYear;
+    d = new Date(fullYear, month, day);
+  } else {
+    d = new Date(cleaned);
   }
 
   if (isNaN(d.getTime())) return null;
@@ -4777,76 +4946,31 @@ const getWeekFromDate = (dateStr: string): number | null => {
 
   const mmdd = month * 100 + day;
 
-  // Hardcoded academic 2026 weekly boundaries corresponding to trackerWeeks labels
-  if (mmdd >= 413 && mmdd <= 419) return 1; // 13/4-17/4
-  if (mmdd >= 420 && mmdd <= 426) return 2; // 20/4-24/4
-  if (mmdd >= 427 && mmdd <= 503) return 3; // 27/4-1/5
-  if (mmdd >= 504 && mmdd <= 510) return 4; // 4/5-8/5
-  if (mmdd >= 511 && mmdd <= 517) return 5; // 11/5-15/5
-  if (mmdd >= 518 && mmdd <= 531) return 6; // 18/5-22/5 (including midterm break)
-  if (mmdd >= 601 && mmdd <= 607) return 7; // 1/6-5/6
-  if (mmdd >= 608 && mmdd <= 614) return 8; // 8/6-12/6
-  if (mmdd >= 615 && mmdd <= 621) return 9; // 15/6-19/6
-  if (mmdd >= 622 && mmdd <= 628) return 10; // 22/6-26/6
-  if (mmdd >= 629 && mmdd <= 705) return 11; // 29/6-3/7
-  if (mmdd >= 706 && mmdd <= 712) return 12; // 6/7-10/7
-  if (mmdd >= 713 && mmdd <= 719) return 13; // 13/7-17/7
-  if (mmdd >= 720 && mmdd <= 726) return 14; // 20/7-24/7
-  if (mmdd >= 727 && mmdd <= 802) return 15; // 27/7-31/7
+  // The latest week that has already begun owns the date. That puts a weekend
+  // or a mid-term break with the week just taught, which is where a teacher
+  // dating a plan on the Saturday expects it to count.
+  let owned: number | null = null;
+  for (const w of TERM_WEEKS) {
+    if (mmdd >= monthDayKey(w.start)) owned = w.id;
+  }
+  if (owned !== null) return owned;
 
-  // Dynamic fallback: find closest starting Monday for any other date in dynamic year
-  const targetYear = year;
-  const weekStarts = [
-    { week: 1, date: new Date(targetYear, 3, 13) }, // April 13
-    { week: 2, date: new Date(targetYear, 3, 20) }, // April 20
-    { week: 3, date: new Date(targetYear, 3, 27) }, // April 27
-    { week: 4, date: new Date(targetYear, 4, 4) }, // May 4
-    { week: 5, date: new Date(targetYear, 4, 11) }, // May 11
-    { week: 6, date: new Date(targetYear, 4, 18) }, // May 18
-    { week: 7, date: new Date(targetYear, 5, 1) }, // June 1
-    { week: 8, date: new Date(targetYear, 5, 8) }, // June 8
-    { week: 9, date: new Date(targetYear, 5, 15) }, // June 15
-    { week: 10, date: new Date(targetYear, 5, 22) }, // June 22
-    { week: 11, date: new Date(targetYear, 5, 29) }, // June 29
-    { week: 12, date: new Date(targetYear, 6, 6) }, // July 6
-    { week: 13, date: new Date(targetYear, 6, 13) }, // July 13
-    { week: 14, date: new Date(targetYear, 6, 20) }, // July 20
-    { week: 15, date: new Date(targetYear, 6, 27) }, // July 27
-  ];
-
-  let closestWeek = 1;
-  let minDiff = Infinity;
-  for (const ws of weekStarts) {
-    const diff = Math.abs(d.getTime() - ws.date.getTime());
-    if (diff < minDiff) {
-      minDiff = diff;
-      closestWeek = ws.week;
+  // Before the term opens, or elsewhere in the year entirely: the nearest
+  // week, so a date is never rejected outright.
+  let closest = TERM_WEEKS[0]?.id ?? 1;
+  let smallest = Infinity;
+  for (const w of TERM_WEEKS) {
+    const diff = Math.abs(mmdd - monthDayKey(w.start));
+    if (diff < smallest) {
+      smallest = diff;
+      closest = w.id;
     }
   }
-
-  return closestWeek;
+  return closest;
 };
 
-const getDateForWeek = (weekId: number): string => {
-  const dates: Record<number, string> = {
-    1: "2026-04-13",
-    2: "2026-04-20",
-    3: "2026-04-27",
-    4: "2026-05-04",
-    5: "2026-05-11",
-    6: "2026-05-18",
-    7: "2026-06-01",
-    8: "2026-06-08",
-    9: "2026-06-15",
-    10: "2026-06-22",
-    11: "2026-06-29",
-    12: "2026-07-06",
-    13: "2026-07-13",
-    14: "2026-07-20",
-    15: "2026-07-27",
-  };
-  return dates[weekId] || "2026-04-13";
-};
+const getDateForWeek = (weekId: number): string =>
+  TERM_WEEKS.find((w) => w.id === weekId)?.start || TERM_WEEKS[0].start;
 
 // --- Components ---
 
@@ -5715,7 +5839,12 @@ export default function App() {
     return err?.message || String(err);
   };
 
-  const [activeTheme, setActiveTheme] = useState<AppTheme>(THEMES[0]);
+  /** The Parent Guide look, by id rather than by position — a theme added or
+   *  reordered in constants.ts must not silently change what Slide Studio
+   *  produces. */
+  const guideTheme =
+    THEMES.find((t) => t.id === "tpl-guide") || THEMES[0];
+  const [activeTheme, setActiveTheme] = useState<AppTheme>(guideTheme);
   const [content, setContent] = useState<EduContent | null>(null);
 
   // Bulletproofing for "Open Interactive HTML": keep a copy of the LAST
@@ -6861,18 +6990,31 @@ export default function App() {
       console.warn("deleteFolder called without a folder id; ignoring.");
       return;
     }
-    if (!window.confirm("Delete folder and all its contents?")) return;
+    // Deleting a folder takes the work inside it with it, and plans are filed
+    // into "Submitted" automatically rather than by hand — so say what is about
+    // to go, and how much of it, instead of asking about "contents".
+    const doomed = userProjects.filter(
+      (p) => !!p.folderId && p.folderId === folderId,
+    );
+    const folderName =
+      folders.find((f: any) => f?.id === folderId)?.name || "this folder";
+    if (
+      !window.confirm(
+        doomed.length
+          ? `Delete "${folderName}" and the ${doomed.length} project(s) filed in it? This cannot be undone.` +
+              (folderName === SUBMITTED_FOLDER_NAME
+                ? "\n\nThe copies already sent to the Admin are not affected — only your own."
+                : "")
+          : `Delete the empty folder "${folderName}"?`,
+      )
+    )
+      return;
     try {
       // The store has no batch, so this is no longer atomic. The projects go
       // first on purpose: if the folder delete then fails the teacher sees an
       // empty folder, which they can delete again, rather than projects left
       // pointing at a folder that no longer exists and no way to reach them.
-      const projectsInFolder = userProjects.filter(
-        (p) => !!p.folderId && p.folderId === folderId,
-      );
-      await Promise.all(
-        projectsInFolder.map((p) => store.remove("projects", p.id)),
-      );
+      await Promise.all(doomed.map((p) => store.remove("projects", p.id)));
       await store.remove("folders", folderId);
       if (activeFolderId === folderId) setActiveFolderId(null);
     } catch (err) {
@@ -8746,7 +8888,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       numQuestions: 3,
       questionTypes: [],
     };
-    setGeneratingMessage(`Writing the Week ${week.week} lesson…`);
+    // What the teacher asked for is a presentation, so say that. The week
+    // number and the word "lesson" described the machinery underneath and
+    // left them wondering whether the right thing was being built.
+    setGeneratingMessage("Creating the slide presentation…");
     setIsGenerating(true);
     try {
       const { generateLessonTeaching, generateLessonGames } = await import(
@@ -9292,7 +9437,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     const week = content?.lessonPlan?.weeklyBreakdown[weekIdx];
     if (!week) return;
 
-    setGeneratingMessage(`Building the Week ${weekIdx + 1} lesson…`);
+    setGeneratingMessage("Creating the slide presentation…");
     setIsGeneratingWeek({ index: weekIdx, type: "slides" });
     setIsGenerating(true);
     try {
@@ -10162,6 +10307,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           return store.put("submitted_plans", `sub_${p.id}`, submissionData);
         }),
       );
+      await fileAsSubmitted(plans);
       alert(
         `Successfully submitted ${plans.length} lesson plan(s) to the Admin Dashboard!`,
       );
@@ -10390,6 +10536,71 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   };
 
   // Submit exactly the plans the teacher ticked on the board.
+  /* ── Filing a plan once it is with the Admin ────────────────────────────
+     A submitted plan is no longer something to write, but it looked exactly
+     like one that had never been sent — a teacher with a dozen cards had no way
+     to tell the two apart except by remembering. So submitting files the plan
+     in her own "Submitted" folder and marks it, which takes it off the board's
+     to-do list and puts it under Submitted, where it can still be opened,
+     edited and sent again. */
+  const SUBMITTED_FOLDER_NAME = "Submitted";
+
+  const ensureSubmittedFolder = async (): Promise<string | null> => {
+    if (!user) return null;
+    const mine = folders.find(
+      (f: any) =>
+        f?.name === SUBMITTED_FOLDER_NAME &&
+        (!f?.userId || f.userId === user.uid),
+    );
+    if (mine?.id) return mine.id;
+    // One folder per teacher, named after the account, so a second submission
+    // cannot make a second folder.
+    const id = `submitted-${user.uid}`;
+    try {
+      await store.put("folders", id, {
+        id,
+        userId: user.uid,
+        name: SUBMITTED_FOLDER_NAME,
+        timestamp: Date.now(),
+      });
+      return id;
+    } catch (err) {
+      console.warn("Could not create the Submitted folder:", err);
+      return null;
+    }
+  };
+
+  const fileAsSubmitted = async (projects: any[]) => {
+    const valid = (projects || []).filter((p: any) => p?.id);
+    if (!user || !valid.length) return;
+    const folderId = await ensureSubmittedFolder();
+    const at = Date.now();
+    // The board reads this straight away rather than waiting for the watcher,
+    // so the card moves the moment the teacher presses Submit.
+    setUserProjects((prev: any[]) =>
+      prev.map((p: any) =>
+        valid.some((v: any) => v.id === p.id)
+          ? { ...p, status: "submitted", submittedAt: at, ...(folderId ? { folderId } : {}) }
+          : p,
+      ),
+    );
+    await Promise.all(
+      valid.map((v: any) =>
+        store
+          .patch("projects", v.id, {
+            status: "submitted",
+            submittedAt: at,
+            ...(folderId ? { folderId } : {}),
+          })
+          // Filing is bookkeeping — the submission itself already succeeded, so
+          // a failure here must not read as a failed submission.
+          .catch((err: any) =>
+            console.warn("Could not file the plan as submitted:", err),
+          ),
+      ),
+    );
+  };
+
   const submitPlansToAdmin = async (plans: any[]) => {
     if (!user) return;
     const valid = plans.filter((p: any) => p?.content);
@@ -10442,6 +10653,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           });
         }),
       );
+      await fileAsSubmitted(valid);
       setLpSelectedPlanIds([]);
       alert(
         `Successfully submitted ${valid.length} lesson plan(s) to the Admin Dashboard!`,
@@ -10481,6 +10693,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           workspaceMode: "lesson-plan",
         },
       });
+      await fileAsSubmitted([project]);
       alert(`Submitted "${project.title || "lesson plan"}" to the Admin.`);
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, "submitted_plans");
@@ -11298,12 +11511,18 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     opts: {
       /** Which week of the plan to build from. */
       weekIdx?: number;
-      /** Put the finished lesson on the board afterwards. Off when the
-       *  teacher only walked into Slide Studio — they want the editor. */
+      /** Put the finished lesson on the board afterwards.
+       *
+       *  OFF by default. Projecting belongs to the lesson plan, where the
+       *  "Project Lesson" button runs generateSlidesForWeek — a different
+       *  function entirely. Every caller of this one is Slide Studio, the
+       *  worksheet or the reading programme, and none of them asked for a
+       *  projected lesson: a teacher who pressed Generate Slides wanted the
+       *  editor and got the deck thrown up in front of them instead. */
       project?: boolean;
     } = {},
   ) => {
-    const { weekIdx, project = true } = opts;
+    const { weekIdx, project = false } = opts;
     // Slides made off a lesson plan must teach that plan's week, so the week
     // decides the topic. Anything typed in the sidebar still steers it, and
     // without a plan nothing here changes.
@@ -11321,15 +11540,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       content?.lessonPlan?.overallTopic ||
       (fileContext ? `Presentation based on ${fileContext.name}` : "");
     if (!topic && !basedOnAssessment && !fileContext) return;
-    setGeneratingMessage(
-      fileContext
-        ? "Turning your file into slides..."
-        : basedOnAssessment
-          ? "Generating Slides from Assessment..."
-          : planWeek
-            ? `Building Week ${planWeek.week} slides from your lesson plan...`
-            : "Generating Slides...",
-    );
+    setGeneratingMessage("Creating the slide presentation…");
     setIsGenerating(true);
 
     let fileData: { mimeType: string; data: string } | undefined;
@@ -11461,6 +11672,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         // saveToVault('slides', true, updated, topicToSave);
         return updated;
       });
+      // A deck generated here comes out in the Parent Guide look — the
+      // published parent slides are the house style for a presentation. Set
+      // once here rather than forced on every render, so a teacher who picks
+      // a different design afterwards keeps it.
+      setActiveTheme(guideTheme);
       setCurrentSlideIdx(0);
       setWorkspaceMode("slides");
       setSidebarTab("slides");
@@ -12853,23 +13069,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     "ks1" | "ks2" | "ks3" | "ks4" | "cambridgePlus"
   >("ks1");
 
-  const trackerWeeks = [
-    { id: 1, label: "Week 1", dates: "13/4-17/4" },
-    { id: 2, label: "Week 2", dates: "20/4-24/4" },
-    { id: 3, label: "Week 3", dates: "27/4-1/5" },
-    { id: 4, label: "Week 4", dates: "4/5-8/5" },
-    { id: 5, label: "Week 5", dates: "11/5-15/5" },
-    { id: 6, label: "Week 6", dates: "18/5-22/5" },
-    { id: 7, label: "Week 7", dates: "1/6-5/6" },
-    { id: 8, label: "Week 8", dates: "8/6-12/6" },
-    { id: 9, label: "Week 9", dates: "15/6-19/6" },
-    { id: 10, label: "Week 10", dates: "22/6-26/6" },
-    { id: 11, label: "Week 11", dates: "29/6-3/7" },
-    { id: 12, label: "Week 12", dates: "6/7-10/7" },
-    { id: 13, label: "Week 13", dates: "13/7-17/7" },
-    { id: 14, label: "Week 14", dates: "20/7-24/7" },
-    { id: 15, label: "Week 15", dates: "27/7-31/7" },
-  ];
+  const trackerWeeks = TERM_WEEKS.map((w) => ({
+    id: w.id,
+    label: `Week ${w.id}`,
+    dates: termWeekLabel(w),
+  }));
   const [selectedWeekForSubmission, setSelectedWeekForSubmission] = useState(1);
   const [editingTeacher, setEditingTeacher] = useState<any>(null);
   const [staffAssignments, setStaffAssignments] = useState<
@@ -13645,6 +13849,47 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
    *  higher up the file it threw a temporal-dead-zone ReferenceError on
    *  every render, which blanks the whole app. TypeScript can't see it,
    *  because the call is nested inside canonicalTeacherName. */
+  /** The one name a teacher is shown by, wherever they appear.
+   *
+   *  The tracker read the staff directory and the submissions folders read the
+   *  folder documents, so the same teacher turned up under two spellings — a
+   *  roster short name on one screen and the fuller name she registered with
+   *  on the other. Whoever was reading had to work out they were one person.
+   *  Both screens now ask this, so both say the same thing.
+   *
+   *  A pinned alias wins outright. Otherwise the fullest spelling known from
+   *  either source does, which keeps a teacher's own name ahead of a classroom
+   *  short name — the same rule canonicalTeacherName already applies to
+   *  folders, now with the directory folded in as well.
+   *
+   *  A label can still change once as the directory arrives mid-session. The
+   *  folder names are there from the start, so it only ever moves to a fuller
+   *  spelling, never between unrelated ones. */
+  const teacherDisplayName = useMemo(() => {
+    const pool = [
+      ...getActiveStaffList(teachers).map((t: any) => String(t?.name || "")),
+      ...submittedFolders.map((f: any) =>
+        f?.teacherFolder ? String(f?.name || "") : "",
+      ),
+    ].filter(Boolean);
+    const answered = new Map<string, string>();
+    return (name?: string | null): string => {
+      const raw = (name || "").trim();
+      if (!raw) return raw;
+      const key = normalizeTeacherName(raw);
+      const known = answered.get(key);
+      if (known !== undefined) return known;
+      const pinned = aliasEntryFor(raw)?.full;
+      const answer = pinned
+        ? pinned
+        : pool
+            .filter((n) => sameTeacherIdentity(n, raw))
+            .reduce((best, n) => fullerTeacherName(best, n), raw);
+      answered.set(key, answer);
+      return answer;
+    };
+  }, [teachers, submittedFolders]);
+
   const submittedFolderGroups = useMemo(() => {
     const groups: {
       id: string;
@@ -13676,23 +13921,21 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           g.teacherFolder &&
           g.names.some((n) => sameTeacherIdentity(n, folderName)),
       );
-      // A pinned alias name is final; otherwise the fullest spelling wins.
-      const pinned = aliasEntryFor(folderName)?.full;
+      // A pinned alias name is final; otherwise the fullest spelling wins —
+      // asked of teacherDisplayName so this agrees with the tracker.
+      const pinned = teacherDisplayName(folderName);
       if (existing) {
         existing.names.push(folderName);
         existing.ids.push(folder.id);
-        if (pinned) {
-          existing.name = pinned;
-          if (normalizeTeacherName(folderName) === normalizeTeacherName(pinned))
-            existing.id = folder.id;
-        } else if (fullerTeacherName(existing.name, folderName) === folderName) {
-          existing.name = folderName;
+        existing.name = pinned;
+        // Point the group at the folder actually named this, so opening it
+        // lands on the document the label came from.
+        if (normalizeTeacherName(folderName) === normalizeTeacherName(pinned))
           existing.id = folder.id;
-        }
       } else {
         groups.push({
           id: folder.id,
-          name: pinned || folderName,
+          name: pinned,
           names: [folderName],
           ids: [folder.id],
           teacherFolder: true,
@@ -13700,7 +13943,38 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       }
     });
     return groups;
-  }, [submittedFolders]);
+  }, [submittedFolders, teacherDisplayName]);
+
+  /** The rows of the submission tracker — one per teacher folder.
+   *
+   *  The tracker used to list the staff directory while the submissions area
+   *  listed folders, so the two screens showed different people and a reviewer
+   *  had to reconcile them by eye. The folders are what submissions are
+   *  actually filed into, so they decide who the tracker tracks.
+   *
+   *  Each folder is paired with its directory record where one exists, because
+   *  the subject rows are keyed by directory id. A teacher with a folder and no
+   *  directory record still gets a row — with no subjects under it — rather
+   *  than being dropped, which is the honest answer: they have submitted work
+   *  and nobody has told the app what they teach. */
+  const trackerTeachers = useMemo(() => {
+    const staff = getActiveStaffList(teachers);
+    return submittedFolderGroups
+      .filter((g) => g.teacherFolder)
+      .map((g) => {
+        const match = staff.find((t: any) =>
+          g.names.some((n) => sameTeacherIdentity(t?.name, n)),
+        );
+        return {
+          // The directory id where there is one, so subject assignments and
+          // the teacherId stamped on a submission still line up.
+          id: match?.id || `folder-${g.id}`,
+          name: g.name,
+          role: match?.role || "Teacher",
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [submittedFolderGroups, teachers]);
 
   /** The folder ids the current selection covers, or null for "unfiled". */
   const selectedFolderIds: string[] | null = currentSubmittedFolderId
@@ -14021,6 +14295,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const [lpQuickSubject, setLpQuickSubject] = useState("Science");
   const [lpQuickYears, setLpQuickYears] = useState<string[]>([]);
   const [lpBoardBusy, setLpBoardBusy] = useState(false);
+  // Which half of the board is on screen: the plans still to send, or the ones
+  // already with the Admin.
+  const [lpBoardTab, setLpBoardTab] = useState<"todo" | "submitted">("todo");
   // Plans the teacher has ticked on the board, ready to submit together.
   const [lpSelectedPlanIds, setLpSelectedPlanIds] = useState<string[]>([]);
   const copySuggestion = (key: string, text: string) => {
@@ -15038,61 +15315,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       }
     };
 
-    const oklchToRgb = (oklchStr: string): string => {
-      try {
-        const regex =
-          /oklch\(\s*([\d.]+%?|none)\s+([\d.]+|none)\s+([\d.]+|none)(?:\s*\/\s*([\d.]+%?|none))?\s*\)/i;
-        const match = oklchStr.match(regex);
-        if (!match) return "#3b82f6";
-
-        const getVal = (str: string, isPercent = false) => {
-          if (!str || str.toLowerCase() === "none") return 0;
-          if (str.endsWith("%")) return parseFloat(str) / 100;
-          return parseFloat(str) / (isPercent ? 100 : 1);
-        };
-
-        const L = getVal(match[1], match[1].endsWith("%"));
-        const C = getVal(match[2]);
-        const h = getVal(match[3]);
-        const alphaVal = match[4];
-        const alpha = alphaVal
-          ? alphaVal.endsWith("%")
-            ? parseFloat(alphaVal) / 100
-            : parseFloat(alphaVal)
-          : 1;
-
-        const hRad = (h * Math.PI) / 180;
-        const aOriginal = C * Math.cos(hRad);
-        const bOriginal = C * Math.sin(hRad);
-
-        const l_ = L + 0.3963377774 * aOriginal + 0.2158037573 * bOriginal;
-        const m_ = L - 0.1055613458 * aOriginal - 0.0638541728 * bOriginal;
-        const s_ = L - 0.0894841775 * aOriginal - 1.291485548 * bOriginal;
-
-        const l = l_ * l_ * l_;
-        const m = m_ * m_ * m_;
-        const s = s_ * s_ * s_;
-
-        const rLinear = +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
-        const gLinear = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
-        const bLinear = -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s;
-
-        const toSRGB = (c: number) => {
-          return c <= 0.0031308
-            ? 12.92 * c
-            : 1.055 * Math.pow(Math.max(0, c), 1 / 2.4) - 0.055;
-        };
-
-        const r = Math.max(0, Math.min(255, Math.round(toSRGB(rLinear) * 255)));
-        const g = Math.max(0, Math.min(255, Math.round(toSRGB(gLinear) * 255)));
-        const b = Math.max(0, Math.min(255, Math.round(toSRGB(bLinear) * 255)));
-
-        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-      } catch (e) {
-        return "#3b82f6";
-      }
-    };
-
     const downloadTimetablePDF = async () => {
       if (!timetableRef.current) return;
       setIsDownloading(true);
@@ -15117,83 +15339,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           windowWidth: element.scrollWidth,
           windowHeight: element.scrollHeight,
           onclone: (clonedDoc) => {
-            // 1. Fix oklch inside <style> tags text content so they won't crash html2canvas parser
-            const styleTags = clonedDoc.querySelectorAll("style");
-            styleTags.forEach((tag) => {
-              if (tag.textContent && tag.textContent.includes("oklch")) {
-                tag.textContent = tag.textContent.replace(
-                  /oklch\([^)]+\)/gi,
-                  (match) => {
-                    return oklchToRgb(match);
-                  },
-                );
-              }
-            });
-
-            // 2. Fix oklch in all styleSheets in the cloned document
-            for (let i = 0; i < clonedDoc.styleSheets.length; i++) {
-              const sheet = clonedDoc.styleSheets[i];
-              try {
-                const rules = sheet.cssRules || sheet.rules;
-                if (!rules) continue;
-                for (let j = rules.length - 1; j >= 0; j--) {
-                  const rule = rules[j] as CSSStyleRule;
-                  if (rule.cssText && rule.cssText.includes("oklch")) {
-                    try {
-                      if (rule.style) {
-                        const style = rule.style;
-                        for (let k = 0; k < style.length; k++) {
-                          const propName = style[k];
-                          const propValue = style.getPropertyValue(propName);
-                          if (propValue && propValue.includes("oklch")) {
-                            const rgbVal = oklchToRgb(propValue);
-                            style.setProperty(propName, rgbVal);
-                          }
-                        }
-                      }
-                    } catch (modErr) {
-                      // If we can't edit it, delete the rule to prevent a crash
-                      sheet.deleteRule(j);
-                    }
-                  }
-                }
-              } catch (sheetErr) {
-                // If the stylesheet is write-protected/cross-origin, ignore or disable it
-              }
-            }
-
-            // 3. Fix oklch inline colors for all elements in the DOM
-            const elements = clonedDoc.getElementsByTagName("*");
-            const tempCanvas = document.createElement("canvas");
-            const ctx = tempCanvas.getContext("2d");
-            for (let i = 0; i < elements.length; i++) {
-              const el = elements[i] as HTMLElement;
-              const props = [
-                "color",
-                "backgroundColor",
-                "borderColor",
-                "fill",
-                "stroke",
-              ];
-              const computed = window.getComputedStyle(el);
-              props.forEach((prop) => {
-                const val = computed.getPropertyValue(prop);
-                if (val && val.includes("oklch")) {
-                  let safeVal = "#3b82f6";
-                  if (ctx) {
-                    try {
-                      ctx.fillStyle = val;
-                      safeVal = ctx.fillStyle;
-                    } catch (canvasErr) {
-                      safeVal = oklchToRgb(val);
-                    }
-                  } else {
-                    safeVal = oklchToRgb(val);
-                  }
-                  el.style.setProperty(prop, safeVal, "important");
-                }
-              });
-            }
+            // Colours first: Tailwind writes its palette in oklch and
+            // html2canvas cannot parse it. Shared so this cannot drift from
+            // the deck's and the lesson plan's copies again.
+            stripUnsupportedColours(clonedDoc);
 
             // Make sure internal scrollable elements are fully expanded inside clone so they don't clip
             const elInClone = clonedDoc.querySelector(
@@ -22015,15 +22164,23 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                               key={week.id}
                               className="p-4 text-center border-b-2 border-r-2 border-black/5 min-w-[100px]"
                             >
-                              <span className="text-[10px] font-black uppercase tracking-tighter text-[#854D0E] whitespace-nowrap">
+                              <span className="text-[10px] font-black uppercase tracking-tighter text-[#854D0E] whitespace-nowrap block">
                                 {week.label}
+                              </span>
+                              <span className="text-[9px] font-bold text-[#854D0E]/50 whitespace-nowrap block mt-0.5">
+                                {week.dates}
                               </span>
                             </th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {teachers
+                        {/* Driven by the submissions folders, so this column
+                            names exactly the people the submissions area does.
+                            A teacher with no subject assigned still gets a row:
+                            vanishing from the table left no way to tell
+                            "nothing to submit" apart from "not here at all". */}
+                        {trackerTeachers
                           .filter((teacher) => isVisibleTeacherName(teacher.name))
                           .filter(
                             (teacher) =>
@@ -22049,10 +22206,41 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                               return { yg, sub, key };
                             });
 
-                          if (assignments.length === 0) return null;
-
                           const isExpanded =
                             !!expandedTrackerTeachers[teacher.id];
+
+                          /* Every submission this teacher has sent, whatever
+                             subject it was for.
+
+                             The subject rows below tick per subject, which
+                             needs somebody to have recorded what the teacher
+                             teaches AND the plan's subject and year to line up
+                             with that record. Miss any of those and a plan the
+                             teacher definitely submitted ticks nowhere, so the
+                             tracker reads as if they had sent nothing. This
+                             ticks on the teacher alone, so submitting always
+                             shows up somewhere. */
+                          const isFromThisTeacher = (p: any) => {
+                            const matchingUser = allMembers.find(
+                              (m) => m.id === p.userId || m.uid === p.userId,
+                            );
+                            return (
+                              (!!p.teacherId && p.teacherId === teacher.id) ||
+                              sameTeacherIdentity(p.teacherName, teacher.name) ||
+                              sameTeacherIdentity(
+                                p.content?.lessonPlan?.preparedBy ||
+                                  p.content?.preparedBy ||
+                                  "",
+                                teacher.name,
+                              ) ||
+                              sameTeacherIdentity(
+                                matchingUser?.teacherName,
+                                teacher.name,
+                              )
+                            );
+                          };
+                          const mySubmissions =
+                            submittedProjects.filter(isFromThisTeacher);
 
                           return (
                             <React.Fragment key={teacher.id}>
@@ -22067,17 +22255,19 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                 className="bg-gray-50/70 hover:bg-emerald-50/40 cursor-pointer transition-all duration-200 select-none group"
                               >
                                 <td
-                                  colSpan={trackerWeeks.length + 2}
+                                  colSpan={2}
                                   className="px-6 py-4.5 border-b border-black/5"
                                 >
                                   <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-4">
                                       <div className="w-9 h-9 rounded-full bg-[#064E3B] text-white flex items-center justify-center text-sm font-black shadow-sm group-hover:scale-110 transition-transform">
-                                        {teacher.name.charAt(0)}
+                                        {teacherDisplayName(
+                                          teacher.name,
+                                        ).charAt(0)}
                                       </div>
                                       <div className="flex items-center gap-2">
                                         <span className="font-extrabold text-[#064E3B] uppercase tracking-wider text-sm">
-                                          {teacher.name}
+                                          {teacherDisplayName(teacher.name)}
                                         </span>
                                         <span className="px-2 py-0.5 bg-[#D1FAE5] text-[#059669] text-[8px] font-black uppercase rounded-full">
                                           {teacher.role}
@@ -22123,7 +22313,53 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                     </div>
                                   </div>
                                 </td>
+                                {/* One cell per week, ticked when this teacher
+                                    submitted anything for it. */}
+                                {trackerWeeks.map((week) => {
+                                  const forWeek = mySubmissions.filter(
+                                    (p: any) => p.weekId === week.id,
+                                  );
+                                  return (
+                                    <td
+                                      key={week.id}
+                                      className="p-3 border-b border-r border-black/5 text-center"
+                                    >
+                                      {forWeek.length ? (
+                                        <button
+                                          onClick={(e) => {
+                                            // The row toggles on click; this
+                                            // opens the plan instead.
+                                            e.stopPropagation();
+                                            loadProject(forWeek[0], true);
+                                          }}
+                                          title={`${forWeek.length} submitted for ${week.label} (${week.dates})`}
+                                          className="relative w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 border-2 border-emerald-200 flex items-center justify-center mx-auto hover:bg-emerald-200 transition-all shadow-sm"
+                                        >
+                                          <CheckCircle size={18} />
+                                          {forWeek.length > 1 && (
+                                            <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-[#064E3B] text-white text-[9px] font-black flex items-center justify-center">
+                                              {forWeek.length}
+                                            </span>
+                                          )}
+                                        </button>
+                                      ) : (
+                                        <div className="w-9 h-9 rounded-xl border-2 border-dashed border-gray-200 mx-auto opacity-50" />
+                                      )}
+                                    </td>
+                                  );
+                                })}
                               </tr>
+                              {isExpanded && assignments.length === 0 && (
+                                <tr>
+                                  <td
+                                    colSpan={trackerWeeks.length + 2}
+                                    className="px-6 py-3 border-b border-black/5 text-[11px] font-bold text-[#064E3B]/40 italic"
+                                  >
+                                    No subjects assigned yet — add them in
+                                    Subject Allocation.
+                                  </td>
+                                </tr>
+                              )}
                               {isExpanded &&
                                 assignments.map((asgn, idx) => {
                                   const subjectLabel = `${asgn.sub}`;
@@ -28025,6 +28261,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                     ? week.label
                                     : `Week ${plan.weekId || "?"}`}
                                 </span>
+                                {week && (
+                                  <span className="block mt-1 text-[9px] font-bold text-[#064E3B]/45 whitespace-nowrap">
+                                    {week.dates}
+                                  </span>
+                                )}
                               </td>
 
                               {/* Subject and year, the topic under it, then
@@ -28399,8 +28640,18 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     // slide on a white card. Text has to flip with it, or the opener is ink on
     // dark green and unreadable.
     const isDeckDesign = activeTheme.designType === "deck";
-    const deckOnColour = isDeckDesign && currentSlideIdx === 0;
-    const deckTextColor = deckOnColour ? "#FFFFFF" : "#12140F";
+    // Parent Guide opens on deep forest the same way, so it needs the same
+    // flip — ink on dark green is unreadable, whichever design put it there.
+    const isGuideDesign = activeTheme.designType === "guide";
+    const onColourDesign = isDeckDesign || isGuideDesign;
+    const deckOnColour = onColourDesign && currentSlideIdx === 0;
+    const deckTextColor = deckOnColour
+      ? isGuideDesign
+        ? "#F6EFDC"
+        : "#FFFFFF"
+      : isGuideDesign
+        ? "#16221B"
+        : "#12140F";
     const deckAccentColor = deckOnColour ? "#F7B917" : "#0A4F29";
 
     if (!content || !content.slides || content.slides.length === 0) {
@@ -29474,7 +29725,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     boxShadow: `0 0 0 1px ${activeTheme.accentColor}55, 0 25px 50px -12px rgb(0 0 0 / 0.25)`,
                     backgroundColor:
                       currentSlide.backgroundColor || activeTheme.bgColor,
-                    color: isDeckDesign ? deckTextColor : activeTheme.textColor,
+                    color: onColourDesign ? deckTextColor : activeTheme.textColor,
                     backgroundImage: currentSlide.backgroundWallpaper
                       ? `url("${getProxiedUrl(currentSlide.backgroundWallpaper)}")`
                       : currentSlide.backgroundWallpaper === ""
@@ -29566,12 +29817,17 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       style={{
                         color:
                           currentSlide.titleSettings?.color ||
-                          (isDeckDesign
+                          (onColourDesign
                             ? deckTextColor
                             : activeTheme.titleColor || activeTheme.accentColor),
                         fontFamily: currentSlide.titleSettings?.family
                           ? `'${currentSlide.titleSettings.family}', sans-serif`
-                          : undefined,
+                          : isGuideDesign
+                            ? // The reference's stack, and system faces only:
+                              // nothing to download, so it renders the same on
+                              // a classroom machine with no network.
+                              '"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif'
+                            : undefined,
                         fontSize: currentSlide.titleSettings?.size
                           ? `${currentSlide.titleSettings.size}px`
                           : undefined,
@@ -29582,7 +29838,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     <div
                       className="h-1 w-20 rounded-full"
                       style={{
-                        backgroundColor: isDeckDesign
+                        backgroundColor: onColourDesign
                           ? deckAccentColor
                           : activeTheme.accentColor,
                       }}
@@ -29612,7 +29868,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             <span
                               className="block mt-1.5 flex-shrink-0 animate-pulse pointer-events-none"
                               style={{
-                                color: isDeckDesign
+                                color: onColourDesign
                                   ? deckAccentColor
                                   : activeTheme.accentColor,
                               }}
@@ -30393,107 +30649,131 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               Assessment Hub
             </h2>
           </div>
-          <div className="flex items-center gap-3">
-            {!isReviewMode && (
-              <>
-                <button
-                  onClick={() => setCurrentView("notes")}
-                  className="px-4 py-2 bg-[#F0FDF4] text-[#059669] border-2 border-[#D1FAE5] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#D1FAE5] transition-all flex items-center gap-2"
-                >
-                  <Edit2 size={14} /> Journal & Handouts
-                </button>
-                <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
-                {content?.worksheet &&
-                  worksheetLanguages.map((l) => {
-                    const on = wsLang === l.id;
-                    return (
-                      <button
-                        key={l.id}
-                        onClick={() => showWorksheetIn(on ? null : l.id)}
-                        disabled={Boolean(translatingWorksheet)}
-                        title={
-                          translatingWorksheet === l.id
-                            ? "Translating…"
-                            : on
-                              ? "Back to the paper as it was written"
-                              : `Translate this paper into ${l.name}`
-                        }
-                        className={cn(
-                          "px-4 py-2 border-2 rounded-xl font-black text-xs uppercase tracking-widest transition-all shadow-sm flex items-center gap-2 disabled:opacity-60 disabled:cursor-wait",
-                          on
-                            ? "bg-[#059669] text-white border-[#059669] hover:bg-[#047857]"
-                            : "bg-white text-[#064E3B] border-[#D1FAE5] hover:bg-[#F0FDF4]",
-                        )}
-                      >
-                        {translatingWorksheet === l.id ? (
-                          <Loader2 size={14} className="animate-spin" />
-                        ) : (
-                          <Languages size={14} />
-                        )}
-                        {on ? "English" : l.label}
-                      </button>
-                    );
-                  })}
-                <button
-                  onClick={resetWorksheet}
-                  className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-white/80 transition-all shadow-sm flex items-center gap-2"
-                >
-                  <Plus size={14} /> New Assessment
-                </button>
-                <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
-              </>
-            )}
-            {content?.worksheet && (
-              <div className="flex items-center gap-2">
-                {!isReviewMode && (
-                  <>
-                    <button
-                      onClick={() =>
-                        content &&
-                        saveProject(
-                          content,
-                          content.lessonTitle || lessonInput,
-                          workspaceMode,
-                        )
-                      }
-                      className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
-                    >
-                      <PlusCircle size={14} /> Save
-                    </button>
-                    <button
-                      onClick={() => generateOnlySlides(true)}
-                      disabled={isGenerating}
-                      className="px-4 py-2 bg-[#059669] text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#047857] transition-all shadow-sm flex items-center gap-2 disabled:opacity-50"
-                    >
-                      {isGenerating && generatingMessage.includes("Slides") ? (
-                        <Loader2 className="animate-spin" size={14} />
-                      ) : (
-                        <Presentation size={14} />
-                      )}{" "}
-                      Generate Slides
-                    </button>
-                    <div className="flex items-center gap-4">
-                      <WeekSelector
-                        value={selectedWeekForSubmission}
-                        onChange={handleWeekSelectionChange}
-                      />
-                      <button
-                        onClick={() => submitToAdmin()}
-                        className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
-                      >
-                        <CheckCircle size={14} /> Submit
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-            <div className="w-12" />
-          </div>
         </div>
         <div className="flex-1 flex overflow-hidden">
           {!isReviewMode && (
             <aside className="w-80 bg-white border-r-2 border-[#D1FAE5] p-6 space-y-6 overflow-y-auto">
+              {/* The actions live here rather than along the top bar. Ranged
+                  across a fixed-height strip they ran out of room — "Submit
+                  for week" was already cut off at the right edge — and every
+                  button added pushed another one out of sight. A column grows
+                  downwards, so it cannot overflow that way, and the buttons
+                  sit beside the settings they act on. */}
+              <div className="space-y-3">
+                <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest leading-none">
+                  Actions
+                </h3>
+                <div
+                  className={cn(
+                    "flex flex-col items-stretch gap-2",
+                    // The buttons were laid out for a row. Full width and
+                    // centred reads as a list rather than a squashed strip.
+                    "[&_button]:w-full [&_button]:justify-center",
+                    // The groups inside were rows too — Save beside Generate
+                    // Slides beside Submit. Two levels is all there is.
+                    "[&>div]:flex [&>div]:flex-col [&>div]:items-stretch [&>div]:gap-2",
+                    "[&>div>div]:flex [&>div>div]:flex-col [&>div>div]:items-stretch [&>div>div]:gap-2",
+                    // The vertical rules that separated groups along the bar
+                    // have nothing to separate in a column.
+                    "[&_.h-8.w-px]:hidden",
+                  )}
+                >
+                {!isReviewMode && (
+                  <>
+                    <button
+                      onClick={() => setCurrentView("notes")}
+                      className="px-4 py-2 bg-[#F0FDF4] text-[#059669] border-2 border-[#D1FAE5] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#D1FAE5] transition-all flex items-center gap-2"
+                    >
+                      <Edit2 size={14} /> Journal & Handouts
+                    </button>
+                    <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
+                    {content?.worksheet &&
+                      worksheetLanguages.map((l) => {
+                        const on = wsLang === l.id;
+                        return (
+                          <button
+                            key={l.id}
+                            onClick={() => showWorksheetIn(on ? null : l.id)}
+                            disabled={Boolean(translatingWorksheet)}
+                            title={
+                              translatingWorksheet === l.id
+                                ? "Translating…"
+                                : on
+                                  ? "Back to the paper as it was written"
+                                  : `Translate this paper into ${l.name}`
+                            }
+                            className={cn(
+                              "px-4 py-2 border-2 rounded-xl font-black text-xs uppercase tracking-widest transition-all shadow-sm flex items-center gap-2 disabled:opacity-60 disabled:cursor-wait",
+                              on
+                                ? "bg-[#059669] text-white border-[#059669] hover:bg-[#047857]"
+                                : "bg-white text-[#064E3B] border-[#D1FAE5] hover:bg-[#F0FDF4]",
+                            )}
+                          >
+                            {translatingWorksheet === l.id ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              <Languages size={14} />
+                            )}
+                            {on ? "English" : l.label}
+                          </button>
+                        );
+                      })}
+                    <button
+                      onClick={resetWorksheet}
+                      className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-white/80 transition-all shadow-sm flex items-center gap-2"
+                    >
+                      <Plus size={14} /> New Assessment
+                    </button>
+                    <div className="h-8 w-px bg-[#D1FAE5] mx-1" />
+                  </>
+                )}
+                {content?.worksheet && (
+                  <div className="flex items-center gap-2">
+                    {!isReviewMode && (
+                      <>
+                        <button
+                          onClick={() =>
+                            content &&
+                            saveProject(
+                              content,
+                              content.lessonTitle || lessonInput,
+                              workspaceMode,
+                            )
+                          }
+                          className="px-4 py-2 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#F0FDF4] transition-all shadow-sm flex items-center gap-2"
+                        >
+                          <PlusCircle size={14} /> Save
+                        </button>
+                        <button
+                          onClick={() => generateOnlySlides(true)}
+                          disabled={isGenerating}
+                          className="px-4 py-2 bg-[#059669] text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#047857] transition-all shadow-sm flex items-center gap-2 disabled:opacity-50"
+                        >
+                          {isGenerating && generatingMessage.toLowerCase().includes("slide") ? (
+                            <Loader2 className="animate-spin" size={14} />
+                          ) : (
+                            <Presentation size={14} />
+                          )}{" "}
+                          Generate Slides
+                        </button>
+                        <div className="flex items-center gap-4">
+                          <WeekSelector
+                            value={selectedWeekForSubmission}
+                            onChange={handleWeekSelectionChange}
+                          />
+                          <button
+                            onClick={() => submitToAdmin()}
+                            className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
+                          >
+                            <CheckCircle size={14} /> Submit
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+                </div>
+              </div>
               <div className="space-y-4">
                 <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest leading-none">
                   Assessment Settings
@@ -30895,7 +31175,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     disabled={isGenerating}
                     className="w-full py-3 bg-[#3A7A5E] text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#2D5F49] transition-all shadow-md flex items-center justify-center gap-2 focus:ring-2 focus:ring-emerald-500/20 outline-none"
                   >
-                    {isGenerating && generatingMessage.includes("Slides") ? (
+                    {isGenerating && generatingMessage.toLowerCase().includes("slide") ? (
                       <Loader2 className="animate-spin" />
                     ) : (
                       <Presentation size={16} />
@@ -30923,7 +31203,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       disabled={isGenerating}
                       className="w-full py-3 bg-[#059669] text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-[#047857] transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
                     >
-                      {isGenerating && generatingMessage.includes("Slides") ? (
+                      {isGenerating && generatingMessage.toLowerCase().includes("slide") ? (
                         <Loader2 className="animate-spin" size={16} />
                       ) : (
                         <Presentation size={16} />
@@ -32877,7 +33157,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       disabled={isGenerating}
                       className="px-4 py-2 bg-[#059669] text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-[#047857] transition-all shadow-sm flex items-center gap-2 disabled:opacity-50"
                     >
-                      {isGenerating && generatingMessage.includes("Slides") ? (
+                      {isGenerating && generatingMessage.toLowerCase().includes("slide") ? (
                         <Loader2 className="animate-spin" size={14} />
                       ) : (
                         <Presentation size={14} />
@@ -34899,9 +35179,21 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     ];
     const chip =
       "px-2 py-0.5 rounded-full bg-[#F0FDF4] border border-[#D1FAE5] text-[9px] font-black uppercase tracking-wider text-[#064E3B]/70";
-    const submittable = plans.filter((p: any) => p?.content);
+    // A plan that has been sent to the Admin is filed under Submitted; the
+    // board's first tab is then only what is still to write.
+    const isSubmittedPlan = (p: any) => p?.status === "submitted";
+    const submittedPlans = plans.filter(isSubmittedPlan);
+    const todoPlans = plans.filter((p: any) => !isSubmittedPlan(p));
+    // An empty To Submit tab used to be forced over to Submitted, so that the
+    // plans never looked lost. That made the tab unclickable once everything
+    // had been sent — pressing it bounced straight back — and the message
+    // written for the empty case could never appear. The tab now opens and
+    // says where the next plan comes from instead.
+    const tab = lpBoardTab;
+    const shownPlans = tab === "submitted" ? submittedPlans : todoPlans;
+    const submittable = shownPlans.filter((p: any) => p?.content);
     const submittableCount = submittable.length;
-    const selectedCount = plans.filter((p: any) =>
+    const selectedCount = shownPlans.filter((p: any) =>
       lpSelectedPlanIds.includes(p.id),
     ).length;
     const allTicked =
@@ -35128,8 +35420,50 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               </div>
             )}
 
+            {/* Two piles, so a teacher can see at a glance what is left to send. */}
+            {(todoPlans.length > 0 || submittedPlans.length > 0) && (
+              <div className="flex items-center gap-2">
+                {([
+                  { id: "todo", label: "To Submit", count: todoPlans.length },
+                  { id: "submitted", label: "Submitted", count: submittedPlans.length },
+                ] as const).map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => {
+                      setLpBoardTab(t.id);
+                      // Ticks belong to the pile they were made in.
+                      setLpSelectedPlanIds([]);
+                    }}
+                    className={cn(
+                      "inline-flex items-center gap-2 px-4 py-2 rounded-xl border-2 text-[11px] font-black uppercase tracking-wider transition-all active:scale-95",
+                      tab === t.id
+                        ? "bg-[#059669] border-[#059669] text-white shadow-sm"
+                        : "bg-white border-[#D1FAE5] text-[#064E3B] hover:border-[#059669]",
+                    )}
+                  >
+                    {t.id === "submitted" ? (
+                      <CheckCircle size={13} />
+                    ) : (
+                      <FileText size={13} />
+                    )}
+                    {t.label}
+                    <span
+                      className={cn(
+                        "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[9px] font-black",
+                        tab === t.id
+                          ? "bg-white/25 text-white"
+                          : "bg-[#F0FDF4] text-[#064E3B]",
+                      )}
+                    >
+                      {t.count}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-5">
-              {plans.map((p: any) => {
+              {shownPlans.map((p: any) => {
                 const lp = p?.content?.lessonPlan;
                 const weeks = lp?.weeklyBreakdown || [];
                 const isOpen = currentProjectId === p.id;
@@ -35188,6 +35522,18 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     </div>
 
                     <div className="flex flex-wrap gap-1.5">
+                      {isSubmittedPlan(p) && (
+                        <span
+                          className="px-2 py-0.5 rounded-full bg-[#059669] text-white text-[9px] font-black uppercase tracking-wider inline-flex items-center gap-1"
+                          title={
+                            p?.submittedAt
+                              ? `Submitted ${new Date(p.submittedAt).toLocaleDateString()}`
+                              : "Already with the Admin"
+                          }
+                        >
+                          <CheckCircle size={10} /> Submitted
+                        </span>
+                      )}
                       <span className={chip}>
                         {lp?.class || p?.content?.gradeLevel || "No year group"}
                       </span>
@@ -35287,6 +35633,25 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 Nothing saved yet — create a blank plan, or add one per year
                 group above.
               </p>
+            )}
+            {plans.length > 0 && shownPlans.length === 0 && (
+              <div className="text-center space-y-3 pt-6">
+                <p className="text-sm font-bold text-[#064E3B]/40">
+                  {tab === "submitted"
+                    ? "Nothing submitted yet — tick a plan and press Submit Ticked."
+                    : `Every plan has been submitted${
+                        submittedPlans.length
+                          ? ` (${submittedPlans.length} in Submitted)`
+                          : ""
+                      }. Anything new starts here.`}
+                </p>
+                {tab === "todo" && (
+                  <p className="text-xs font-bold text-[#064E3B]/30">
+                    Upload a plan you already wrote, or add one per year group,
+                    using the buttons above.
+                  </p>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -37408,22 +37773,59 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     setIsGenerating(false);
   };
 
-  const downloadSlidesHTML = () => {
+  const downloadSlidesHTML = async () => {
     if (!content?.slides?.length) {
       alert("No slides to export yet.");
       return;
     }
     const title = content.lessonTitle || "Slides";
-    const html = buildSlidesHTML(content.slides, title, activeTheme);
-    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${title.replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_") || "Slides"}.html`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const total = content.slides.length;
+    const restoreTo = currentSlideIdx;
+    setIsDownloading(true);
+    try {
+      // Photograph the slides as they are actually drawn on screen.
+      //
+      // This used to rebuild each slide from scratch in hand-written HTML and
+      // CSS — its own fonts, its own colours, its own layout — so what came
+      // out looked nothing like what the teacher had designed, and every
+      // change to the slide design made the gap wider. Capturing the real
+      // element cannot drift: whatever the theme, frame, wallpaper or footer
+      // happens to be, the file gets that.
+      const shots: string[] = [];
+      for (let i = 0; i < total; i++) {
+        setCurrentSlideIdx(i);
+        // Let React paint the slide before reaching for it.
+        await new Promise<void>((r) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => r())),
+        );
+        const el = slideRef.current;
+        if (!el) continue;
+        // Fonts and pictures have to have landed, or the first slides come out
+        // in fallback type with empty image boxes.
+        await waitForStage(el);
+        shots.push(await captureSlide(el, 2));
+      }
+      if (!shots.length) throw new Error("Nothing was captured");
+
+      const html = buildSlidesHTML(shots, title);
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${title.replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "_") || "Slides"}.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error("Slides HTML export failed:", err);
+      alert(
+        `Couldn't build the HTML deck — ${err?.message || "something went wrong"}. Please try again.`,
+      );
+    } finally {
+      setCurrentSlideIdx(restoreTo);
+      setIsDownloading(false);
+    }
   };
 
   const downloadPPTX = async () => {
@@ -37534,7 +37936,33 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             });
           }
         }
-        if (!hasWallpaper && design !== "deck") {
+        // Parent Guide: the same two grounds as on screen. Without this the
+        // export puts the opener's cream text on the theme's paper colour and
+        // it disappears.
+        if (design === "guide") {
+          s.background = { color: idx === 0 ? "0B5730" : "FAF5E9" };
+          if (idx === 0) {
+            s.addShape(pres.ShapeType.rect, {
+              x: 0.7,
+              y: 4.85,
+              w: 8.6,
+              h: 0.02,
+              fill: { color: "F7B917" },
+              line: { type: "none" },
+            });
+          } else {
+            // The short forest rule that sits under the headline.
+            s.addShape(pres.ShapeType.rect, {
+              x: 0.7,
+              y: 1.55,
+              w: 1.3,
+              h: 0.04,
+              fill: { color: "0A4F29" },
+              line: { type: "none" },
+            });
+          }
+        }
+        if (!hasWallpaper && design !== "deck" && design !== "guide") {
           if (design === "band") {
             s.addShape(pres.ShapeType.roundRect, {
               x: -0.1,
@@ -38087,7 +38515,16 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         const titleFontSize = slide.title.length > 40 ? 22 : 28;
         // On the deck design, slide 1 has no white card behind it, so its
         // text must be white; the rest sit on the card and stay ink.
-        const deckExportText = design === "deck" ? (idx === 0 ? "FFFFFF" : "12140F") : "";
+        const deckExportText =
+          design === "deck"
+            ? idx === 0
+              ? "FFFFFF"
+              : "12140F"
+            : design === "guide"
+              ? idx === 0
+                ? "F6EFDC"
+                : "16221B"
+              : "";
         const slideTitleColor =
           slide.titleSettings?.color?.replace("#", "") ||
           deckExportText ||
@@ -38911,6 +39348,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           logging: false,
           width: element.offsetWidth,
           height: element.offsetHeight,
+          // This one had no clone step at all, so an oklch colour anywhere in
+          // the shot failed the download outright.
+          onclone: stripUnsupportedColours,
         });
         const link = document.createElement("a");
         link.download = filename;
@@ -38967,32 +39407,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           windowWidth: element.scrollWidth,
           windowHeight: element.scrollHeight,
           onclone: (clonedDoc) => {
-            // Fix for oklch colors which html2canvas doesn't support
-            const elements = clonedDoc.getElementsByTagName("*");
-            const tempCanvas = document.createElement("canvas");
-            const ctx = tempCanvas.getContext("2d");
-
-            if (ctx) {
-              for (let i = 0; i < elements.length; i++) {
-                const el = elements[i] as HTMLElement;
-                const props = [
-                  "color",
-                  "backgroundColor",
-                  "borderColor",
-                  "fill",
-                  "stroke",
-                ];
-                const computed = window.getComputedStyle(el);
-
-                props.forEach((prop) => {
-                  const val = computed.getPropertyValue(prop);
-                  if (val && val.includes("oklch")) {
-                    ctx.fillStyle = val;
-                    el.style.setProperty(prop, ctx.fillStyle, "important");
-                  }
-                });
-              }
-            }
+            stripUnsupportedColours(clonedDoc);
 
             // Find the cloned version of our element to make sure it's fully visible
             const clonedElement = clonedDoc.querySelector(

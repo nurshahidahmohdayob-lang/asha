@@ -2297,6 +2297,80 @@ export async function suggestWeeklyInput(type: 'unit' | 'topic' | 'subtopic' | '
   }
 }
 
+/** Fetch what a resource link actually points at.
+ *
+ *  A plan's resources are often a few words hiding an address, so the address
+ *  alone tells a reviewer nothing. Reading the page gives the link a name.
+ *
+ *  Server-side only, and deliberately fenced in. These addresses come out of
+ *  an uploaded file, which makes them untrusted input: without the checks
+ *  below, a document could point this at a cloud metadata endpoint or a
+ *  machine inside the network and have the contents copied into a lesson plan.
+ *  Only public http(s) is followed, and only a handful, briefly. */
+const PRIVATE_HOST =
+  /^(localhost$|127\.|10\.|192\.168\.|169\.254\.|0\.|\[?::1\]?$|172\.(1[6-9]|2\d|3[01])\.)/i;
+
+const LINK_READ_LIMIT = 6;
+const LINK_READ_TIMEOUT_MS = 8000;
+const LINK_READ_CHARS = 1200;
+
+function looksPublicHttp(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    if (PRIVATE_HOST.test(u.hostname)) return false;
+    if (!u.hostname.includes(".")) return false; // bare internal hostnames
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Every http(s) address in the document, in the order they appear. */
+function linksIn(text: string): string[] {
+  const found = String(text || "").match(/https?:\/\/[^\s<>"')\]]+/gi) || [];
+  const cleaned = found.map((u) => u.replace(/[.,;:]+$/, ""));
+  return Array.from(new Set(cleaned)).filter(looksPublicHttp);
+}
+
+async function readLink(
+  url: string,
+): Promise<{ url: string; title: string; text: string } | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LINK_READ_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      redirect: "follow",
+      signal: controller.signal,
+      headers: { "User-Agent": "ZeraEducationSuite/1.0 (lesson plan import)" },
+    });
+    if (!res.ok) return null;
+    const type = res.headers.get("content-type") || "";
+    if (!/text\/html|text\/plain|application\/json/i.test(type)) return null;
+    const body = (await res.text()).slice(0, 200000);
+    const title = (/<title[^>]*>([\s\S]*?)<\/title>/i.exec(body)?.[1] || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 160);
+    const text = body
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, LINK_READ_CHARS);
+    if (!title && !text) return null;
+    return { url, title, text };
+  } catch {
+    // A dead link, a slow one, or one behind a sign-in. The plan imports
+    // either way; the address is kept whether or not it could be read.
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Turn a lesson plan the teacher already wrote into a plan this app can hold.
  *
  *  Teachers arrive with terms of planning in Word, Excel or PDF, and retyping
@@ -2353,6 +2427,25 @@ export async function importLessonPlan(
     },
   };
 
+  // Read what the links point at, so a resource can be named rather than left
+  // as a bare address. Best effort: anything unreachable or behind a sign-in
+  // is simply skipped, and the address is kept regardless.
+  const links = linksIn(text).slice(0, LINK_READ_LIMIT);
+  const read = (await Promise.all(links.map((u) => readLink(u)))).filter(
+    Boolean,
+  ) as { url: string; title: string; text: string }[];
+  const linkNotes = read.length
+    ? `
+
+WHAT THE LINKS IN THE DOCUMENT TURNED OUT TO BE — use these to name a resource ("Y3 Plants Worksheet - https://..."). Keep the address either way. Do NOT take teaching content from them; they only tell you what the link is:
+${read
+  .map(
+    (r) =>
+      `- ${r.url}\n  title: ${r.title || "(none)"}\n  starts: ${r.text.slice(0, 300)}`,
+  )
+  .join("\n")}`
+    : "";
+
   const prompt = `You are transcribing a teacher's EXISTING lesson plan into a structured form. This is a transcription task, not a writing task.
 
 RULES — these matter more than completeness:
@@ -2362,6 +2455,10 @@ RULES — these matter more than completeness:
 - One entry in weeklyBreakdown per week the document covers, in the document's order.
 - Where the document uses a table, each row is usually one week.
 - Bullet lists stay as separate lines within the field (newline-separated).
+- RESOURCES: copy every web address exactly as it appears, character for
+  character, into that week's resources field. Never shorten, tidy or drop one
+  — a resource a teacher cannot open is no resource. Keep the words that went
+  with the link, then the address: "Plants worksheet - https://...".
 - subject, class, term, duration, academicYear and preparedBy are usually in a
   HEADER line or a small box at the TOP of the document, not in the weekly
   rows. Read them from there. "Year 3", "Grade 3", "Y3" and "Stage 3" all mean
@@ -2388,6 +2485,7 @@ THE DOCUMENT:
 <<<
 ${text.slice(0, 24000)}
 >>>
+${linkNotes}
 
 Return the plan as JSON. Leave any field the document does not cover as "".`;
 
@@ -2395,6 +2493,10 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
     contents: { parts: [{ text: prompt }] },
     config: {
       responseMimeType: "application/json",
+      // A term's plan comes back well inside this. The default reserved 7,000
+      // against an 8,000-per-minute allowance, so two imports in a minute
+      // exhausted it and everything after them queued behind a rate limit.
+      maxOutputTokens: 3000,
       responseSchema: {
         type: Type.OBJECT,
         properties: {
@@ -3565,6 +3667,43 @@ async function groqGenerate(
  *  The old fixed 4s/8s backoff ignored that, so every retry fired while still
  *  limited, both models 429'd, and the caller got nothing — which showed up as
  *  a projected lesson with teaching slides but no quiz or games. */
+/** How long a rate limit is worth waiting for.
+ *
+ *  There are three Groq models and three Gemini ones behind this. Sleeping 35
+ *  seconds for one of them, twice, across three models, is how a lesson plan
+ *  took three minutes to read while every other model sat idle. Anything
+ *  longer than a breath, move on: something else will answer sooner. */
+const RATE_LIMIT_PATIENCE_MS = 3000;
+
+/** The longest the Groq chain may spend in total before handing over.
+ *  A teacher in front of a class needs an answer or an honest failure, not an
+ *  indefinite queue. */
+const GROQ_CHAIN_BUDGET_MS = 25000;
+
+/** A limit that will NOT clear while the teacher waits.
+ *
+ *  Groq reports two very different things as 429. A per-minute limit clears in
+ *  seconds and is worth waiting for. A per-DAY limit ("tokens per day (TPD)")
+ *  does not clear until tomorrow, and waiting through four backoffs — up to
+ *  35 seconds each — before falling through to another provider is where the
+ *  minutes went. The message says which it is, so read it. */
+const isExhaustedForToday = (message: string): boolean => {
+  const m = (message || "").toLowerCase();
+  if (/per day|\btpd\b|per-day|daily/.test(m)) return true;
+  // A "try again in" longer than this is a cap, not a queue.
+  const asked = /try again in ([\d.]+)\s*s/i.exec(message || "");
+  return !!asked && parseFloat(asked[1]) > 60;
+};
+
+/** Models known to be out of allowance for the rest of this process.
+ *
+ *  Generating a deck is many calls. Without this every one of them re-pays the
+ *  same discovery — ask the exhausted model, wait, give up, move on — so the
+ *  wait multiplies by the number of slides. Learned once, skipped thereafter.
+ *  Per-process and never persisted: a serverless function is short-lived, and
+ *  the allowance does come back. */
+const exhaustedModels = new Set<string>();
+
 function backoffMs(message: string, isRateLimit: boolean, attempt: number): number {
   const asked = /try again in ([\d.]+)\s*s/i.exec(message || "");
   if (isRateLimit && asked) {
@@ -3584,27 +3723,67 @@ function backoffMs(message: string, isRateLimit: boolean, attempt: number): numb
  *
  *  Server-side only. The browser holds no Gemini key by design and reaches
  *  generation through /api/ai/* anyway, where this runs. */
+/** Models to try, in order. More than one on purpose.
+ *
+ *  This was a single hardcoded model with no retry, which is not a fallback at
+ *  all: the day gemini-3.5-flash started answering 503 "high demand", the
+ *  second pool was as good as absent and every failure still reached the
+ *  teacher as a Groq error. Verify with:
+ *    curl -s "https://generativelanguage.googleapis.com/v1beta/models?key=$GEMINI_API_KEY"
+ *  and note the listing includes RETIRED models — gemini-2.5-flash is listed
+ *  and answers 404 — so a name being there is not proof it works. */
+const GEMINI_MODELS = [
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-3.1-flash-lite",
+];
+
 async function geminiFallback(
   systemInstruction: string,
   promptText: string,
   wantsJson: boolean,
 ): Promise<string> {
-  const res: any = await gemini().models.generateContent({
-    model: "gemini-3.5-flash",
-    contents: promptText,
-    config: {
-      systemInstruction,
-      ...(wantsJson ? { responseMimeType: "application/json" } : {}),
-    },
-  });
-  // The SDK exposes .text on newer versions and parts on older ones.
-  const direct = typeof res?.text === "string" ? res.text : "";
-  if (direct.trim()) return direct.trim();
-  const parts = res?.candidates?.[0]?.content?.parts || [];
-  return parts
-    .map((p: any) => p?.text || "")
-    .join("")
-    .trim();
+  const client = gemini();
+  let lastErr: any;
+  for (const model of GEMINI_MODELS) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res: any = await client.models.generateContent({
+          model,
+          contents: promptText,
+          config: {
+            systemInstruction,
+            ...(wantsJson ? { responseMimeType: "application/json" } : {}),
+          },
+        });
+        // The SDK exposes .text on newer versions and parts on older ones.
+        const direct = typeof res?.text === "string" ? res.text : "";
+        if (direct.trim()) return direct.trim();
+        const parts = res?.candidates?.[0]?.content?.parts || [];
+        const joined = parts
+          .map((p: any) => p?.text || "")
+          .join("")
+          .trim();
+        if (joined) return joined;
+        lastErr = new Error(`Empty response from ${model}`);
+      } catch (err: any) {
+        lastErr = err;
+        const msg = String(err?.message || err);
+        // A retired model never comes back; move on rather than wait on it.
+        if (msg.includes("404") || /no longer available|not found/i.test(msg)) {
+          break;
+        }
+        const transient =
+          msg.includes("503") ||
+          msg.includes("429") ||
+          msg.includes("500") ||
+          /high demand|unavailable|overloaded|timeout/i.test(msg);
+        if (!transient) break;
+        await sleep(600 * (attempt + 1));
+      }
+    }
+  }
+  throw lastErr || new Error("No Gemini model could answer.");
 }
 
 /** The system prompt, identical on both providers so the house style and the
@@ -3638,8 +3817,12 @@ async function generateContentWithRetry(
   // backoff already honours the "try again in Xs" Groq sends back.
   const attempts = chain.length === 1 ? Math.max(attemptsPerModel, 4) : attemptsPerModel;
 
+  const startedAt = Date.now();
   let lastErr: any;
   for (const model of chain) {
+    // Already known to be out of allowance — asking again only buys the wait.
+    if (exhaustedModels.has(model)) continue;
+    if (Date.now() - startedAt > GROQ_CHAIN_BUDGET_MS) break;
     for (let attempt = 0; attempt < attempts; attempt++) {
       try {
         return await groqGenerate(request, model);
@@ -3647,6 +3830,12 @@ async function generateContentWithRetry(
         lastErr = err;
         const msg = String(err?.message || err);
         const lower = msg.toLowerCase();
+        // Out of allowance for the day: remember it, and move on immediately
+        // rather than sleeping through retries that cannot succeed.
+        if (isExhaustedForToday(msg)) {
+          exhaustedModels.add(model);
+          break;
+        }
         // this model cannot serve it → try the next model in the list
         if (modelCannotServe(msg)) break;
         const isRateLimit = msg.includes("429") || lower.includes("rate limit");
@@ -3659,7 +3848,11 @@ async function generateContentWithRetry(
           lower.includes("fetch failed") ||
           lower.includes("econnreset");
         if (!transient) throw err;
-        await sleep(backoffMs(msg, isRateLimit, attempt));
+        const wait = backoffMs(msg, isRateLimit, attempt);
+        // Waiting only makes sense when it is shorter than trying elsewhere.
+        if (isRateLimit && wait > RATE_LIMIT_PATIENCE_MS) break;
+        if (Date.now() - startedAt + wait > GROQ_CHAIN_BUDGET_MS) break;
+        await sleep(wait);
       }
     }
   }
@@ -3727,8 +3920,11 @@ async function groqChat(
   const chain = groqModelsFor(models, needed);
   const attempts = chain.length === 1 ? Math.max(attemptsPerModel, 4) : attemptsPerModel;
 
+  const startedAt = Date.now();
   let lastErr: any;
   for (const model of chain) {
+    if (exhaustedModels.has(model)) continue;
+    if (Date.now() - startedAt > GROQ_CHAIN_BUDGET_MS) break;
     const maxTokens = /8b|instant/i.test(model) ? 2600 : 7000;
     for (let attempt = 0; attempt < attempts; attempt++) {
       const controller = new AbortController();
@@ -3758,6 +3954,11 @@ async function groqChat(
         }
         const msg = String(lastErr?.message || lastErr);
         const lower = msg.toLowerCase();
+        if (isExhaustedForToday(msg)) {
+          // Out of allowance until tomorrow — remember and move on.
+          exhaustedModels.add(model);
+          break;
+        }
         if (modelCannotServe(msg)) break; // this model cannot serve it
         const isRateLimit = msg.includes("429") || lower.includes("rate limit");
         const transient =
@@ -3769,7 +3970,10 @@ async function groqChat(
           lower.includes("fetch failed") ||
           lower.includes("econnreset");
         if (!transient) throw lastErr;
-        await sleep(backoffMs(msg, isRateLimit, attempt));
+        const wait = backoffMs(msg, isRateLimit, attempt);
+        if (isRateLimit && wait > RATE_LIMIT_PATIENCE_MS) break;
+        if (Date.now() - startedAt + wait > GROQ_CHAIN_BUDGET_MS) break;
+        await sleep(wait);
       } finally {
         clearTimeout(timer);
       }

@@ -411,7 +411,7 @@ export interface AppTheme {
   textColor: string;
   accentColor: string;
   secondaryColor: string;
-  patternType: 'dots' | 'waves' | 'stars' | 'clouds' | 'school';
+  patternType: 'dots' | 'waves' | 'stars' | 'clouds' | 'school' | 'none';
   emoji: string;
   bgImage?: string;
   /** Which slide design template to render — each is a visually distinct
@@ -435,7 +435,10 @@ export interface AppTheme {
     | 'candy'
     /** The projected Project Lesson look: a white card floating on a Zera
      *  sub-brand colour, a different colour per slide. */
-    | 'deck';
+    | 'deck'
+    /** The Parent Guide look: warm paper ground with forest and gold, serif
+     *  headlines, and a dark feature ground for the opener. */
+    | 'guide';
   /** Title color override for designs where the title sits on a colored
    *  surface (e.g. the band header). Falls back to accentColor. */
   titleColor?: string;
