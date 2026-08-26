@@ -52,7 +52,14 @@ export default async function handler(req: any, res: any) {
       return;
     }
     if (!data?.plan || !data?.week) {
-      res.status(422).json({ error: "This lesson is incomplete." });
+      // Name the gap. "Incomplete" told whoever opened the link nothing, and
+      // told whoever sent it even less.
+      const missing = [!data?.plan && "plan", !data?.week && "week"]
+        .filter(Boolean)
+        .join(" and ");
+      res.status(422).json({
+        error: `This link is missing the lesson's ${missing}. It was made before sharing worked properly — ask for a new link.`,
+      });
       return;
     }
 

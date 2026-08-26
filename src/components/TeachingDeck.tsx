@@ -44,6 +44,13 @@ import type {
 
 /* ── Icons ── stroked 24px paths, same set as the Life Competencies deck. */
 const I = {
+  /** A chain link — the share action. */
+  link: (
+    <>
+      <path d="M10 13a5 5 0 007.07 0l2.83-2.83a5 5 0 00-7.07-7.07l-1.4 1.4" />
+      <path d="M14 11a5 5 0 00-7.07 0l-2.83 2.83a5 5 0 007.07 7.07l1.4-1.4" />
+    </>
+  ),
   book: (
     <>
       <path d="M4 5.5A2.5 2.5 0 016.5 3H20v15H6.5A2.5 2.5 0 004 20.5z" />
@@ -2547,6 +2554,16 @@ export default function TeachingDeck({
             </button>
           )}
           <div className="relative">
+            {onShareLink && (
+              <button
+                onClick={() => runExport("link")}
+                disabled={Boolean(exporting)}
+                title="Publish this lesson and copy a link to it"
+                className="grid h-11 min-w-11 place-items-center rounded-2xl bg-white/20 px-3 text-sm font-black backdrop-blur transition-all hover:bg-white/30 active:scale-90 disabled:opacity-60"
+              >
+                <Icon d={I.link} className="h-5 w-5" />
+              </button>
+            )}
             <button
               onClick={() => setMenuOpen((o) => !o)}
               disabled={Boolean(exporting)}
@@ -2741,14 +2758,16 @@ export default function TeachingDeck({
               <p className="text-xs font-bold uppercase tracking-wider text-zinc-500">
                 Anyone with this link can view the lesson
               </p>
-              <a
-                href={shareUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="block truncate text-sm font-bold text-brand-700 underline"
-              >
-                {shareUrl}
-              </a>
+              {/* An input, not a link: the whole point is to get the URL
+                  OUT of here, so it has to be selectable and copyable the way
+                  the address bar is. Read-only, and selected on focus. */}
+              <input
+                readOnly
+                value={shareUrl}
+                onFocus={(e) => e.currentTarget.select()}
+                onClick={(e) => e.currentTarget.select()}
+                className="mt-0.5 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm font-bold text-brand-700"
+              />
             </div>
             <button
               onClick={() => {

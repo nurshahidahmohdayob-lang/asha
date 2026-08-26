@@ -7542,7 +7542,17 @@ export default function App() {
     plan: LessonPlan,
     week: WeeklyPlan,
   ): Promise<string> => {
-    if (!plan || !week) throw new Error("There is no lesson to share yet.");
+    const missing = [
+      !plan && "the lesson plan",
+      !week && "the week",
+      plan && !plan.subject?.trim() && !plan.overallTopic?.trim() && "a subject",
+      week && !week.topic?.trim() && !week.learningObjective?.trim() && "a topic",
+    ].filter(Boolean);
+    if (missing.length) {
+      // Better to refuse here, naming the gap, than to publish a link that
+      // opens to "This lesson is incomplete" for whoever was sent it.
+      throw new Error(`This lesson is missing ${missing.join(" and ")}.`);
+    }
     const code = `d${Math.random().toString(36).slice(2, 9)}`;
     const payload = {
       v: 1,
