@@ -2258,6 +2258,7 @@ export default function TeachingDeck({
   onPackChange,
   onUploadImage,
   onClose,
+  onShareLink,
 }: {
   plan: LessonPlan;
   week: WeeklyPlan;
@@ -2270,6 +2271,9 @@ export default function TeachingDeck({
   /** Supply this to allow pictures to be added to slides while editing. */
   onUploadImage?: (file: File) => Promise<string>;
   onClose: () => void;
+  /** Publish the deck as a page and return its link. Supply this to offer
+   *  "Share a link" alongside the file downloads. */
+  onShareLink?: (images: string[], title: string) => Promise<string>;
 }) {
   const [editing, setEditing] = useState(false);
   /* ── The lesson in another language ───────────────────────────────────
@@ -2366,6 +2370,9 @@ export default function TeachingDeck({
      is rendered off-screen at 16:9 and photographed, then the pictures are
      bound into a PDF or a PowerPoint. */
   const [menuOpen, setMenuOpen] = useState(false);
+  /** The published link for this deck, so it can be shown and copied again
+   *  without republishing. */
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [captureIdx, setCaptureIdx] = useState<number | null>(null);
   const [exporting, setExporting] = useState<{ done: number; total: number } | null>(
     null,
@@ -2384,7 +2391,7 @@ export default function TeachingDeck({
     .filter(Boolean)
     .join(" ");
 
-  const runExport = async (mode: "pdf" | "pptx") => {
+  const runExport = async (mode: "pdf" | "pptx" | "link") => {
     if (exporting) return;
     setMenuOpen(false);
     setExporting({ done: 0, total: n });
@@ -2405,7 +2412,20 @@ export default function TeachingDeck({
       if (!shots.length) throw new Error("Nothing was captured");
       setExporting({ done: n, total: n });
       if (mode === "pdf") await slidesToPdf(shots, deckTitle);
-      else await slidesToPptx(shots, deckTitle);
+      else if (mode === "pptx") await slidesToPptx(shots, deckTitle);
+      else {
+        // Published as a page, from the same pictures the downloads use — so
+        // whoever opens the link sees the lesson exactly as it is on the
+        // board, with no account and nothing to install.
+        if (!onShareLink) throw new Error("Sharing is not available here");
+        const url = await onShareLink(shots, deckTitle);
+        setShareUrl(url);
+        try {
+          await navigator.clipboard.writeText(url);
+        } catch {
+          /* clipboard blocked — the link is on screen to copy by hand */
+        }
+      }
     } catch (err: any) {
       console.error("Deck download failed:", err);
       alert(
@@ -2551,6 +2571,19 @@ export default function TeachingDeck({
                       Opens on any classroom machine
                     </span>
                   </button>
+                  {onShareLink && (
+                    <button
+                      onClick={() => runExport("link")}
+                      className="block w-full border-t border-zinc-100 px-4 py-3 text-left transition-colors hover:bg-brand-50"
+                    >
+                      <span className="block text-sm font-bold text-ink">
+                        Share a link
+                      </span>
+                      <span className="block text-xs text-zinc-500">
+                        Anyone with the link can view this lesson
+                      </span>
+                    </button>
+                  )}
                 </div>
               </>
             )}
@@ -2678,6 +2711,43 @@ export default function TeachingDeck({
                 }}
               />
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* The published link, shown until it is dismissed. Copied already, but
+          a teacher needs to SEE it to trust that it exists. */}
+      {shareUrl && !exporting && (
+        <div className="absolute inset-x-0 bottom-6 z-30 grid place-items-center px-6">
+          <div className="flex w-full max-w-2xl items-center gap-3 rounded-2xl bg-white p-4 shadow-2xl ring-1 ring-black/10">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold uppercase tracking-wider text-zinc-500">
+                Anyone with this link can view the lesson
+              </p>
+              <a
+                href={shareUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="block truncate text-sm font-bold text-brand-700 underline"
+              >
+                {shareUrl}
+              </a>
+            </div>
+            <button
+              onClick={() => {
+                navigator.clipboard?.writeText(shareUrl).catch(() => {});
+              }}
+              className="shrink-0 rounded-xl bg-brand-600 px-4 py-2 text-xs font-black uppercase tracking-wider text-white hover:bg-brand-700"
+            >
+              Copy
+            </button>
+            <button
+              onClick={() => setShareUrl(null)}
+              aria-label="Dismiss"
+              className="shrink-0 rounded-xl px-3 py-2 text-xs font-black text-zinc-500 hover:bg-zinc-100"
+            >
+              Done
+            </button>
           </div>
         </div>
       )}

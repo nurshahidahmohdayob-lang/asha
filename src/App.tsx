@@ -7528,6 +7528,20 @@ export default function App() {
     return data.url as string;
   };
 
+  /** Publish a projected lesson as a page and return its link.
+   *
+   *  Built from pictures of the deck's own slides — the same ones the PDF and
+   *  PowerPoint are made of — so whoever opens the link sees the lesson as it
+   *  is on the board. No account, nothing to install, and it prints one slide
+   *  to a page. */
+  const shareTeachingDeck = async (
+    images: string[],
+    title: string,
+  ): Promise<string> => {
+    if (!images.length) throw new Error("There was nothing to publish.");
+    return uploadSharedHtml(buildSlidesHTML(images, title));
+  };
+
   const publishHtml = async (html: string, presetCode?: string) => {
     // When a preset code is supplied (e.g. from the HTML Host tool) skip the
     // prompt entirely — an empty string just means "use a random code".
@@ -41691,6 +41705,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             setContent((prev) => (prev ? { ...prev, lessonPack: next } : prev))
           }
           onUploadImage={uploadFileToHost}
+          onShareLink={shareTeachingDeck}
           onClose={() => setTeachWeekIdx(null)}
         />
       )}
@@ -41707,6 +41722,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             setContent((prev) => (prev ? { ...prev, lessonPack: next } : prev))
           }
           onUploadImage={uploadFileToHost}
+          onShareLink={shareTeachingDeck}
           onClose={() => setTeachSlidesOnly(false)}
         />
       )}
