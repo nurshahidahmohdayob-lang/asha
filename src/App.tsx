@@ -40319,17 +40319,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
   const currentSlide = content?.slides?.[currentSlideIdx];
 
-  if (authLoading) {
-    return (
-      <div className="w-full h-screen bg-[#059669] flex flex-col items-center justify-center p-6 text-center">
-        <Loader2 className="animate-spin text-white mb-4" size={48} />
-        <h2 className="text-white text-2xl font-black uppercase tracking-tight">
-          Initializing EduMagic...
-        </h2>
-      </div>
-    );
-  }
-
   /* ── A shared lesson, opened by someone with no account ─────────────────
      The link carries a code; the page behind it carries the lesson. Fetch it,
      render the real deck, and never ask who is looking — a parent or a
@@ -40403,6 +40392,17 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           window.location.reload();
         }}
       />
+    );
+  }
+
+  if (authLoading) {
+    return (
+      <div className="w-full h-screen bg-[#059669] flex flex-col items-center justify-center p-6 text-center">
+        <Loader2 className="animate-spin text-white mb-4" size={48} />
+        <h2 className="text-white text-2xl font-black uppercase tracking-tight">
+          Initializing EduMagic...
+        </h2>
+      </div>
     );
   }
 
