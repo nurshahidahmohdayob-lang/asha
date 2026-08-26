@@ -2271,9 +2271,13 @@ export default function TeachingDeck({
   /** Supply this to allow pictures to be added to slides while editing. */
   onUploadImage?: (file: File) => Promise<string>;
   onClose: () => void;
-  /** Publish the deck as a page and return its link. Supply this to offer
-   *  "Share a link" alongside the file downloads. */
-  onShareLink?: (images: string[], title: string) => Promise<string>;
+  /** Publish this lesson and return a link to it. Supply this to offer
+   *  "Share a link" alongside the file downloads.
+   *
+   *  It takes nothing: the app already holds the plan, the week, the pack and
+   *  the Studio slides it handed to this deck, and publishing THOSE is what
+   *  makes the shared lesson work like this one rather than look like it. */
+  onShareLink?: () => Promise<string>;
 }) {
   const [editing, setEditing] = useState(false);
   /* ── The lesson in another language ───────────────────────────────────
@@ -2394,6 +2398,32 @@ export default function TeachingDeck({
   const runExport = async (mode: "pdf" | "pptx" | "link") => {
     if (exporting) return;
     setMenuOpen(false);
+    // Sharing publishes the lesson itself, not pictures of it, so it skips
+    // the capture entirely — a 21-slide deck was photographing every slide
+    // before it could hand back a link.
+    if (mode === "link") {
+      setMenuOpen(false);
+      try {
+        if (!onShareLink) throw new Error("Sharing is not available here");
+        setExporting({ done: 0, total: 1 });
+        const url = await onShareLink();
+        setShareUrl(url);
+        try {
+          await navigator.clipboard.writeText(url);
+        } catch {
+          /* clipboard blocked — the link is on screen to copy by hand */
+        }
+      } catch (err: any) {
+        console.error("Deck share failed:", err);
+        alert(
+          `Couldn't create the link — ${err?.message || "something went wrong"}. Please try again.`,
+        );
+      } finally {
+        setExporting(null);
+      }
+      return;
+    }
+
     setExporting({ done: 0, total: n });
     const shots: string[] = [];
     try {
@@ -2412,20 +2442,7 @@ export default function TeachingDeck({
       if (!shots.length) throw new Error("Nothing was captured");
       setExporting({ done: n, total: n });
       if (mode === "pdf") await slidesToPdf(shots, deckTitle);
-      else if (mode === "pptx") await slidesToPptx(shots, deckTitle);
-      else {
-        // Published as a page, from the same pictures the downloads use — so
-        // whoever opens the link sees the lesson exactly as it is on the
-        // board, with no account and nothing to install.
-        if (!onShareLink) throw new Error("Sharing is not available here");
-        const url = await onShareLink(shots, deckTitle);
-        setShareUrl(url);
-        try {
-          await navigator.clipboard.writeText(url);
-        } catch {
-          /* clipboard blocked — the link is on screen to copy by hand */
-        }
-      }
+      else await slidesToPptx(shots, deckTitle);
     } catch (err: any) {
       console.error("Deck download failed:", err);
       alert(
@@ -2580,7 +2597,7 @@ export default function TeachingDeck({
                         Share a link
                       </span>
                       <span className="block text-xs text-zinc-500">
-                        Anyone with the link can view this lesson
+                        Opens the lesson itself — clickable, no sign-in
                       </span>
                     </button>
                   )}

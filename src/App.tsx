@@ -7528,18 +7528,51 @@ export default function App() {
     return data.url as string;
   };
 
-  /** Publish a projected lesson as a page and return its link.
+  /** Publish a projected lesson and return a link that OPENS it.
    *
-   *  Built from pictures of the deck's own slides — the same ones the PDF and
-   *  PowerPoint are made of — so whoever opens the link sees the lesson as it
-   *  is on the board. No account, nothing to install, and it prints one slide
-   *  to a page. */
+   *  Pictures of the slides were the first attempt and they were the wrong
+   *  thing: the lesson is meant to be used, not looked at — the checklists
+   *  tick, the quiz answers, the timer runs — and a photograph does none of
+   *  that. What travels with the link is the lesson's own data, so the person
+   *  who opens it gets the same deck the class sees.
+   *
+   *  The page published to the host holds that data AND sends a browser on to
+   *  the app, so one link works whether it is fetched or clicked. */
   const shareTeachingDeck = async (
-    images: string[],
-    title: string,
+    plan: LessonPlan,
+    week: WeeklyPlan,
   ): Promise<string> => {
-    if (!images.length) throw new Error("There was nothing to publish.");
-    return uploadSharedHtml(buildSlidesHTML(images, title));
+    if (!plan || !week) throw new Error("There is no lesson to share yet.");
+    const code = `d${Math.random().toString(36).slice(2, 9)}`;
+    const payload = {
+      v: 1,
+      title:
+        [plan.subject, plan.class, week.week && `Week ${week.week}`]
+          .filter(Boolean)
+          .join(" · ") || "Lesson",
+      plan,
+      week,
+      pack: content?.lessonPack?.week === week.week ? content.lessonPack : null,
+      studioSlides: content?.slides || [],
+    };
+    const target = `${window.location.origin}${window.location.pathname}#deck=${code}`;
+    const esc = (v: string) =>
+      v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    // The JSON is escaped for a <script type="application/json"> block, which
+    // is only ended by "</script>" — so that is the one sequence to break up.
+    const json = JSON.stringify(payload).replace(/<\/script/gi, "<\\/script");
+    const page = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(payload.title)}</title>
+<script type="application/json" id="zera-deck">${json}</script>
+</head><body style="font-family:system-ui;padding:2rem;text-align:center">
+<p>Opening the lesson…</p>
+<p><a id="go" href="${esc(target)}">${esc(target)}</a></p>
+<script>location.replace(${JSON.stringify(target)});</script>
+</body></html>`;
+    await uploadSharedHtml(page, code);
+    return target;
   };
 
   const publishHtml = async (html: string, presetCode?: string) => {
@@ -40297,6 +40330,82 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     );
   }
 
+  /* ── A shared lesson, opened by someone with no account ─────────────────
+     The link carries a code; the page behind it carries the lesson. Fetch it,
+     render the real deck, and never ask who is looking — a parent or a
+     colleague sent a link, they are not signing in to a school system.
+
+     Read-only by construction: nothing is passed that would let this edit the
+     lesson, and nothing here writes to the database. */
+  const sharedDeckCode = useMemo(() => {
+    const m = /^#deck=([A-Za-z0-9_-]{3,64})$/.exec(window.location.hash || "");
+    return m ? m[1] : "";
+  }, []);
+  const [sharedDeck, setSharedDeck] = useState<any>(null);
+  const [sharedDeckError, setSharedDeckError] = useState<string>("");
+
+  useEffect(() => {
+    if (!sharedDeckCode) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${WORKSHEET_HOST_DEFAULT}/${sharedDeckCode}`);
+        if (!res.ok) throw new Error(`This link could not be opened (${res.status}).`);
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const raw = doc.querySelector("#zera-deck")?.textContent || "";
+        if (!raw) throw new Error("This link does not hold a lesson.");
+        const data = JSON.parse(raw);
+        if (!data?.plan || !data?.week) throw new Error("This lesson is incomplete.");
+        if (!cancelled) setSharedDeck(data);
+      } catch (err: any) {
+        if (!cancelled)
+          setSharedDeckError(err?.message || "This link could not be opened.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sharedDeckCode]);
+
+  // A shared lesson is answered before anything else, including the sign-in
+  // screen: the whole point is that the person opening it has no account.
+  if (sharedDeckCode) {
+    if (sharedDeckError) {
+      return (
+        <div className="w-full h-screen bg-[#064E3B] flex flex-col items-center justify-center p-8 text-center text-white">
+          <h2 className="text-2xl font-black">{sharedDeckError}</h2>
+          <p className="mt-2 text-white/70 font-bold">
+            Ask whoever sent it to share the lesson again.
+          </p>
+        </div>
+      );
+    }
+    if (!sharedDeck) {
+      return (
+        <div className="w-full h-screen bg-[#064E3B] flex flex-col items-center justify-center p-6 text-center">
+          <Loader2 className="animate-spin text-white mb-4" size={48} />
+          <h2 className="text-white text-xl font-black uppercase tracking-tight">
+            Opening the lesson…
+          </h2>
+        </div>
+      );
+    }
+    return (
+      <TeachingDeck
+        plan={sharedDeck.plan}
+        week={sharedDeck.week}
+        studioSlides={sharedDeck.studioSlides || []}
+        pack={sharedDeck.pack || undefined}
+        onClose={() => {
+          // Nowhere to go back to — this browser only ever had the lesson.
+          window.location.hash = "";
+          window.location.reload();
+        }}
+      />
+    );
+  }
+
   if (!user) {
     return renderAuth();
   }
@@ -41705,7 +41814,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             setContent((prev) => (prev ? { ...prev, lessonPack: next } : prev))
           }
           onUploadImage={uploadFileToHost}
-          onShareLink={shareTeachingDeck}
+          onShareLink={() =>
+            shareTeachingDeck(content!.lessonPlan!, teachWeeks[teachWeekIdx!])
+          }
           onClose={() => setTeachWeekIdx(null)}
         />
       )}
@@ -41722,7 +41833,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             setContent((prev) => (prev ? { ...prev, lessonPack: next } : prev))
           }
           onUploadImage={uploadFileToHost}
-          onShareLink={shareTeachingDeck}
+          onShareLink={() => shareTeachingDeck(soloDeckPlan, soloDeckWeek)}
           onClose={() => setTeachSlidesOnly(false)}
         />
       )}
