@@ -128,7 +128,7 @@ import {
   VerticalAlign,
 } from "docx";
 import { jsPDF } from "jspdf";
-import html2canvas from "html2canvas";
+import html2canvas from "html2canvas-pro";
 import {
   stripUnsupportedColours,
   captureSlide,
@@ -3706,6 +3706,99 @@ const LpSection = ({
  *  is for the teacher who just wants to open and present without PowerPoint
  *  installed, or hand a link to a class. Arrow keys, fullscreen, and one slide
  *  per page when printed. */
+/** The deck written out as text, for when the slides cannot be photographed.
+ *
+ *  A picture of the real slide is the better download and is what normally
+ *  happens. But a capture can fail — an image the browser will not give us, a
+ *  colour no parser understands — and "Couldn't build the HTML deck" leaves a
+ *  teacher with nothing at all. This always produces a file: plainer than the
+ *  slides on screen, but openable, presentable and printable.
+ */
+const buildSlidesHTMLFromText = (
+  slides: any[],
+  title: string,
+  theme: { accentColor?: string; bgColor?: string; textColor?: string } = {},
+): string => {
+  const esc = (v: any) =>
+    (v ?? "")
+      .toString()
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  const accent = theme.accentColor || "#0A4F29";
+  const ink = theme.textColor || "#16221B";
+  const paper = theme.bgColor || "#FAF5E9";
+
+  const cards = (slides || [])
+    .map((sl: any, i: number) => {
+      const bullets = (sl?.content || [])
+        .map((b: any) => (b ?? "").toString().trim())
+        .filter(Boolean);
+      return `<section class="slide${i === 0 ? " opener" : ""}">
+        <div class="inner">
+          <h2>${esc(sl?.title)}</h2>
+          ${bullets.length ? `<ul>${bullets.map((b: string) => `<li>${esc(b)}</li>`).join("")}</ul>` : ""}
+          ${sl?.imageUrl ? `<img class="pic" src="${esc(sl.imageUrl)}" alt="">` : ""}
+        </div>
+        <span class="num">${i + 1} / ${(slides || []).length}</span>
+      </section>`;
+    })
+    .join("");
+
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)}</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:#0d1f17;color:${ink};
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .stage{height:100vh;display:flex;align-items:center;justify-content:center;padding:24px 24px 76px}
+  .slide{display:none;width:min(1120px,100%);aspect-ratio:16/9;border-radius:16px;
+         background:${paper};box-shadow:0 24px 60px rgba(0,0,0,.35);position:relative;overflow:hidden}
+  .slide.on{display:flex}
+  .opener{background:#0B5730;color:#F6EFDC}
+  .inner{flex:1;display:flex;flex-direction:column;justify-content:center;padding:6% 7%;gap:2vh;overflow:hidden}
+  h2{margin:0;font-size:clamp(22px,3.4vw,44px);line-height:1.12;color:${accent};
+     font-family:"Iowan Old Style",Palatino,Georgia,serif;font-weight:600}
+  .opener h2{color:#F6EFDC;font-size:clamp(30px,5vw,66px);text-align:center}
+  ul{margin:0;padding-left:1.1em;font-size:clamp(14px,1.7vw,25px);line-height:1.45}
+  li{margin-bottom:.5em}
+  .pic{max-height:36%;object-fit:contain;align-self:center;border-radius:12px}
+  .num{position:absolute;right:18px;bottom:14px;font-size:12px;font-weight:800;opacity:.45}
+  .bar{position:fixed;left:0;right:0;bottom:0;display:flex;gap:10px;align-items:center;
+       justify-content:center;padding:12px;background:rgba(0,0,0,.55)}
+  .bar button{font:inherit;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;
+              border:0;border-radius:10px;padding:9px 16px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff}
+  .bar .go{background:#F7B917;color:#063A1E}
+  .bar span{color:#fff;opacity:.7;font-size:12px;margin:0 6px}
+  @media print{body{background:#fff}.bar{display:none}.stage{display:block;height:auto;padding:0}
+    .slide{display:block !important;page-break-after:always;width:100%;box-shadow:none;border-radius:0}}
+</style></head>
+<body>
+<div class="stage">${cards}</div>
+<div class="bar">
+  <button onclick="go(-1)">&#8592; Prev</button><span id="count"></span>
+  <button onclick="go(1)">Next &#8594;</button>
+  <button class="go" onclick="full()">Fullscreen</button>
+  <button onclick="window.print()">Print</button>
+</div>
+<script>
+  var slides=[].slice.call(document.querySelectorAll('.slide')),at=0;
+  function show(n){at=Math.max(0,Math.min(slides.length-1,n));
+    slides.forEach(function(s,i){s.classList.toggle('on',i===at)});
+    document.getElementById('count').textContent=(at+1)+' / '+slides.length}
+  function go(d){show(at+d)}
+  function full(){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()}
+  document.addEventListener('keydown',function(e){
+    if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' '){e.preventDefault();go(1)}
+    if(e.key==='ArrowLeft'||e.key==='PageUp'){e.preventDefault();go(-1)}
+    if(e.key==='f')full()});
+  show(0);
+</script></body></html>`;
+};
+
 /** A single self-contained HTML deck built from pictures of the real slides.
  *
  *  The pictures are the whole point. Rebuilding each slide from its text meant
@@ -3988,9 +4081,10 @@ const buildLessonPlanEditableHTML = (lp: any, title: string): string => {
         <div class="seclabel">Details</div>
         <table>
           ${pair("Term", lp?.term, "Academic Year", lp?.academicYear)}
-          ${pair("Subject", lp?.subject, "Class", lp?.class)}
-          ${pair("Target Lesson Duration", lp?.duration, "Prepared by", lp?.preparedBy)}
-          ${pair("Date of lesson", lp?.date, "Checked by", lp?.checkedBy)}
+          ${pair("Subject", lp?.subject, "Year Group", lp?.class)}
+          ${pair("Class", lp?.classGroup, "Target Lesson Duration", lp?.duration)}
+          ${pair("Prepared by", lp?.preparedBy, "Checked by", lp?.checkedBy)}
+          ${pair("Date of lesson", lp?.date, "", "")}
         </table>
       </section>
 
@@ -4119,6 +4213,70 @@ const isPlaceholderTitle = (t?: string): boolean =>
   !t.trim() ||
   /^untitled/i.test(t.trim()) ||
   /^new lesson plan$/i.test(t.trim());
+
+/** The year groups a lesson plan can be written for.
+ *
+ *  One list, because the tracker matches a submission's year group against
+ *  the subject sheet's, and a plan carrying free text — "Y7", "yr 7", a typo —
+ *  matched nothing and ticked nowhere. Picking from a list keeps both sides
+ *  speaking the same language. */
+const LESSON_YEAR_GROUPS = [
+  "Year 1",
+  "Year 2",
+  "Year 3",
+  "Year 4",
+  "Year 5",
+  "Year 6",
+  "Year 7",
+  "Year 8",
+  "Year 9",
+  "Year 10",
+  "Year 11",
+  "COMBINE (PRIMARY)",
+];
+
+/** One year group, however it was written down.
+ *
+ *  The tracker's rows come from the subject sheet ("Year 7"), a submission
+ *  carries whatever the teacher typed into the plan, and the timetable writes
+ *  "Y7". Compared as strings those are three different classes, so a plan that
+ *  was definitely submitted ticked nowhere. Compared on the number they are
+ *  one. Names with no number — "COMBINE (PRIMARY)" — fall back to their
+ *  letters. */
+const yearGroupKey = (value?: string | null): string => {
+  const raw = (value || "").toString().toLowerCase().trim();
+  if (!raw) return "";
+  const digits = /(\d{1,2})/.exec(raw);
+  if (digits) return `y${parseInt(digits[1], 10)}`;
+  return raw.replace(/[^a-z]/g, "");
+};
+
+/** Missing on either side counts as a match: a plan saved before the app
+ *  recorded a year group must still tick. */
+const sameYearGroup = (a?: string | null, b?: string | null): boolean => {
+  const x = yearGroupKey(a);
+  const y = yearGroupKey(b);
+  return !x || !y || x === y;
+};
+
+/** Subjects match on their words, not their punctuation. The sheet says
+ *  "History", a submission says "History (0470)", and a syllabus code is not a
+ *  different subject. */
+const subjectKey = (value?: string | null): string =>
+  (value || "")
+    .toString()
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/[^a-z ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const sameSubject = (a?: string | null, b?: string | null): boolean => {
+  const x = subjectKey(a);
+  const y = subjectKey(b);
+  if (!x || !y) return false;
+  return x === y || x.includes(y) || y.includes(x);
+};
 
 /** Is this saved project a lesson plan?
  *
@@ -6066,6 +6224,132 @@ export default function App() {
   const [expandedTrackerTeachers, setExpandedTrackerTeachers] = useState<
     Record<string, boolean>
   >({});
+  /** Submissions that are the same plan sent more than once.
+   *
+   *  Submitting used to mint a new record on every press while leaving the
+   *  plan looking unsent, so a teacher who pressed Submit three times left
+   *  three copies for the reviewer. That is fixed at the source; these are the
+   *  copies already filed.
+   *
+   *  Grouped on the plan behind them where the record says so, and otherwise
+   *  on teacher + title + week + kind, which is what makes two records the
+   *  same submission rather than two genuine plans. */
+  const duplicateSubmissions = useMemo(() => {
+    /* What the plan actually SAYS, boiled down.
+     *
+     *  The title is no use for this: a teacher who edited between presses left
+     *  copies titled differently, and grouping on the title let them through
+     *  as separate plans. Two records that teach the same weeks, with the same
+     *  units, topics, objectives and activities, are the same plan however
+     *  they are labelled. */
+    const contentPrint = (p: any): string => {
+      const lp = p?.content?.lessonPlan || {};
+      const weeks = Array.isArray(lp.weeklyBreakdown) ? lp.weeklyBreakdown : [];
+      const tidy = (v: any) =>
+        (v ?? "").toString().toLowerCase().replace(/\s+/g, " ").trim();
+      return [
+        tidy(lp.overallTopic),
+        ...weeks.map((w: any) =>
+          [
+            w?.week,
+            tidy(w?.unit),
+            tidy(w?.topic),
+            tidy(w?.subTopic),
+            tidy(w?.learningObjective),
+            tidy(w?.activities),
+            tidy(w?.assessment),
+          ].join("~"),
+        ),
+      ].join("||");
+    };
+
+    const groups = new Map<string, any[]>();
+    (submittedProjects || []).forEach((p: any) => {
+      // The same project sent twice is the same plan, edits and all.
+      // Otherwise it takes the same teacher, the same subject and year, the
+      // same week AND the same content to count as a copy — so two genuinely
+      // different plans are never merged, and nothing a teacher wrote is
+      // deleted on the strength of a matching label alone.
+      const key = p?.sourceProjectId
+        ? `src:${p.sourceProjectId}`
+        : [
+            normalizeTeacherName(p?.teacherName || ""),
+            subjectKey(
+              p?.subject || p?.content?.subject || p?.content?.lessonPlan?.subject,
+            ),
+            yearGroupKey(
+              p?.yearGroup ||
+                p?.content?.lessonPlan?.class ||
+                p?.content?.gradeLevel,
+            ),
+            String(p?.weekId ?? ""),
+            p?.category || "",
+            contentPrint(p),
+          ].join("|");
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(p);
+    });
+
+    // Keep the one furthest through review, and the newest of those — losing a
+    // reviewer's feedback to tidy up would be its own bug.
+    const rank: Record<string, number> = {
+      approved: 4,
+      pending_coordinator: 3,
+      changes_requested: 2,
+      pending_hod: 1,
+    };
+    const removable: any[] = [];
+    groups.forEach((list) => {
+      if (list.length < 2) return;
+      const sorted = [...list].sort((a, b) => {
+        const ra = rank[getReviewStage(a)] || 0;
+        const rb = rank[getReviewStage(b)] || 0;
+        if (ra !== rb) return rb - ra;
+        return (Number(b?.timestamp) || 0) - (Number(a?.timestamp) || 0);
+      });
+      removable.push(...sorted.slice(1));
+    });
+    return removable;
+  }, [submittedProjects]);
+
+  const removeDuplicateSubmissions = async () => {
+    if (!duplicateSubmissions.length) return;
+    const n = duplicateSubmissions.length;
+    if (
+      !window.confirm(
+        `Remove ${n} duplicate submission${n === 1 ? "" : "s"}?\n\n` +
+          `These are copies of the same plan — same teacher, same subject and ` +
+          `year group, same week, and the same content. The copy furthest ` +
+          `through review is kept for each; only the extra copies are ` +
+          `deleted. This cannot be undone.`,
+      )
+    )
+      return;
+    try {
+      await Promise.all(
+        duplicateSubmissions.map((p: any) =>
+          store.remove("submitted_plans", p.id),
+        ),
+      );
+      alert(`Removed ${n} duplicate submission${n === 1 ? "" : "s"}.`);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, "submitted_plans");
+    }
+  };
+
+  /** The plans behind one ticked cell in the tracker.
+   *
+   *  A cell used to open the first submission it found and say nothing about
+   *  the rest, so a teacher who submitted three plans for a subject in a week
+   *  had two of them invisible from here. */
+  const [trackerCell, setTrackerCell] = useState<{
+    teacher: string;
+    subject: string;
+    yearGroup: string;
+    week: string;
+    dates: string;
+    plans: any[];
+  } | null>(null);
   const [timetableOrientation, setTimetableOrientation] = useState<
     "vertical" | "horizontal"
   >("vertical");
@@ -6888,6 +7172,24 @@ export default function App() {
     }
   };
 
+  /** A plan that has been sent stays sent.
+   *
+   *  Both save paths wrote status: "draft" unconditionally, so a teacher who
+   *  submitted and then touched the plan again — even the silent autosave that
+   *  runs when a card is minimised — had it filed straight back under To
+   *  Submit as though it had never gone. Then they submitted it again.
+   *
+   *  Submitting is a fact about the plan; saving it is not an undo. */
+  const statusForSave = (
+    projectId?: string | null,
+  ): "draft" | "submitted" => {
+    if (!projectId) return "draft";
+    const existing = (userProjects || []).find(
+      (p: any) => p?.id === projectId,
+    );
+    return existing?.status === "submitted" ? "submitted" : "draft";
+  };
+
   const saveProject = async (
     lessonContent: EduContent,
     title: string,
@@ -6924,7 +7226,7 @@ export default function App() {
       timestamp: Date.now(),
       title: savedTitle,
       category: savedCategory,
-      status: "draft",
+      status: statusForSave(projectId),
       teacherName: teacherName,
       // Carry the name back into the content too, so reopening the project
       // shows the same title everywhere instead of the placeholder again.
@@ -6968,12 +7270,19 @@ export default function App() {
     if (!user) return;
     if (!window.confirm("Are you sure you want to delete this project?"))
       return;
+    // Gone from the list at once, for the same reason a move is: the watcher
+    // that refreshes it polls every 15 seconds, and a card that sits there
+    // after being deleted reads as a button that did nothing.
+    const previous = userProjects;
+    setUserProjects((prev: any[]) =>
+      prev.filter((p: any) => p?.id !== projectId),
+    );
+    if (currentProjectId === projectId) clearWorkspace();
+
     try {
       await store.remove("projects", projectId);
-      if (currentProjectId === projectId) {
-        clearWorkspace();
-      }
     } catch (err) {
+      setUserProjects(previous);
       handleFirestoreError(err, OperationType.DELETE, `projects/${projectId}`);
     }
   };
@@ -10137,10 +10446,20 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   // show, so a plan already filed under Week 3 was silently renamed to the
   // selector's week. A plan's own date decides its week; the week it was last
   // filed under comes next, and only then the selector.
-  const weekForPlan = (planContent: any, existingWeekId?: number): number =>
-    getWeekFromDate(planContent?.lessonPlan?.date || "") ||
-    existingWeekId ||
-    selectedWeekForSubmission;
+  const weekForPlan = (planContent: any, existingWeekId?: number): number => {
+    const fromDate = getWeekFromDate(planContent?.lessonPlan?.date || "");
+    if (fromDate) return fromDate;
+    // A plan that covers exactly one week names it. Without this an undated
+    // plan fell through to whatever the week picker happened to be showing,
+    // so a teacher submitting several plans in one sitting filed them all
+    // under the same week and the tracker showed one tick for all of them.
+    const weeks = planContent?.lessonPlan?.weeklyBreakdown || [];
+    if (weeks.length === 1) {
+      const only = Number(weeks[0]?.week);
+      if (only > 0) return only;
+    }
+    return existingWeekId || selectedWeekForSubmission;
+  };
 
   // The week a plan was already submitted under, if it has been before.
   const filedWeekId = (sourceProjectId: string): number | undefined =>
@@ -10226,11 +10545,29 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             workspaceMode,
           },
         };
-        console.log(
-          "SubmitToAdmin: Writing to Firestore submitted_plans/",
-          submissionData,
-        );
-        await store.add("submitted_plans", submissionData);
+        // Keyed to the project, so submitting the same plan twice UPDATES one
+        // record instead of filing another copy.
+        //
+        // This used store.add, which mints a fresh id every time. Combined
+        // with the plan never being marked submitted below, a teacher pressed
+        // Submit, saw the plan still sitting in To Submit, pressed it again —
+        // and every press left another copy for the reviewer to wade through.
+        // The board's Submit has always keyed on the project this way; this
+        // path simply never did.
+        const sourceId =
+          currentProjectId ||
+          (await persistLessonPlanSilently(content, currentProjectId));
+        if (!sourceId) throw new Error("Could not save the plan before sending it.");
+
+        await store.put("submitted_plans", `sub_${sourceId}`, {
+          ...submissionData,
+          sourceProjectId: sourceId,
+        });
+
+        // And file it as submitted, so the card moves out of To Submit and the
+        // teacher can see it went. Without this the plan looked unsent however
+        // many times it had been.
+        await fileAsSubmitted([{ id: sourceId }]);
       } else {
         console.warn("SubmitToAdmin: No content to submit");
         return;
@@ -10387,7 +10724,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         timestamp: Date.now(),
         title: deriveProjectTitle(planContent),
         category: "lesson-plan",
-        status: "draft",
+        status: statusForSave(id),
         teacherName: teacherName,
         content: planContent,
         settings: {
@@ -10925,12 +11262,27 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     projectId: string,
     folderId: string | null,
   ) => {
+    // The card moves NOW. The write below is what makes it stick, but nothing
+    // on screen should wait for it: the list is refreshed by a watcher that
+    // polls every 15 seconds, so a teacher who moved a plan watched it sit in
+    // the old folder for what felt like a broken button, and moved it again.
+    const previous = userProjects;
+    setUserProjects((prev: any[]) =>
+      prev.map((p: any) =>
+        p?.id === projectId ? { ...p, folderId: folderId || null } : p,
+      ),
+    );
+    setIsMovingProject(null);
+
     try {
       await store.patch("projects", projectId, {
         folderId: folderId || deleteField(),
       });
-      setIsMovingProject(null);
     } catch (err) {
+      // Put it back rather than leave the screen claiming a move that did not
+      // happen — the next poll would silently undo it anyway, which is worse
+      // for being unexplained.
+      setUserProjects(previous);
       handleFirestoreError(err, OperationType.UPDATE, `projects/${projectId}`);
     }
   };
@@ -11533,12 +11885,23 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         content?.lessonPlan?.overallTopic ||
         ""
       : "";
+    // What the deck is ABOUT, which is not what the teacher typed into
+    // Generation Instructions. That box steers the writing — "make it fun for
+    // kids" is a direction, not a subject — so it is only used as the topic
+    // when there is genuinely nothing else to go on. It used to outrank the
+    // deck's own title, which is how an instruction ended up being taught.
+    const realTitle = !isPlaceholderTitle(content?.lessonTitle)
+      ? (content?.lessonTitle || "").trim()
+      : "";
+    const realOverall = !isPlaceholderTitle(content?.lessonPlan?.overallTopic)
+      ? (content?.lessonPlan?.overallTopic || "").trim()
+      : "";
     const topic =
       planTopic ||
-      lessonInput.trim() ||
-      content?.lessonTitle ||
-      content?.lessonPlan?.overallTopic ||
-      (fileContext ? `Presentation based on ${fileContext.name}` : "");
+      realTitle ||
+      realOverall ||
+      (fileContext ? `Presentation based on ${fileContext.name}` : "") ||
+      lessonInput.trim();
     if (!topic && !basedOnAssessment && !fileContext) return;
     setGeneratingMessage("Creating the slide presentation…");
     setIsGenerating(true);
@@ -11592,16 +11955,20 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           .filter((w) => w.week !== planWeek.week && w.topic?.trim())
           .map((w) => `Week ${w.week}: ${w.topic.trim()}`),
       };
-      // Anything typed in the sidebar is extra steering on top of the plan,
-      // not the topic itself.
-      if (lessonInput.trim()) {
-        options.metadataHints = {
-          ...(content?.slidesMetadata || {}),
-          description: [content?.slidesMetadata?.description, lessonInput.trim()]
-            .filter(Boolean)
-            .join(" — "),
-        };
-      }
+    }
+
+    // Anything typed in Generation Instructions steers the writing, plan or no
+    // plan. This only ran when a lesson plan existed, so a teacher building a
+    // standalone deck had their instructions treated as the subject instead of
+    // as a direction. Skipped when it IS the topic — there is nothing to steer
+    // towards that the model was not already told.
+    if (lessonInput.trim() && lessonInput.trim() !== topic) {
+      options.metadataHints = {
+        ...(content?.slidesMetadata || {}),
+        description: [content?.slidesMetadata?.description, lessonInput.trim()]
+          .filter(Boolean)
+          .join(" — "),
+      };
     }
 
     if (basedOnAssessment && content?.worksheet) {
@@ -11655,8 +12022,22 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           },
           metadata: { yearGroup, lexileLevel, subject },
         };
+        // The title the model actually came up with. base.lessonTitle is kept
+        // when it is a real title, but a deck carrying the raw instructions
+        // from before this was fixed must not keep them as its heading.
+        const derivedTitle =
+          content?.worksheet?.title ||
+          result.slides?.[0]?.title ||
+          topicToSave;
+        const titleIsPrompt =
+          !!lessonInput.trim() &&
+          (base.lessonTitle || "").trim() === lessonInput.trim();
         const updated = {
           ...base,
+          lessonTitle:
+            !base.lessonTitle || titleIsPrompt
+              ? derivedTitle
+              : base.lessonTitle,
           slides: slidesWithMovableImages,
           slidesMetadata: {
             description:
@@ -22040,6 +22421,17 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     );
                   })}
                 </div>
+                {duplicateSubmissions.length > 0 && (
+                  <button
+                    onClick={removeDuplicateSubmissions}
+                    title="The same plan filed more than once. The copy furthest through review is kept."
+                    className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-wider bg-white text-[#854D0E] border-2 border-[#FDE68A] hover:bg-[#FFFBEB] transition-all shadow-sm"
+                  >
+                    <Trash2 size={14} />
+                    Remove {duplicateSubmissions.length} duplicate submission
+                    {duplicateSubmissions.length === 1 ? "" : "s"}
+                  </button>
+                )}
               </div>
 
               {/* Folders — one uniform tile each, so long and short names line
@@ -22191,6 +22583,28 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                               ),
                           )
                           .map((teacher) => {
+                          /* Every directory id that is this teacher.
+                             Subject Allocation records an assignment against
+                             whichever id the directory held at the time: a
+                             synced "staff-…" record, or the "t-…" one the app
+                             ships with. The same person often has both, so
+                             looking up by one id showed "Subjects (0)" for a
+                             teacher whose allocation was filed under their
+                             other record — which is why subjects a coordinator
+                             had definitely entered were nowhere to be seen. */
+                          const myIds = new Set<string>();
+                          if (teacher.id) myIds.add(String(teacher.id));
+                          teachers.forEach((t: any) => {
+                            if (t?.id && sameTeacherIdentity(t.name, teacher.name))
+                              myIds.add(String(t.id));
+                          });
+                          Object.entries(OFFICIAL_TEACHER_IDS).forEach(
+                            ([shortName, id]) => {
+                              if (sameTeacherIdentity(shortName, teacher.name))
+                                myIds.add(String(id));
+                            },
+                          );
+
                           // Find all subjects this teacher is assigned to in staffAssignments
                           const assignments = Object.entries(staffAssignments)
                             .filter(([_, tId]) =>
@@ -22198,12 +22612,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                 ? tId
                                     .split(",")
                                     .filter(Boolean)
-                                    .includes(teacher.id)
+                                    .some((id) => myIds.has(id.trim()))
                                 : false,
                             )
                             .map(([key, _]) => {
                               const [yg, sub] = key.split("-");
-                              return { yg, sub, key };
+                              return { yg, sub, key, allocated: true };
                             });
 
                           const isExpanded =
@@ -22241,6 +22655,58 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           };
                           const mySubmissions =
                             submittedProjects.filter(isFromThisTeacher);
+
+                          /* A subject a teacher has actually submitted for,
+                             whether or not anyone allocated it to them.
+
+                             Allocation is paperwork done in advance and it is
+                             always behind: a teacher who submits for a subject
+                             nobody has entered had that plan tick nowhere, so
+                             a teacher with a dozen submissions showed two or
+                             three ticks and looked like they were not working.
+                             The submission is the evidence — it makes its own
+                             row. */
+                          const derived = new Map<
+                            string,
+                            { yg: string; sub: string; key: string; allocated: boolean }
+                          >();
+                          mySubmissions.forEach((p: any) => {
+                            const sub = (
+                              p.subject ||
+                              p.content?.subject ||
+                              p.content?.lessonPlan?.subject ||
+                              ""
+                            )
+                              .toString()
+                              .trim();
+                            if (!sub) return;
+                            const yg = (
+                              p.yearGroup ||
+                              p.content?.lessonPlan?.class ||
+                              p.content?.gradeLevel ||
+                              ""
+                            )
+                              .toString()
+                              .trim();
+                            // Already has a home in the allocation.
+                            if (
+                              assignments.some(
+                                (a) =>
+                                  sameSubject(a.sub, sub) &&
+                                  sameYearGroup(a.yg, yg),
+                              )
+                            )
+                              return;
+                            const key = `${yg}-${sub}`;
+                            if (!derived.has(key))
+                              derived.set(key, { yg, sub, key, allocated: false });
+                          });
+
+                          const subjectRows = [
+                            ...assignments,
+                            ...Array.from(derived.values()),
+                          ];
+
 
                           return (
                             <React.Fragment key={teacher.id}>
@@ -22301,7 +22767,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                               size={12}
                                               className="text-[#854D0E]"
                                             />
-                                            Show Subjects ({assignments.length})
+                                            Show Subjects ({subjectRows.length})
                                           </>
                                         )}
                                       </button>
@@ -22349,7 +22815,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                   );
                                 })}
                               </tr>
-                              {isExpanded && assignments.length === 0 && (
+                              {isExpanded && subjectRows.length === 0 && (
                                 <tr>
                                   <td
                                     colSpan={trackerWeeks.length + 2}
@@ -22361,7 +22827,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                 </tr>
                               )}
                               {isExpanded &&
-                                assignments.map((asgn, idx) => {
+                                subjectRows.map((asgn, idx) => {
                                   const subjectLabel = `${asgn.sub}`;
                                   const yearLabel = `${asgn.yg}`;
 
@@ -22379,22 +22845,31 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                     // time is authoritative; otherwise compare
                                     // names on word chunks, so "shahidah.a" and
                                     // "NUR SHAHIDAH" still resolve to one person.
-                                    const isTeacherMatch = p.teacherId
-                                      ? p.teacherId === teacher.id
-                                      : sameTeacherName(
-                                          p.teacherName,
-                                          teacher.name,
-                                        ) ||
-                                        sameTeacherName(
-                                          p.content?.lessonPlan?.preparedBy ||
-                                            p.content?.preparedBy ||
-                                            "",
-                                          teacher.name,
-                                        ) ||
-                                        sameTeacherName(
-                                          matchingUser?.teacherName,
-                                          teacher.name,
-                                        );
+                                    // Any signal that says this is their plan
+                                    // counts. This used to trust the stamped
+                                    // id ALONE whenever one was present, so a
+                                    // submission carrying an id from a
+                                    // directory record that has since been
+                                    // replaced never matched — and never fell
+                                    // back to the name, which would have found
+                                    // them immediately.
+                                    const isTeacherMatch =
+                                      (!!p.teacherId &&
+                                        myIds.has(String(p.teacherId))) ||
+                                      sameTeacherIdentity(
+                                        p.teacherName,
+                                        teacher.name,
+                                      ) ||
+                                      sameTeacherIdentity(
+                                        p.content?.lessonPlan?.preparedBy ||
+                                          p.content?.preparedBy ||
+                                          "",
+                                        teacher.name,
+                                      ) ||
+                                      sameTeacherIdentity(
+                                        matchingUser?.teacherName,
+                                        teacher.name,
+                                      );
 
                                     if (!isTeacherMatch) return false;
 
@@ -22412,16 +22887,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                       .trim();
 
                                     const isSubjectMatch =
-                                      asgnSubLower &&
-                                      (pSubjectLower === asgnSubLower ||
-                                        (pSubjectLower &&
-                                          (pSubjectLower.includes(
-                                            asgnSubLower,
-                                          ) ||
-                                            asgnSubLower.includes(
-                                              pSubjectLower,
-                                            ))) ||
-                                        (pTitleLower &&
+                                      !!asgnSubLower &&
+                                      (sameSubject(pSubjectLower, asgnSubLower) ||
+                                        (!!pTitleLower &&
                                           pTitleLower.includes(asgnSubLower)));
 
                                     if (!isSubjectMatch) return false;
@@ -22437,10 +22905,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                       .toString()
                                       .toLowerCase()
                                       .trim();
-                                    const asgnYear = (asgn.yg || "")
-                                      .toLowerCase()
-                                      .trim();
-                                    if (pYear && asgnYear && pYear !== asgnYear)
+                                    if (!sameYearGroup(pYear, asgn.yg))
                                       return false;
 
                                     return true;
@@ -22459,6 +22924,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                           <span className="text-[10px] font-medium text-[#064E3B]/60 italic">
                                             {yearLabel}
                                           </span>
+                                          {!asgn.allocated && (
+                                            <span
+                                              className="mt-1 text-[9px] font-black uppercase tracking-wider text-[#854D0E]/70"
+                                              title="This teacher has submitted for this subject, but it is not in their Subject Allocation."
+                                            >
+                                              From a submission
+                                            </span>
+                                          )}
                                         </div>
                                       </td>
                                       <td className="p-6 border-b border-r border-black/5">
@@ -22482,12 +22955,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                         </div>
                                       </td>
                                       {trackerWeeks.map((week) => {
-                                        const submission =
-                                          submittedProjects.find(
+                                        // Every plan behind this cell, not
+                                        // merely the first one found.
+                                        const cellPlans =
+                                          submittedProjects.filter(
                                             (p) =>
                                               matchProject(p) &&
                                               p.weekId === week.id,
                                           );
+                                        const submission = cellPlans[0];
 
                                         return (
                                           <td
@@ -22497,12 +22973,26 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                             {submission ? (
                                               <button
                                                 onClick={() =>
-                                                  loadProject(submission, true)
+                                                  setTrackerCell({
+                                                    teacher: teacherDisplayName(
+                                                      teacher.name,
+                                                    ),
+                                                    subject: subjectLabel,
+                                                    yearGroup: yearLabel,
+                                                    week: week.label,
+                                                    dates: week.dates,
+                                                    plans: cellPlans,
+                                                  })
                                                 }
-                                                className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 border-2 border-emerald-100 flex items-center justify-center mx-auto hover:bg-emerald-100 transition-all shadow-sm"
-                                                title="View Submission"
+                                                className="relative w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 border-2 border-emerald-100 flex items-center justify-center mx-auto hover:bg-emerald-100 transition-all shadow-sm"
+                                                title={`${cellPlans.length} plan${cellPlans.length === 1 ? "" : "s"} submitted for ${subjectLabel} · ${week.label}`}
                                               >
                                                 <CheckCircle size={20} />
+                                                {cellPlans.length > 1 && (
+                                                  <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-[#064E3B] text-white text-[9px] font-black flex items-center justify-center">
+                                                    {cellPlans.length}
+                                                  </span>
+                                                )}
                                               </button>
                                             ) : (
                                               <div className="w-10 h-10 rounded-xl bg-gray-50 border-2 border-gray-100/50 flex items-center justify-center mx-auto opacity-30">
@@ -22521,6 +23011,80 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       </tbody>
                     </table>
                   </div>
+                  {/* Everything behind one ticked cell. */}
+                  {trackerCell && (
+                    <div
+                      className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6"
+                      onClick={() => setTrackerCell(null)}
+                    >
+                      <div
+                        className="bg-white rounded-[2rem] shadow-2xl border-2 border-[#D1FAE5] w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="px-6 py-5 border-b-2 border-[#D1FAE5] flex items-start justify-between gap-4">
+                          <div className="min-w-0">
+                            <h4 className="text-lg font-black text-[#064E3B] truncate">
+                              {trackerCell.subject}
+                              {trackerCell.yearGroup
+                                ? ` · ${trackerCell.yearGroup}`
+                                : ""}
+                            </h4>
+                            <p className="text-[11px] font-bold text-[#064E3B]/50 mt-0.5">
+                              {trackerCell.teacher} · {trackerCell.week}
+                              {trackerCell.dates ? ` (${trackerCell.dates})` : ""}
+                              {" · "}
+                              {trackerCell.plans.length} submitted
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => setTrackerCell(null)}
+                            className="p-2 rounded-xl hover:bg-[#F0FDF4] text-[#064E3B]/60 shrink-0"
+                          >
+                            <X size={18} className="stroke-[3]" />
+                          </button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-2">
+                          {trackerCell.plans.map((plan: any) => {
+                            const stage = getReviewStage(plan);
+                            const when = plan.timestamp
+                              ? new Date(plan.timestamp).toLocaleString(
+                                  undefined,
+                                  {
+                                    day: "numeric",
+                                    month: "short",
+                                    year: "numeric",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  },
+                                )
+                              : "";
+                            return (
+                              <button
+                                key={plan.id}
+                                onClick={() => {
+                                  setTrackerCell(null);
+                                  loadProject(plan, true);
+                                }}
+                                className="w-full text-left p-4 rounded-2xl border-2 border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] transition-all"
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="text-sm font-black text-[#064E3B] truncate">
+                                    {plan.title || "Untitled Submission"}
+                                  </span>
+                                  <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#F0FDF4] text-[#064E3B]/70 border border-[#D1FAE5] shrink-0">
+                                    {String(stage).replace(/_/g, " ")}
+                                  </span>
+                                </div>
+                                <div className="text-[10px] font-bold text-[#064E3B]/45 mt-1">
+                                  {when}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : submittedProjects
                   .filter(isSupervisedSubmission)
@@ -28921,14 +29485,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     </label>
                     <textarea
                       value={lessonInput}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setLessonInput(val);
-                        if (content)
-                          setContent((prev) =>
-                            prev ? { ...prev, lessonTitle: val } : null,
-                          );
-                      }}
+                      // Steering only. This used to copy every keystroke into
+                      // content.lessonTitle, so "Make it fun for kids" became
+                      // the deck's heading and appeared on the slide — the
+                      // instruction showing up as the thing being taught.
+                      onChange={(e) => setLessonInput(e.target.value)}
                       className="w-full h-20 p-2 bg-white/50 border-2 border-[#D1FAE5] rounded-xl text-[11px] font-medium resize-none outline-none focus:border-[#059669]"
                       placeholder="Describe your slide content (e.g., 'Make it fun for kids' or 'Focus on space exploration')..."
                     />
@@ -36752,9 +37313,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                   ))}
                                 </select>
                               </td>
-                              <td className={labelCls}>Class</td>
+                              {/* The plan's year group. Stored on `class`,
+                                  which is the field the whole app already
+                                  reads as the year group — a second field
+                                  would have to be kept in step with it and
+                                  would not be. Chosen from a list rather than
+                                  typed, so the tracker can match it. */}
+                              <td className={labelCls}>Year Group</td>
                               <td className={cellCls}>
-                                <input
+                                <select
                                   value={lp.class || ""}
                                   onChange={(e) =>
                                     updateLessonPlanMetadata(
@@ -36762,9 +37329,47 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                       e.target.value,
                                     )
                                   }
+                                  className={inCls + " cursor-pointer"}
+                                >
+                                  <option value="">Select Year Group...</option>
+                                  {/* Whatever an older plan already says, kept
+                                      as an option so opening it cannot blank
+                                      the field it was saved with. */}
+                                  {lp.class &&
+                                    !LESSON_YEAR_GROUPS.includes(lp.class) && (
+                                      <option value={lp.class}>
+                                        {lp.class}
+                                      </option>
+                                    )}
+                                  {LESSON_YEAR_GROUPS.map((y) => (
+                                    <option key={y} value={y}>
+                                      {y}
+                                    </option>
+                                  ))}
+                                </select>
+                              </td>
+                            </tr>
+                            <tr>
+                              <td className={labelCls}>Class</td>
+                              <td className={cellCls}>
+                                <input
+                                  value={lp.classGroup || ""}
+                                  onChange={(e) =>
+                                    updateLessonPlanMetadata(
+                                      "classGroup",
+                                      e.target.value,
+                                    )
+                                  }
+                                  placeholder="e.g. 7 Amanah"
                                   className={inCls}
                                 />
                               </td>
+                              {/* The right half of this row is deliberately
+                                  blank — "Checked by" already sits beside the
+                                  lesson date below, and a second one would be
+                                  two inputs writing the same field. */}
+                              <td className={labelCls} />
+                              <td className={cellCls} />
                             </tr>
                             <tr>
                               <td className={labelCls}>
@@ -37792,22 +38397,38 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       // element cannot drift: whatever the theme, frame, wallpaper or footer
       // happens to be, the file gets that.
       const shots: string[] = [];
-      for (let i = 0; i < total; i++) {
-        setCurrentSlideIdx(i);
-        // Let React paint the slide before reaching for it.
-        await new Promise<void>((r) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => r())),
-        );
-        const el = slideRef.current;
-        if (!el) continue;
-        // Fonts and pictures have to have landed, or the first slides come out
-        // in fallback type with empty image boxes.
-        await waitForStage(el);
-        shots.push(await captureSlide(el, 2));
+      let captureFailed: any = null;
+      try {
+        for (let i = 0; i < total; i++) {
+          setCurrentSlideIdx(i);
+          // Let React paint the slide before reaching for it.
+          await new Promise<void>((r) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => r())),
+          );
+          const el = slideRef.current;
+          if (!el) continue;
+          // Fonts and pictures have to have landed, or the first slides come
+          // out in fallback type with empty image boxes.
+          await waitForStage(el);
+          shots.push(await captureSlide(el, 2));
+        }
+      } catch (err) {
+        captureFailed = err;
       }
-      if (!shots.length) throw new Error("Nothing was captured");
 
-      const html = buildSlidesHTML(shots, title);
+      // A picture of every slide is the download we want. When that cannot be
+      // had, a plainer deck written from the slide text still opens, presents
+      // and prints — which beats handing the teacher an error and no file.
+      const complete = shots.length === total;
+      const html = complete
+        ? buildSlidesHTML(shots, title)
+        : buildSlidesHTMLFromText(content.slides, title, activeTheme);
+      if (!complete) {
+        console.warn(
+          `Slide capture incomplete (${shots.length}/${total}); wrote the text deck instead.`,
+          captureFailed,
+        );
+      }
       const blob = new Blob([html], { type: "text/html;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -37818,6 +38439,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err: any) {
+      // Capture failures no longer reach here — they fall back to the text
+      // deck above. Anything that does is a genuine failure to produce a file.
       console.error("Slides HTML export failed:", err);
       alert(
         `Couldn't build the HTML deck — ${err?.message || "something went wrong"}. Please try again.`,

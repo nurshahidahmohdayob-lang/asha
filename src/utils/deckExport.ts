@@ -84,6 +84,10 @@ const COLOUR_PROPS = [
   "caret-color",
   "-webkit-text-fill-color",
   "box-shadow",
+  // html2canvas parses these two as well — confirmed in its own source — and
+  // Tailwind's prose styles put colours in them.
+  "text-shadow",
+  "-webkit-text-stroke-color",
   "fill",
   "stroke",
   "stop-color",
@@ -253,6 +257,44 @@ export function stripUnsupportedColours(clonedDoc: Document) {
       if (!val || !needsWork(val)) continue;
       el.style.setProperty(prop, plainColour(val), "important");
     }
+
+    // Anything already sitting in the element's own style attribute, whatever
+    // the property. html2canvas resolves ::before and ::after against the
+    // ORIGINAL document and copies the result inline onto a
+    // <html2canvaspseudoelement> in the clone — so a pseudo-element's colours
+    // arrive here as inline styles rather than through any stylesheet, and a
+    // fixed list of properties will always be one behind. The inline
+    // declaration is short, so reading all of it costs nothing.
+    const inline = el.style;
+    for (let k = inline.length - 1; k >= 0; k--) {
+      const prop = inline[k];
+      const val = inline.getPropertyValue(prop);
+      if (!val || !needsWork(val)) continue;
+      inline.setProperty(prop, plainColour(val), inline.getPropertyPriority(prop));
+    }
+  }
+
+  // Last resort. Colours that matter have been inlined on the elements by now,
+  // so a rule still carrying one is a rule html2canvas would choke on for no
+  // gain. Dropping it loses a little styling; keeping it loses the download.
+  for (let i = 0; i < clonedDoc.styleSheets.length; i++) {
+    const sheet = clonedDoc.styleSheets[i];
+    try {
+      const rules = sheet.cssRules || sheet.rules;
+      if (!rules) continue;
+      for (let j = rules.length - 1; j >= 0; j--) {
+        const rule = rules[j] as any;
+        if (rule?.cssText && needsWork(rule.cssText) && !rule.cssRules) {
+          try {
+            sheet.deleteRule(j);
+          } catch {
+            /* not ours to delete */
+          }
+        }
+      }
+    } catch {
+      /* cross-origin stylesheet */
+    }
   }
 }
 
@@ -270,17 +312,40 @@ export async function captureSlide(
   el: HTMLElement,
   scale = 2,
 ): Promise<string> {
-  const html2canvas = (await import("html2canvas")).default;
+  // html2canvas-pro, not html2canvas. The original cannot parse oklch or
+  // oklab at all, and Tailwind 4 writes the whole palette in them — three
+  // rounds of converting colours by hand each closed one route and left
+  // another open. The fork parses them natively.
+  //
+  // stripUnsupportedColours still runs: the fork does NOT understand
+  // color-mix(), and Tailwind emits one for every opacity modifier — 302 of
+  // them in this app against 185 oklch. Checked, not assumed.
+  const html2canvas = (await import("html2canvas-pro")).default;
+
+  // The slide's own background, because the shot is saved as JPEG and JPEG has
+  // no transparency: with backgroundColor left null every transparent pixel
+  // came out BLACK, which is why an exported slide sat in a black field.
+  let background = "#FFFFFF";
+  try {
+    const own = getComputedStyle(el).backgroundColor;
+    if (own && !/^rgba\(0, 0, 0, 0\)$|^transparent$/i.test(own)) {
+      background = plainColour(own);
+    }
+  } catch {
+    /* keep white */
+  }
+
   const canvas = await html2canvas(el, {
     scale,
     useCORS: true,
     allowTaint: false,
     logging: false,
-    backgroundColor: null,
-    width: el.offsetWidth,
-    height: el.offsetHeight,
-    windowWidth: el.offsetWidth,
-    windowHeight: el.offsetHeight,
+    backgroundColor: background,
+    // No width/height/window overrides here. Forcing the clone's viewport to
+    // the element's size re-lays out everything measured against the viewport,
+    // which is how an exported slide came out with its title, bullets and
+    // footer piled on top of each other in the corner of the canvas.
+    // html2canvas measures the element on its own.
     onclone: prepareClone,
   });
   return canvas.toDataURL("image/jpeg", 0.92);

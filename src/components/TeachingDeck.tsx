@@ -1615,8 +1615,14 @@ function buildSequence(
     ),
   });
 
-  // 3 · Our learning — goal board: objective on the left, criteria ladder right
-  slides.push({
+  /* The goal board — what the class is learning and how they will know they
+     have. Held back rather than pushed here.
+
+     It used to open the lesson, third slide in, which is the one moment the
+     class cannot yet judge any of it. Read at the END the same words are a
+     review: the criteria are things they have just done, so the checklist is
+     ticked off from memory rather than promised in advance. */
+  const goalBoard: TeachSlide = {
     kicker: "Our learning today",
     tone: "learn",
     content: (
@@ -1648,7 +1654,7 @@ function buildSequence(
         )}
       </div>
     ),
-  });
+  };
 
   // 3a · The idea said once, plainly, with the things it is made of.
   const pack = studio.pack;
@@ -2237,6 +2243,9 @@ function buildSequence(
   // to the class, and a slide headed "not for projecting" has no business in
   // it. The week's resources and attachments stay on the lesson plan, where
   // the teacher already reads them.
+  // Last: the goal board, now a review of what the lesson covered.
+  slides.push(goalBoard);
+
   return slides;
 }
 

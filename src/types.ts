@@ -324,6 +324,12 @@ export interface LessonPlan {
   weeklyBreakdown: WeeklyPlan[];
   // Document-view summary + framework sections (optional so older saved plans
   // still render). Bullet-list fields are stored as newline-separated strings.
+  /** The actual class taught, e.g. "7 Amanah" or "5-1".
+   *
+   *  Separate from `class`, which the whole app reads as the YEAR GROUP and
+   *  which the tracker matches submissions on. Renaming that would mean
+   *  touching every reader; this sits beside it. */
+  classGroup?: string;
   subTopic?: string;
   strandSummary?: string;
   learningObjectiveSummary?: string;
