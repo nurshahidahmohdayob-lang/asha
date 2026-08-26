@@ -6337,6 +6337,26 @@ export default function App() {
     }
   };
 
+  /** The signed-in teacher's OWN submissions.
+   *
+   *  submittedProjects holds every submission for a reviewer — a Head of
+   *  Department, a coordinator or an admin is served the whole school by the
+   *  watcher, which is what the review queue needs. "Submission History &
+   *  Status" is not that screen: it is the teacher's own record, and a
+   *  reviewer is a teacher too, so reading the shared list there put every
+   *  colleague's history and marks in front of them.
+   *
+   *  Matched on the uid stamped at submission time. The teacher's name is only
+   *  consulted for older rows that carry no uid to check. */
+  const mySubmittedPlans = useMemo(() => {
+    const uid = user?.uid;
+    return (submittedProjects || []).filter((p: any) =>
+      p?.userId
+        ? p.userId === uid
+        : sameTeacherIdentity(p?.teacherName, teacherName),
+    );
+  }, [submittedProjects, user?.uid, teacherName]);
+
   /** The plans behind one ticked cell in the tracker.
    *
    *  A cell used to open the first submission it found and say nothing about
@@ -28740,7 +28760,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               </div>
             </div>
 
-            {submittedProjects.length === 0 ? (
+            {mySubmittedPlans.length === 0 ? (
               <div className="bg-white p-12 rounded-[2.5rem] border-2 border-dashed border-[#064E3B]/10 text-center">
                 <div className="w-16 h-16 bg-[#FBF9F1] rounded-2xl flex items-center justify-center text-[#064E3B]/20 mx-auto mb-4">
                   <CheckCircle size={32} />
@@ -28770,7 +28790,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       </tr>
                     </thead>
                     <tbody>
-                      {submittedProjects.map((plan: any) => {
+                      {mySubmittedPlans.map((plan: any) => {
                         const week = trackerWeeks.find(
                           (w) => w.id === plan.weekId,
                         );
