@@ -40338,13 +40338,16 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${WORKSHEET_HOST_DEFAULT}/${sharedDeckCode}`);
-        if (!res.ok) throw new Error(`This link could not be opened (${res.status}).`);
-        const html = await res.text();
-        const doc = new DOMParser().parseFromString(html, "text/html");
-        const raw = doc.querySelector("#zera-deck")?.textContent || "";
-        if (!raw) throw new Error("This link does not hold a lesson.");
-        const data = JSON.parse(raw);
+        // Read through this app's own API rather than straight from the
+        // host: the host answers a CORS preflight but leaves the header off
+        // the real GET, so the browser refused the read and the viewer said
+        // "Failed to fetch". Same origin, no such rule.
+        const res = await fetch(`/api/shared/${sharedDeckCode}`);
+        const data = await res.json().catch(() => null);
+        if (!res.ok)
+          throw new Error(
+            data?.error || `This link could not be opened (${res.status}).`,
+          );
         if (!data?.plan || !data?.week) throw new Error("This lesson is incomplete.");
         if (!cancelled) setSharedDeck(data);
       } catch (err: any) {
