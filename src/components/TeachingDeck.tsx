@@ -2522,7 +2522,11 @@ export default function TeachingDeck({
       role="dialog"
       aria-modal="true"
       aria-label={`Teaching slides — Week ${week.week}`}
-      className={`fixed inset-0 z-[100] flex flex-col font-sans transition-colors duration-500 ${TONE_BG[s.tone]}`}
+      // deck-parent carries the Parent Guide palette and typography — the
+      // warm paper, the forest and gold, serif headings over a sans body.
+      // Applied here rather than across every slide's class list, because
+      // there are hundreds of those and one of them would have been missed.
+      className={`deck-parent fixed inset-0 z-[100] flex flex-col font-sans transition-colors duration-500 ${TONE_BG[s.tone]}`}
     >
       {/* Top bar — sits on the tone colour */}
       <div

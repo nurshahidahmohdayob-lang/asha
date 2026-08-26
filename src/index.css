@@ -27,7 +27,19 @@
   --color-brand-800: #0a371f;
   --color-brand-900: #082b19;
 
-  --color-ink: #0d0d0d;
+  /* Parent Guide ink — warmer and softer than pure black, as on the
+     published parent slides. */
+  --color-ink: #16221b;
+  --color-ink-soft: #4c5b51;
+  /* Warm paper, not white: the parent deck's ground. */
+  --color-paper: #faf5e9;
+  --color-paper-2: #f2e9d3;
+  --color-card: #fffdf6;
+  --color-hairline: rgba(22, 34, 27, 0.14);
+  /* The serif that gives the parent slides their voice. System faces only, so
+     a classroom machine with no network renders it identically. */
+  --font-deck-serif: "Iowan Old Style", "Palatino Linotype", Palatino,
+    "Book Antiqua", Georgia, "Times New Roman", serif;
   --color-silver: #dfdfe7;
   --color-sun-soft: #fef9c3;
 
@@ -186,4 +198,44 @@
 }
 .acorn-wave {
   animation: acorn-wave 2.4s ease-out infinite;
+}
+
+/* ───────── Parent Guide look, for the projected lesson ─────────
+   Taken from the published parent slides: warm paper rather than white, forest
+   and gold, and a serif for anything that carries the lesson's voice over a
+   sans body.
+
+   Scoped to .deck-parent and applied here rather than in the deck's own class
+   lists — those run to hundreds of utilities across twenty slide types, and
+   restyling by hand would have missed some and drifted from the rest. */
+.deck-parent h1,
+.deck-parent h2,
+.deck-parent h3 {
+  font-family: var(--font-deck-serif);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+/* The cards a slide sits on. Pure white against forest reads as a cut-out;
+   the parent deck's card is warm and belongs to the paper. */
+.deck-parent .bg-white {
+  background-color: var(--color-card);
+}
+.deck-parent .bg-white\/95,
+.deck-parent .bg-white\/90 {
+  background-color: color-mix(in srgb, var(--color-card) 95%, transparent);
+}
+
+/* Body copy sits softer than the headings, as it does on the parent slides. */
+.deck-parent .text-zinc-600,
+.deck-parent .text-zinc-500 {
+  color: var(--color-ink-soft);
+}
+.deck-parent .text-zinc-400 {
+  color: color-mix(in srgb, var(--color-ink-soft) 70%, transparent);
+}
+
+/* Rules and dividers, gold where they mark a beginning. */
+.deck-parent .bg-zinc-200 {
+  background-color: var(--color-hairline);
 }
