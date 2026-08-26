@@ -6357,6 +6357,50 @@ export default function App() {
     );
   }, [submittedProjects, user?.uid, teacherName]);
 
+  /** The submission this plan was filed as, if it has been sent.
+   *
+   *  Two of these are certain: the id is keyed to the project, or the record
+   *  names the project it came from. Submissions filed before that was true
+   *  carry neither — the old Submit minted a random id — so a plan sent last
+   *  week could not be connected back to the project a teacher is editing,
+   *  and their changes reached nobody.
+   *
+   *  For those, the plan is matched on what it is FOR: same teacher, same
+   *  subject, same year group, same week. Only ever when exactly one
+   *  submission fits — guessing between two would quietly rewrite the wrong
+   *  teacher's plan, which is far worse than not syncing. */
+  const submissionForPlan = useMemo(() => {
+    if (!currentProjectId) return null;
+    const uid = user?.uid;
+    const mine = (submittedProjects || []).filter((p: any) =>
+      p?.userId ? p.userId === uid : true,
+    );
+
+    const keyed =
+      mine.find((p: any) => p?.id === `sub_${currentProjectId}`) ||
+      mine.find((p: any) => p?.sourceProjectId === currentProjectId);
+    if (keyed) return keyed;
+
+    const lp = content?.lessonPlan;
+    if (!lp) return null;
+    const subject = subjectKey(lp.subject || content?.subject);
+    // Without a subject there is nothing distinctive enough to match on.
+    if (!subject) return null;
+
+    const candidates = mine.filter(
+      (p: any) =>
+        !p?.sourceProjectId &&
+        subjectKey(
+          p?.subject || p?.content?.subject || p?.content?.lessonPlan?.subject,
+        ) === subject &&
+        sameYearGroup(
+          p?.yearGroup || p?.content?.lessonPlan?.class,
+          lp.class || content?.gradeLevel,
+        ),
+    );
+    return candidates.length === 1 ? candidates[0] : null;
+  }, [submittedProjects, currentProjectId, content, user?.uid]);
+
   /** The plans behind one ticked cell in the tracker.
    *
    *  A cell used to open the first submission it found and say nothing about
@@ -7914,6 +7958,71 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     "worksheet",
   );
   const [isReviewMode, setIsReviewMode] = useState(false);
+
+  /* A submitted plan keeps tracking the teacher's edits.
+   *
+   *  Until a plan is approved, what the reviewer should be reading is the
+   *  plan as it stands — so opening it from the submitted folder and changing
+   *  something updates the submission in place. Nothing is resubmitted: doing
+   *  that filed a second copy and restarted the review, which is how a teacher
+   *  ended up with the same plan in the queue several times over.
+   *
+   *  Once it IS approved the plan stops moving, because the approval was given
+   *  to those words. The one exception is the reflection, which is written
+   *  after the lesson has been taught and was always going to arrive late.
+   */
+  useEffect(() => {
+    const target = submissionForPlan;
+    if (!target?.id || !content?.lessonPlan) return;
+    // A reviewer editing in the review screen is not the teacher revising
+    // their own plan.
+    if (isReviewMode) return;
+
+    const approved = getReviewStage(target) === "approved";
+    const nextContent = approved
+      ? {
+          ...(target.content || {}),
+          lessonPlan: {
+            ...(target.content?.lessonPlan || {}),
+            reflection: content.lessonPlan.reflection || "",
+          },
+        }
+      : signPlanForSubmission(content);
+
+    // Nothing to say.
+    if (JSON.stringify(nextContent) === JSON.stringify(target.content)) return;
+
+    // Typed into text boxes, so write on a pause rather than a keystroke.
+    const timer = window.setTimeout(() => {
+      const patch: any = { content: nextContent, updatedAt: Date.now() };
+      // Adopt an older record the first time it is matched, so every edit
+      // after this one is certain rather than inferred.
+      if (!target.sourceProjectId && currentProjectId) {
+        patch.sourceProjectId = currentProjectId;
+      }
+      if (!approved) {
+        // The row the reviewer sees is labelled from these, so they follow the
+        // plan rather than describing the version that was first sent.
+        patch.title = buildSubmissionTitle(content, target.weekId);
+        patch.subject =
+          content?.lessonPlan?.subject || content?.subject || target.subject || "";
+        patch.yearGroup =
+          content?.lessonPlan?.class ||
+          content?.gradeLevel ||
+          target.yearGroup ||
+          "";
+      }
+      store
+        .patch("submitted_plans", target.id, patch)
+        .catch((err: any) =>
+          // Bookkeeping: the teacher's own copy already holds the change and
+          // the next edit tries again. Never an alert mid-sentence.
+          console.warn("Could not update the submitted plan:", err),
+        );
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [content, submissionForPlan, isReviewMode]);
+
   const [includeStory, setIncludeStory] = useState(false);
   const [readingPassageOnly, setReadingPassageOnly] = useState(false);
   const [sessionTopic, setSessionTopic] = useState("");
@@ -38065,6 +38174,36 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             className="w-full bg-transparent outline-none resize-y min-h-[90px] text-[13px] leading-relaxed"
                           />
                         </div>
+                        {/* Said plainly, because a teacher who cannot tell
+                            whether this reached the reviewer will submit the
+                            whole plan again to be sure. */}
+                        {submissionForPlan ? (
+                          <p className="mt-2 text-[11px] font-bold text-[#064E3B]/50 flex items-center gap-1.5">
+                            <CheckCircle size={12} className="text-[#059669]" />
+                            {getReviewStage(submissionForPlan) === "approved"
+                              ? "This plan is approved. Your reflection still saves to the submitted copy automatically."
+                              : "Edits save to your submitted plan automatically — no need to submit it again."}
+                          </p>
+                        ) : (
+                          /* Sent, but the submission cannot be matched back to
+                             this plan — it was filed before submissions were
+                             keyed to their project. Silently not syncing is the
+                             worst of both worlds: say what to do about it. One
+                             more Submit links them for good. */
+                          userProjects.find(
+                            (pr: any) =>
+                              pr?.id === currentProjectId &&
+                              pr?.status === "submitted",
+                          ) && (
+                            <p className="mt-2 text-[11px] font-bold text-[#854D0E]/80 flex items-start gap-1.5">
+                              <Info size={12} className="mt-0.5 shrink-0" />
+                              This plan was sent before edits synced
+                              automatically. Press Submit once more to link it —
+                              after that your changes reach the reviewer on
+                              their own.
+                            </p>
+                          )
+                        )}
                       </section>
 
                       {essentials.length > 0 && (
