@@ -35966,9 +35966,24 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         return na === nb ? a.localeCompare(b) : na - nb;
       },
     );
+    /* Subjects are the shelf INSIDE a year group, so they are read from the
+     *  plans of the year currently open — not from every plan in the tab.
+     *  Listing all of them at the top level offered a teacher subjects they
+     *  do not teach to that year, and the count beside each would have been
+     *  wrong for the year they were looking at. */
+    const inYear = lpYearFilter
+      ? inTab.filter((p: any) => sameYearGroup(planYear(p), lpYearFilter))
+      : inTab;
     const subjectsHere = Array.from(
-      new Set(inTab.map(planSubject).filter(Boolean)),
+      new Set(inYear.map(planSubject).filter(Boolean)),
     ).sort((a, b) => a.localeCompare(b));
+
+    // How many plans sit behind each shelf, so a teacher can see where their
+    // work is without opening every one.
+    const countForYear = (y: string) =>
+      inTab.filter((p: any) => sameYearGroup(planYear(p), y)).length;
+    const countForSubject = (sub: string) =>
+      inYear.filter((p: any) => sameSubject(planSubject(p), sub)).length;
 
     // Everything a teacher might reasonably type to find a plan again.
     const searchText = (p: any) => {
@@ -36323,15 +36338,25 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   </span>
                 </div>
 
-                {(yearsHere.length > 1 || subjectsHere.length > 1) && (
+                {/* Year group first, then the subjects taught inside it —
+                    a shelf within a shelf, rather than two lists side by side
+                    that a teacher has to combine in their head. */}
+                {yearsHere.length > 1 && (
                   <div className="flex flex-wrap items-center gap-1.5">
-                    {yearsHere.length > 1 &&
-                      yearsHere.map((y) => {
+                    <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
+                      Year group
+                    </span>
+                    {yearsHere.map((y) => {
                         const on = lpYearFilter === y;
                         return (
                           <button
                             key={`y-${y}`}
-                            onClick={() => setLpYearFilter(on ? "" : y)}
+                            onClick={() => {
+                              setLpYearFilter(on ? "" : y);
+                              // The subject shelf belongs to the year being
+                              // left behind, so it does not come along.
+                              setLpSubjectFilter("");
+                            }}
                             className={cn(
                               "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 transition-all",
                               on
@@ -36340,14 +36365,33 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             )}
                           >
                             {y}
+                            <span className="ml-1.5 opacity-60">
+                              {countForYear(y)}
+                            </span>
                           </button>
                         );
                       })}
-                    {yearsHere.length > 1 && subjectsHere.length > 1 && (
-                      <div className="h-5 w-px bg-[#D1FAE5] mx-1" />
+                    {lpYearFilter && (
+                      <button
+                        onClick={() => {
+                          setLpYearFilter("");
+                          setLpSubjectFilter("");
+                        }}
+                        className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-[#854D0E] hover:bg-[#FFFBEB]"
+                      >
+                        All years
+                      </button>
                     )}
-                    {subjectsHere.length > 1 &&
-                      subjectsHere.map((sub) => {
+                  </div>
+                )}
+
+                {/* Only the subjects taught to the year that is open. */}
+                {subjectsHere.length > 1 && (
+                  <div className="flex flex-wrap items-center gap-1.5 pl-3 border-l-2 border-[#D1FAE5]">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
+                      {lpYearFilter ? `${lpYearFilter} · subject` : "Subject"}
+                    </span>
+                    {subjectsHere.map((sub) => {
                         const on = lpSubjectFilter === sub;
                         return (
                           <button
@@ -36362,18 +36406,18 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             )}
                           >
                             {sub}
+                            <span className="ml-1.5 opacity-60">
+                              {countForSubject(sub)}
+                            </span>
                           </button>
                         );
                       })}
-                    {(lpYearFilter || lpSubjectFilter) && (
+                    {lpSubjectFilter && (
                       <button
-                        onClick={() => {
-                          setLpYearFilter("");
-                          setLpSubjectFilter("");
-                        }}
+                        onClick={() => setLpSubjectFilter("")}
                         className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-[#854D0E] hover:bg-[#FFFBEB]"
                       >
-                        Clear
+                        All subjects
                       </button>
                     )}
                   </div>
