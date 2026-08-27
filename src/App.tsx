@@ -4232,6 +4232,9 @@ const LESSON_YEAR_GROUPS = [
   "Year 10",
   "Year 11",
   "COMBINE (PRIMARY)",
+  // A cross-year programme rather than a year group, but it is what a plan is
+  // FOR, and the classroom mapping has carried it for a while.
+  "Cambridge Plus",
 ];
 
 /** One year group, however it was written down.
@@ -9243,11 +9246,19 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
    *  day-less lesson already held, so a plan half-written before the days were
    *  picked does not lose it. Unticking a day drops that lesson, which is the
    *  point of unticking it. */
-  const applyDaysToPlan = (days: string[]) =>
+  /** Give ONE week its lesson rows, one per day it is taught.
+   *
+   *  This used to apply the same days to every week at once, because there
+   *  was only ever one list of days for the whole plan. Days belong to a week
+   *  now, so this changes the week that was edited and leaves the rest alone —
+   *  a term where week 1 is taught three times and week 2 once is ordinary,
+   *  and rewriting every week from one toggle would undo the others. */
+  const applyDaysToWeek = (weekIdx: number, days: string[]) =>
     setContent((prev) => {
       if (!prev?.lessonPlan?.weeklyBreakdown?.length) return prev;
 
-      const weeks = prev.lessonPlan.weeklyBreakdown.map((week: any) => {
+      const weeks = prev.lessonPlan.weeklyBreakdown.map((week: any, wi: number) => {
+        if (wi !== weekIdx) return week;
         const existing = lessonsOf(week);
         if (!days.length) {
           // Back to one lesson a week, keeping whatever lesson one holds.
@@ -10061,9 +10072,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           numSlides: 0,
           numQuestions: 0,
           questionTypes: [],
-          // Kept in weekday order however they were ticked, so Monday's
-          // lesson is lesson one whether or not it was chosen first.
-          days: LESSON_DAYS.filter((d) => lpDays.includes(d)),
+          // This week's own days. Already in weekday order, so Monday is
+          // lesson one whether or not it was ticked first.
+          days: daysForWeek(index),
         },
         unit,
         // Steer the week with the narrower subtopic when one is given.
@@ -14783,7 +14794,27 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   /** Days this subject is on the timetable. Ticking three of them asks the
    *  generator for three lessons a week rather than one, each on its own day.
    *  Empty means one lesson a week, which is how it behaved before. */
-  const [lpDays, setLpDays] = useState<string[]>([]);
+  /** Which days each week is taught on, one entry per week.
+   *
+   *  This was a single list for the whole plan, so a subject taught three
+   *  times in the first week and once in the second could only be described
+   *  as one or the other. It sits per week now, beside the unit and topic it
+   *  belongs to. */
+  const [lpWeekDays, setLpWeekDays] = useState<string[][]>([]);
+  const daysForWeek = (i: number): string[] => lpWeekDays[i] || [];
+  const toggleWeekDay = (i: number, day: string) =>
+    setLpWeekDays((prev) => {
+      const next = [...prev];
+      const had = next[i] || [];
+      // Weekday order however they were ticked, so Monday is lesson one.
+      next[i] = LESSON_DAYS.filter((x) =>
+        x === day ? !had.includes(day) : had.includes(x),
+      );
+      // The plan document follows the toggle, so the week gains or loses its
+      // lesson rows straight away rather than only when it is regenerated.
+      applyDaysToWeek(i, next[i]);
+      return next;
+    });
   // AI-generated lesson plan shown as copyable suggestions on the side, so the
   // teacher types/copies content into their own (empty) plan rather than having
   // it filled in automatically.
@@ -31611,22 +31642,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     onChange={(e) => setYearGroup(e.target.value)}
                     className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold"
                   >
-                    {[
-                      "General",
-                      "Year 1",
-                      "Year 2",
-                      "Year 3",
-                      "Year 4",
-                      "Year 5",
-                      "Year 6",
-                      "Year 7",
-                      "Year 8",
-                      "Year 9",
-                      "Year 10",
-                      "Year 11",
-                      "Year 12",
-                      "COMBINE (PRIMARY)",
-                    ].map((y) => (
+                    {["General", ...LESSON_YEAR_GROUPS, "Year 12"].map((y) => (
                       <option key={y} value={y}>
                         {y}
                       </option>
@@ -33943,22 +33959,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     }}
                     className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold font-sans outline-none focus:border-[#059669]"
                   >
-                    {[
-                      "General",
-                      "Year 1",
-                      "Year 2",
-                      "Year 3",
-                      "Year 4",
-                      "Year 5",
-                      "Year 6",
-                      "Year 7",
-                      "Year 8",
-                      "Year 9",
-                      "Year 10",
-                      "Year 11",
-                      "Year 12",
-                      "COMBINE (PRIMARY)",
-                    ].map((y) => (
+                    {["General", ...LESSON_YEAR_GROUPS, "Year 12"].map((y) => (
                       <option key={y} value={y}>
                         {y}
                       </option>
@@ -35885,20 +35886,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     const plans = userProjects.filter(
       (p: any) => isLessonPlanProject(p),
     );
-    const yearOptions = [
-      "Year 1",
-      "Year 2",
-      "Year 3",
-      "Year 4",
-      "Year 5",
-      "Year 6",
-      "Year 7",
-      "Year 8",
-      "Year 9",
-      "Year 10",
-      "Year 11",
-      "COMBINE (PRIMARY)",
-    ];
+    // One list, so a year group added in constants reaches every picker
+    // instead of the four that were remembered.
+    const yearOptions = LESSON_YEAR_GROUPS;
     const chip =
       "px-2 py-0.5 rounded-full bg-[#F0FDF4] border border-[#D1FAE5] text-[9px] font-black uppercase tracking-wider text-[#064E3B]/70";
     // A plan that has been sent to the Admin is filed under Submitted; the
@@ -37023,20 +37013,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         }}
                         className="w-full p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold outline-none focus:border-[#059669]"
                       >
-                        {[
-                          "Year 1",
-                          "Year 2",
-                          "Year 3",
-                          "Year 4",
-                          "Year 5",
-                          "Year 6",
-                          "Year 7",
-                          "Year 8",
-                          "Year 9",
-                          "Year 10",
-                          "Year 11",
-                          "COMBINE (PRIMARY)",
-                        ].map((y) => (
+                        {LESSON_YEAR_GROUPS.map((y) => (
                           <option key={y} value={y}>
                             {y}
                           </option>
@@ -37420,6 +37397,59 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             />
                           </div>
 
+                          {/* How many times this subject is taught in THIS
+                              week. A week with three lessons and a week with
+                              one sit side by side in a term, so the days
+                              belong to the week rather than to the plan. */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
+                                Days taught this week
+                              </label>
+                              {daysForWeek(i).length > 0 && (
+                                <button
+                                  onClick={() => {
+                                    setLpWeekDays((prev) => {
+                                      const next = [...prev];
+                                      next[i] = [];
+                                      return next;
+                                    });
+                                    applyDaysToWeek(i, []);
+                                  }}
+                                  className="text-[9px] font-bold text-[#059669] hover:underline"
+                                >
+                                  Clear
+                                </button>
+                              )}
+                            </div>
+                            <div className="flex gap-1">
+                              {LESSON_DAYS.map((d) => {
+                                const on = daysForWeek(i).includes(d);
+                                return (
+                                  <button
+                                    key={d}
+                                    type="button"
+                                    title={d}
+                                    onClick={() => toggleWeekDay(i, d)}
+                                    className={cn(
+                                      "flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider border-2 transition-all",
+                                      on
+                                        ? "bg-[#059669] text-white border-[#059669]"
+                                        : "bg-[#F0FDF4] text-[#064E3B]/50 border-[#D1FAE5] hover:border-[#059669]",
+                                    )}
+                                  >
+                                    {d.slice(0, 3)}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <p className="text-[9px] font-bold text-[#064E3B]/35">
+                              {daysForWeek(i).length > 0
+                                ? `${daysForWeek(i).length} lesson${daysForWeek(i).length > 1 ? "s" : ""} — this week comes back split by day.`
+                                : "Leave blank for one lesson this week."}
+                            </p>
+                          </div>
+
                           <button
                             onClick={() => generateSpecificWeek(i)}
                             disabled={
@@ -37542,61 +37572,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   button because that is what it changes: tick three days and
                   the plan comes back with three lessons a week, one per day,
                   instead of a single lesson for the whole week. */}
-              <div className="shrink-0 px-4 pt-3 bg-white">
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-[9px] font-black uppercase text-[#064E3B]/40">
-                    Days taught each week
-                  </label>
-                  {lpDays.length > 0 && (
-                    <button
-                      onClick={() => {
-                        setLpDays([]);
-                        applyDaysToPlan([]);
-                      }}
-                      className="text-[8px] font-bold text-[#059669] hover:underline"
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-                <div className="flex gap-1">
-                  {LESSON_DAYS.map((d) => {
-                    const on = lpDays.includes(d);
-                    return (
-                      <button
-                        key={d}
-                        type="button"
-                        title={d}
-                        onClick={() => {
-                          // Weekday order however they were ticked, so Monday
-                          // is always lesson one.
-                          const next = LESSON_DAYS.filter((x) =>
-                            x === d ? !lpDays.includes(d) : lpDays.includes(x),
-                          );
-                          setLpDays(next);
-                          // Straight into the plan: the lessons appear now,
-                          // not after a generate step.
-                          applyDaysToPlan(next);
-                        }}
-                        className={
-                          "flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 transition-colors " +
-                          (on
-                            ? "bg-[#059669] text-white border-[#059669]"
-                            : "bg-[#F0FDF4] text-[#064E3B]/50 border-[#D1FAE5] hover:border-[#059669]")
-                        }
-                      >
-                        {d.slice(0, 3)}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="mt-1.5 text-[9px] text-[#064E3B]/40 leading-snug">
-                  {lpDays.length > 0
-                    ? `${lpDays.length} lesson${lpDays.length > 1 ? "s" : ""} per week — each week you generate comes back split by day.`
-                    : "Leave blank for one lesson per week."}
-                </p>
-              </div>
-
             </aside>
           )}
           <main className="flex-1 p-12 overflow-y-auto bg-[#F0FDF4]/50 custom-scrollbar">

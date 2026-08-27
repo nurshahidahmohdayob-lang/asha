@@ -104,8 +104,8 @@ const STEPS: Step[] = [
         text: "In Whole Term, this is where you say what matters to you — more hands-on work, a weekly assessment, a textbook to follow, pacing notes.",
       },
       {
-        label: "Days taught each week",
-        text: "The five day buttons just above Generate. Tick the days this subject is on your timetable — English on Monday, Tuesday and Thursday, tick those three. Every week of the plan then gets three lessons, one per day. Leave them all off for one lesson a week.",
+        label: "Days taught this week",
+        text: "The five day buttons inside each week card, under Activities. Tick the days this subject is taught THAT week — English on Monday, Tuesday and Thursday, tick those three, and that week comes back as three lessons, one per day. Each week is set on its own, so a week with three lessons can sit next to a week with one. Leave them all off for a single lesson.",
       },
       {
         label: "Lesson Focus / Methodology",
