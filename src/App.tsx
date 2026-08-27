@@ -40353,12 +40353,33 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         // the real GET, so the browser refused the read and the viewer said
         // "Failed to fetch". Same origin, no such rule.
         const res = await fetch(`/api/shared/${sharedDeckCode}`);
-        const data = await res.json().catch(() => null);
+        const body = await res.text();
+        let data: any = null;
+        try {
+          data = JSON.parse(body);
+        } catch {
+          /* not JSON — reported below with what it actually was */
+        }
         if (!res.ok)
           throw new Error(
             data?.error || `This link could not be opened (${res.status}).`,
           );
-        if (!data?.plan || !data?.week) throw new Error("This lesson is incomplete.");
+        // Say WHICH part is missing and what came back. "Incomplete" sent us
+        // round in circles: it named nothing, so every guess at the cause was
+        // as good as the last.
+        if (!data)
+          throw new Error(
+            `The link returned ${res.status} but not a lesson (${body.slice(0, 60)}…).`,
+          );
+        if (!data.plan || !data.week)
+          throw new Error(
+            `This link is missing the ${[
+              !data.plan && "plan",
+              !data.week && "week",
+            ]
+              .filter(Boolean)
+              .join(" and ")}. Ask for a new link.`,
+          );
         if (!cancelled) setSharedDeck(data);
       } catch (err: any) {
         if (!cancelled)
@@ -40379,6 +40400,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           <h2 className="text-2xl font-black">{sharedDeckError}</h2>
           <p className="mt-2 text-white/70 font-bold">
             Ask whoever sent it to share the lesson again.
+          </p>
+          <p className="mt-6 text-xs font-bold text-white/40">
+            Link code: {sharedDeckCode}
           </p>
         </div>
       );
