@@ -4283,14 +4283,8 @@ const sameSubject = (a?: string | null, b?: string | null): boolean => {
 
 /** Has anything actually been written in this plan?
  *
- *  A blank plan is created the moment Lesson Design is opened, and the silent
- *  save runs whenever one is minimised or another is opened — so simply
- *  LOOKING at the page filed an empty card in To Submit. A teacher then had
- *  cards they never made, and could not tell which of them they had meant to
- *  write.
- *
- *  Anything a teacher could have typed counts, including a single week's
- *  topic. Term, class and the academic year do not: those are prefilled. */
+ *  Used to ask before losing one. Term, class and academic year do not count:
+ *  those are prefilled and are true of a plan nobody has touched. */
 const lessonPlanHasContent = (c: any): boolean => {
   const lp = c?.lessonPlan;
   if (!lp) return false;
@@ -4298,18 +4292,19 @@ const lessonPlanHasContent = (c: any): boolean => {
   if (said(lp.overallTopic) || said(lp.subTopic) || said(lp.reflection))
     return true;
   if (said(c?.lessonTitle) && !isPlaceholderTitle(c.lessonTitle)) return true;
-  return (lp.weeklyBreakdown || []).some((w: any) =>
-    [
-      w?.unit,
-      w?.topic,
-      w?.subTopic,
-      w?.learningObjective,
-      w?.strand,
-      w?.introduction,
-      w?.activities,
-      w?.assessment,
-      w?.resources,
-    ].some(said) || (w?.attachments || []).length > 0,
+  return (lp.weeklyBreakdown || []).some(
+    (w: any) =>
+      [
+        w?.unit,
+        w?.topic,
+        w?.subTopic,
+        w?.learningObjective,
+        w?.strand,
+        w?.introduction,
+        w?.activities,
+        w?.assessment,
+        w?.resources,
+      ].some(said) || (w?.attachments || []).length > 0,
   );
 };
 
@@ -10919,11 +10914,17 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   ): Promise<string | null> => {
     if (!user || !planContent?.lessonPlan) return null;
     const existingId = projectId || currentProjectId;
-    // An empty plan that was never saved is not a plan yet. Saving one here
-    // is what put cards in To Submit that no teacher had asked for; a plan
-    // that already exists still saves, so clearing a field is not ignored.
-    if (!existingId && !lessonPlanHasContent(planContent)) return null;
-    const id = existingId || Math.random().toString(36).substring(2, 15);
+    /* This NEVER creates a plan. It only saves one that already exists.
+     *
+     *  Autosaving a plan into existence is what put cards in To Submit that
+     *  nobody had made: it runs on minimising, on opening another plan, on
+     *  leaving the page, so anything that happened to be in the editor became
+     *  a card some minutes later, apparently on its own. A plan is made by
+     *  saying so — New Blank Plan, Add Plans For Year Groups, importing a
+     *  file, or Save — and this keeps whichever of those was made up to date.
+     */
+    if (!existingId) return null;
+    const id = existingId;
     try {
       await store.put("projects", id, {
         id,
@@ -10962,8 +10963,23 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   // Minimise the plan that is open and go back to the board.
   const openLessonPlanBoard = async () => {
     if (!isReviewMode && content?.lessonPlan) {
-      const id = await persistLessonPlanSilently(content, currentProjectId);
-      if (id && id !== currentProjectId) setCurrentProjectId(id);
+      if (currentProjectId) {
+        const id = await persistLessonPlanSilently(content, currentProjectId);
+        if (id && id !== currentProjectId) setCurrentProjectId(id);
+      } else if (lessonPlanHasContent(content)) {
+        /* Written, but never made into a plan — generated here, or arrived
+           from the workflow. Nothing files it now that autosave cannot create
+           one, so ask instead of dropping it. Answering no is a real answer:
+           the teacher was trying something out and does not want a card. */
+        if (
+          window.confirm(
+            "This plan has not been saved yet. Keep it in To Submit?",
+          )
+        ) {
+          const id = await createBlankLessonPlan(content);
+          if (id) setCurrentProjectId(id);
+        }
+      }
     }
     setLpBoardOpen(true);
   };
@@ -11152,12 +11168,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
    *
    *  Returns the id so the editor opens on the plan that now exists rather
    *  than on a plan that will exist once something saves it. */
-  const createBlankLessonPlan = async (): Promise<string | null> => {
+  const createBlankLessonPlan = async (
+    /** Keep what is already written, when there is something to keep. */
+    from?: EduContent | null,
+  ): Promise<string | null> => {
     if (!user) return null;
     const subj = content?.lessonPlan?.subject || lpSubject || subject || "General";
     const year = content?.lessonPlan?.class || yearGroup || "General";
     const id = Math.random().toString(36).substring(2, 15);
-    const blank = makeBlankLessonPlanContent(subj, year);
+    const blank = from || makeBlankLessonPlanContent(subj, year);
     try {
       await store.put("projects", id, {
         id,
