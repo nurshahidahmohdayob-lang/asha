@@ -12747,7 +12747,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       return;
     }
 
-    setGeneratingMessage(`Generating ${termWeeks}-Week Session Plan...`);
+    setGeneratingMessage(`Planning ${termWeeks} weeks from your topic…`);
     setIsGenerating(true);
     try {
       const { generateSessionPlan } = await import("./services/geminiService");
@@ -12869,7 +12869,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       lpDescription.trim() ||
       `Produce a comprehensive 6-week Cambridge curriculum-aligned lesson plan for ${yearGroup} ${lpSubject || subject}. Focus on active learning and progressive skill development.`;
 
-    setGeneratingMessage("Generating Lesson Plan...");
+    setGeneratingMessage("Writing up your weeks…");
     setIsGenerating(true);
     try {
       const result = await generateLessonPlan(focus, {
@@ -37235,8 +37235,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     icon={Wand2}
                     hint={
                       lpGenerateMode === "term"
-                        ? `Whole term — ${termWeeks} weeks`
-                        : "Week by week"
+                        ? `Whole term from a topic — ${termWeeks} weeks`
+                        : "Week by week, from your own units and topics"
                     }
                     open={lpOpenSections.generate}
                     onToggle={() => toggleLpSection("generate")}
@@ -37538,18 +37538,28 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             )}
                           </select>
                         </div>
+                        {/* "Program" and "Package" told a teacher nothing
+                            about which of these to press. Each now says what
+                            it does and what it reads — the difference between
+                            them is the INPUT, not the output. */}
                         <button
                           onClick={generateSP}
                           disabled={isGenerating}
-                          className="py-3 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-400 transition-all shadow-md flex items-center justify-center gap-2"
+                          className="py-3 px-4 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-400 transition-all shadow-md flex items-center justify-center gap-2 text-center"
                         >
                           {isGenerating ? (
                             <Loader2 className="animate-spin" size={16} />
                           ) : (
                             <Wand2 size={16} />
                           )}{" "}
-                          Generate {termWeeks}-Week Program
+                          Plan {termWeeks} Weeks From A Topic
                         </button>
+                        <p className="mt-2 text-[10px] font-bold leading-snug text-[#064E3B]/45 text-center">
+                          Works out the whole term for you — what week 1
+                          covers, what week 2 builds on — from the topic and
+                          subtopics above. Use it when the term is still a
+                          blank page.
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -37632,8 +37642,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   ) : (
                     <Sparkles />
                   )}{" "}
-                  Generate Lesson Package
+                  Write Up The Weeks I Have Outlined
                 </button>
+                <p className="mt-2 text-[11px] font-bold leading-snug text-[#064E3B]/50 text-center">
+                  Fills in objectives, activities and assessment around the
+                  units and topics you have typed above — and splits each week
+                  into one lesson per day you have ticked.
+                </p>
               </div>
             </aside>
           )}
