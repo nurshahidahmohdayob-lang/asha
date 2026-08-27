@@ -4278,6 +4278,38 @@ const sameSubject = (a?: string | null, b?: string | null): boolean => {
   return x === y || x.includes(y) || y.includes(x);
 };
 
+/** Has anything actually been written in this plan?
+ *
+ *  A blank plan is created the moment Lesson Design is opened, and the silent
+ *  save runs whenever one is minimised or another is opened — so simply
+ *  LOOKING at the page filed an empty card in To Submit. A teacher then had
+ *  cards they never made, and could not tell which of them they had meant to
+ *  write.
+ *
+ *  Anything a teacher could have typed counts, including a single week's
+ *  topic. Term, class and the academic year do not: those are prefilled. */
+const lessonPlanHasContent = (c: any): boolean => {
+  const lp = c?.lessonPlan;
+  if (!lp) return false;
+  const said = (v: any) => !!(v ?? "").toString().trim();
+  if (said(lp.overallTopic) || said(lp.subTopic) || said(lp.reflection))
+    return true;
+  if (said(c?.lessonTitle) && !isPlaceholderTitle(c.lessonTitle)) return true;
+  return (lp.weeklyBreakdown || []).some((w: any) =>
+    [
+      w?.unit,
+      w?.topic,
+      w?.subTopic,
+      w?.learningObjective,
+      w?.strand,
+      w?.introduction,
+      w?.activities,
+      w?.assessment,
+      w?.resources,
+    ].some(said) || (w?.attachments || []).length > 0,
+  );
+};
+
 /** Is this saved project a lesson plan?
  *
  *  Its content decides, not the category it was filed under: plans saved
@@ -10893,10 +10925,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     projectId?: string | null,
   ): Promise<string | null> => {
     if (!user || !planContent?.lessonPlan) return null;
-    const id =
-      projectId ||
-      currentProjectId ||
-      Math.random().toString(36).substring(2, 15);
+    const existingId = projectId || currentProjectId;
+    // An empty plan that was never saved is not a plan yet. Saving one here
+    // is what put cards in To Submit that no teacher had asked for; a plan
+    // that already exists still saves, so clearing a field is not ignored.
+    if (!existingId && !lessonPlanHasContent(planContent)) return null;
+    const id = existingId || Math.random().toString(36).substring(2, 15);
     try {
       await store.put("projects", id, {
         id,
