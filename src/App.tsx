@@ -38559,13 +38559,19 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         {/* Said plainly, because a teacher who cannot tell
                             whether this reached the reviewer will submit the
                             whole plan again to be sure. */}
+                        {/* Nothing is said while a plan is still under review:
+                            edits reaching the reviewer is what a teacher would
+                            expect anyway, and the line was noise on every plan.
+                            The approved case IS worth a word — a plan that has
+                            stopped taking edits still takes this one. */}
                         {submissionForPlan ? (
-                          <p className="mt-2 text-[11px] font-bold text-[#064E3B]/50 flex items-center gap-1.5">
-                            <CheckCircle size={12} className="text-[#059669]" />
-                            {getReviewStage(submissionForPlan) === "approved"
-                              ? "This plan is approved. Your reflection still saves to the submitted copy automatically."
-                              : "Edits save to your submitted plan automatically — no need to submit it again."}
-                          </p>
+                          getReviewStage(submissionForPlan) === "approved" && (
+                            <p className="mt-2 text-[11px] font-bold text-[#064E3B]/50 flex items-center gap-1.5">
+                              <CheckCircle size={12} className="text-[#059669]" />
+                              This plan is approved. Your reflection still saves
+                              to the submitted copy automatically.
+                            </p>
+                          )
                         ) : (
                           /* Sent, but the submission cannot be matched back to
                              this plan — it was filed before submissions were
