@@ -2689,6 +2689,21 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
 export async function generateWeeklyPlan(activity: string, weekNum: number, options: EduOptions, unit?: string, topic?: string): Promise<WeeklyPlan> {
   try {
     const contents: any[] = [];
+    /* One lesson per taught day, as the whole-term generator has always done.
+       A subject on the timetable three times a week is three lessons, not one,
+       and this generator could only ever describe the week as a single lesson
+       — so a teacher wanting the split had to use a different button. */
+    const chosenDays = (options.days || []).filter(Boolean);
+    const dayClause = chosenDays.length
+      ? `
+      - "lessons": Array of EXACTLY ${chosenDays.length} objects, one per taught day, in this order: ${chosenDays.join(", ")}. Each with:
+        - "day": string (exactly one of: ${chosenDays.join(", ")})
+        - "focus": string (what THIS lesson covers — a distinct slice of the week's topic)
+        - "introduction": string (how this particular lesson starts)
+        - "activities": string (what the class does in THIS lesson only — detailed, complete sentences, EACH STEP ON ITS OWN LINE separated by a newline; do NOT put a whole week of activities here)
+        - "assessment": string (how this lesson is checked)
+        The lessons must be DIFFERENT from one another and build across the week towards the week's learning objective. Do not repeat the same activity on each day. The week's own "introduction"/"activities"/"assessment" stay as a summary of the whole week.`
+      : "";
     const mainPrompt = `As an expert Cambridge Educator, create a professional weekly lesson plan for WEEK ${weekNum} of a ${options.yearGroup} class.
       
       STANDARDS & FRAMEWORK:
@@ -2720,7 +2735,7 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
       - "introduction": string (detailed overview of what this topic is about)
       - "activities": string (${activity.trim() ? `incorporate the teacher's activity "${activity}" and expand on it` : 'suitable classroom activities for this week'})
       - "assessment": string (what worksheet, quiz, or exam activity for this topic)
-      - "resources": string (Unit #, Learning Standard code, etc.)
+      - "resources": string (Unit #, Learning Standard code, etc.)${dayClause}
     `;
     contents.push(mainPrompt);
 
@@ -2740,7 +2755,22 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
             introduction: { type: Type.STRING },
             activities: { type: Type.STRING },
             assessment: { type: Type.STRING },
-            resources: { type: Type.STRING }
+            resources: { type: Type.STRING },
+            // Only asked for when days were ticked; the prompt says so too.
+            lessons: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  day: { type: Type.STRING },
+                  focus: { type: Type.STRING },
+                  introduction: { type: Type.STRING },
+                  activities: { type: Type.STRING },
+                  assessment: { type: Type.STRING },
+                },
+                required: ["day", "focus", "activities"],
+              },
+            }
           },
           required: ["week", "unit", "topic", "subTopic", "strand", "learningObjective", "introduction", "activities", "assessment", "resources"]
         }

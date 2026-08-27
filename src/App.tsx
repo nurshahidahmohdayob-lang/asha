@@ -3452,7 +3452,6 @@ import {
   generateSlides,
   generateWorksheet,
   generateReadingProgram,
-  generateLessonPlan,
   generateEduContent,
   generateWeeklyPlan,
   suggestWeeklyInput,
@@ -10062,6 +10061,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           numSlides: 0,
           numQuestions: 0,
           questionTypes: [],
+          // Kept in weekday order however they were ticked, so Monday's
+          // lesson is lesson one whether or not it was chosen first.
+          days: LESSON_DAYS.filter((d) => lpDays.includes(d)),
         },
         unit,
         // Steer the week with the narrower subtopic when one is given.
@@ -12898,75 +12900,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
    *  actually read. PDFs and photos reach the model as binary it cannot
    *  decode, so they would be dropped in silence and the plan would generate
    *  as though nothing had been uploaded — worse than refusing the file. */
-  const generateLP = async () => {
-    const focus =
-      lpDescription.trim() ||
-      `Produce a comprehensive 6-week Cambridge curriculum-aligned lesson plan for ${yearGroup} ${lpSubject || subject}. Focus on active learning and progressive skill development.`;
-
-    setGeneratingMessage("Writing up your weeks…");
-    setIsGenerating(true);
-    try {
-      const result = await generateLessonPlan(focus, {
-        yearGroup,
-        lexileLevel,
-        subject: lpSubject,
-        numSlides: 0,
-        numQuestions: 0,
-        questionTypes: [],
-        term: lpTerm,
-        duration: lpDuration,
-        date: lpDate,
-        academicYear: lpAcademicYear,
-        class: lpClass,
-        preparedBy: lpPreparedBy,
-        checkedBy: lpCheckedBy,
-        unit: lpUnit.map((u) => u.trim() || undefined),
-        topics: lpWeeklyTopics.map((t) => t.trim() || undefined),
-        // Kept in weekday order however they were ticked, so Monday's lesson
-        // is lesson one whether or not it was chosen first.
-        days: LESSON_DAYS.filter((d) => lpDays.includes(d)),
-      });
-      if (result) {
-        // The AI plan is a set of copyable suggestions; the teacher gets an
-        // empty template to fill in themselves, because the plan is theirs to
-        // write.
-        setLessonPlanSuggestion(result);
-        const filled = makeBlankLessonPlan(result);
-        const eduContent: EduContent = content
-          ? { ...content, lessonPlan: filled }
-          : {
-              lessonTitle: result.overallTopic || lpDescription,
-              subject: lpSubject,
-              gradeLevel: yearGroup,
-              slides: [],
-              worksheet: { title: "", sections: [] },
-              readingProgram: {
-                title: "",
-                description: "",
-                gradeLevel: "",
-                focusArea: "",
-                duration: "",
-                weeklyGoals: [],
-                recommendedBooks: [],
-                milestones: [],
-              },
-              lessonPlan: filled,
-              metadata: { yearGroup, lexileLevel, subject: lpSubject },
-            };
-        setContent(eduContent);
-        setWorkspaceMode("lesson-plan");
-        setCurrentView("lesson-plan");
-
-        // Auto-save to vault
-        // saveToVault('lesson-plan', true, eduContent, result.overallTopic || lpDescription);
-      }
-    } catch (err: any) {
-      handleEduError(err, "Generate lesson plan");
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
   const QUESTION_TYPES = [
     "Multiple Choice",
     "True/False",
@@ -37659,31 +37592,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 </div>
                 <p className="mt-1.5 text-[9px] text-[#064E3B]/40 leading-snug">
                   {lpDays.length > 0
-                    ? `${lpDays.length} lesson${lpDays.length > 1 ? "s" : ""} per week — added to every week below.`
+                    ? `${lpDays.length} lesson${lpDays.length > 1 ? "s" : ""} per week — each week you generate comes back split by day.`
                     : "Leave blank for one lesson per week."}
                 </p>
               </div>
 
-              {/* Primary action stays reachable without scrolling the pane */}
-              <div className="shrink-0 p-4 border-t-2 border-[#D1FAE5] bg-white">
-                <button
-                  onClick={generateLP}
-                  disabled={isGenerating}
-                  className="w-full py-4 bg-[#059669] text-white rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl shadow-[#059669]/20 transition-all flex items-center justify-center gap-3 hover:bg-[#047857] active:scale-[0.98] disabled:opacity-60"
-                >
-                  {isGenerating ? (
-                    <Loader2 className="animate-spin" />
-                  ) : (
-                    <Sparkles />
-                  )}{" "}
-                  Write Up The Weeks I Have Outlined
-                </button>
-                <p className="mt-2 text-[11px] font-bold leading-snug text-[#064E3B]/50 text-center">
-                  Fills in objectives, activities and assessment around the
-                  units and topics you have typed above — and splits each week
-                  into one lesson per day you have ticked.
-                </p>
-              </div>
             </aside>
           )}
           <main className="flex-1 p-12 overflow-y-auto bg-[#F0FDF4]/50 custom-scrollbar">
