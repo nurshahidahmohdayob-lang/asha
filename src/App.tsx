@@ -11148,6 +11148,38 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     }
   };
 
+  /** Make one blank plan, because the teacher asked for one.
+   *
+   *  Returns the id so the editor opens on the plan that now exists rather
+   *  than on a plan that will exist once something saves it. */
+  const createBlankLessonPlan = async (): Promise<string | null> => {
+    if (!user) return null;
+    const subj = content?.lessonPlan?.subject || lpSubject || subject || "General";
+    const year = content?.lessonPlan?.class || yearGroup || "General";
+    const id = Math.random().toString(36).substring(2, 15);
+    const blank = makeBlankLessonPlanContent(subj, year);
+    try {
+      await store.put("projects", id, {
+        id,
+        userId: user.uid,
+        folderId: activeFolderId,
+        timestamp: Date.now(),
+        title: deriveProjectTitle(blank),
+        category: "lesson-plan",
+        status: "draft",
+        teacherName: teacherName,
+        content: blank,
+        settings: { includeStory, isTemplateMode, workspaceMode: "lesson-plan" },
+      });
+      setContent(blank);
+      setCurrentProjectId(id);
+      return id;
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, "projects");
+      return null;
+    }
+  };
+
   const createLessonPlanDrafts = async (subj: string, years: string[]) => {
     if (!user || !subj || years.length === 0) return;
     setLpBoardBusy(true);
@@ -36613,7 +36645,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   if (!isReviewMode && content?.lessonPlan) {
                     await persistLessonPlanSilently(content, currentProjectId);
                   }
-                  resetLessonPlan();
+                  // Pressing this IS the teacher making a plan, so the card
+                  // appears now. It used to only reset the editor and leave
+                  // the card to be created by a later autosave, which is what
+                  // made plans seem to arrive on their own — a card turning up
+                  // some minutes after the thing that caused it.
+                  const created = await createBlankLessonPlan();
+                  if (!created) resetLessonPlan();
                   setLpBoardOpen(false);
                 }}
                 className="min-h-[240px] rounded-[1.75rem] border-2 border-dashed border-[#D1FAE5] hover:border-[#059669] bg-white/40 hover:bg-white transition-all flex flex-col items-center justify-center gap-2 text-[#064E3B]/50 hover:text-[#064E3B]"
