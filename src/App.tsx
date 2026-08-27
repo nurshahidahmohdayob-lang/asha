@@ -14862,6 +14862,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const [lpQuickSubject, setLpQuickSubject] = useState("Science");
   const [lpQuickYears, setLpQuickYears] = useState<string[]>([]);
   const [lpBoardBusy, setLpBoardBusy] = useState(false);
+  /** Finding a plan again: a search box and shelves by year group and
+   *  subject. Kept here rather than in the board so a teacher's filters
+   *  survive opening a plan and coming back. */
+  const [lpSearch, setLpSearch] = useState("");
+  const [lpYearFilter, setLpYearFilter] = useState("");
+  const [lpSubjectFilter, setLpSubjectFilter] = useState("");
   // Which half of the board is on screen: the plans still to send, or the ones
   // already with the Admin.
   const [lpBoardTab, setLpBoardTab] = useState<"todo" | "submitted">("todo");
@@ -35937,7 +35943,81 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     // written for the empty case could never appear. The tab now opens and
     // says where the next plan comes from instead.
     const tab = lpBoardTab;
-    const shownPlans = tab === "submitted" ? submittedPlans : todoPlans;
+    const inTab = tab === "submitted" ? submittedPlans : todoPlans;
+
+    /* Year group and subject, read off the plans themselves.
+     *
+     *  A teacher asked for folders per year group and subject. Folders would
+     *  mean filing every plan by hand and re-filing it whenever it changed —
+     *  and the plans already SAY which year and subject they are for. These
+     *  are those answers, so the shelves build themselves and cannot go stale.
+     */
+    const planYear = (p: any) =>
+      (p?.content?.lessonPlan?.class || p?.content?.gradeLevel || "").trim();
+    const planSubject = (p: any) =>
+      (p?.content?.lessonPlan?.subject || p?.content?.subject || "").trim();
+
+    const yearsHere = Array.from(new Set(inTab.map(planYear).filter(Boolean))).sort(
+      (a, b) => {
+        const na = parseInt(/(\d+)/.exec(a)?.[1] || "999", 10);
+        const nb = parseInt(/(\d+)/.exec(b)?.[1] || "999", 10);
+        return na === nb ? a.localeCompare(b) : na - nb;
+      },
+    );
+    const subjectsHere = Array.from(
+      new Set(inTab.map(planSubject).filter(Boolean)),
+    ).sort((a, b) => a.localeCompare(b));
+
+    // Everything a teacher might reasonably type to find a plan again.
+    const searchText = (p: any) => {
+      const lp = p?.content?.lessonPlan;
+      return [
+        p?.title,
+        p?.content?.lessonTitle,
+        lp?.overallTopic,
+        lp?.subject,
+        lp?.class,
+        lp?.term,
+        ...(lp?.weeklyBreakdown || []).flatMap((w: any) => [
+          `week ${w?.week}`,
+          w?.unit,
+          w?.topic,
+          w?.subTopic,
+          w?.learningObjective,
+        ]),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+    };
+
+    const needle = lpSearch.trim().toLowerCase();
+    /* "Year 3" typed into the box means the YEAR GROUP, not the characters.
+     *
+     *  Left as plain text it matched anything containing a 3 — an objective
+     *  code like 3Bp.01 is in most plans — so searching "year 3" returned the
+     *  lot. Pulled out and compared as a year group, it narrows properly, and
+     *  the rest of what was typed is still matched as words. */
+    const yearInQuery = /\byear\s*(\d{1,2})\b|\by(\d{1,2})\b/.exec(needle);
+    const queryYear = yearInQuery
+      ? `year ${yearInQuery[1] || yearInQuery[2]}`
+      : "";
+    const words = (queryYear ? needle.replace(yearInQuery![0], " ") : needle)
+      .split(/\s+/)
+      .filter(Boolean);
+
+    const shownPlans = inTab.filter((p: any) => {
+      if (lpYearFilter && !sameYearGroup(planYear(p), lpYearFilter)) return false;
+      if (lpSubjectFilter && !sameSubject(planSubject(p), lpSubjectFilter))
+        return false;
+      if (queryYear && !sameYearGroup(planYear(p), queryYear)) return false;
+      // Every word has to appear somewhere, so "plants seeds" narrows rather
+      // than widening the way a single-phrase match would.
+      if (words.length && !words.every((w) => searchText(p).includes(w)))
+        return false;
+      return true;
+    });
+
     const submittable = shownPlans.filter((p: any) => p?.content);
     const submittableCount = submittable.length;
     const selectedCount = shownPlans.filter((p: any) =>
@@ -36209,6 +36289,96 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               </div>
             )}
 
+            {/* Finding a plan again. The shelves are built from what the
+                plans say they are for, so nothing has to be filed and nothing
+                goes stale when a plan's year or subject changes. */}
+            {(inTab.length > 3 || needle || lpYearFilter || lpSubjectFilter) && (
+              <div className="space-y-3 pb-1">
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1 max-w-md">
+                    <Search
+                      size={14}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 text-[#064E3B]/40"
+                    />
+                    <input
+                      value={lpSearch}
+                      onChange={(e) => setLpSearch(e.target.value)}
+                      placeholder="Search by topic, subject, week or year…"
+                      className="w-full pl-9 pr-8 py-2.5 bg-white border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
+                    />
+                    {lpSearch && (
+                      <button
+                        onClick={() => setLpSearch("")}
+                        aria-label="Clear search"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-lg text-[#064E3B]/40 hover:bg-[#F0FDF4]"
+                      >
+                        <X size={12} className="stroke-[3]" />
+                      </button>
+                    )}
+                  </div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[#064E3B]/40">
+                    {shownPlans.length} of {inTab.length}
+                  </span>
+                </div>
+
+                {(yearsHere.length > 1 || subjectsHere.length > 1) && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {yearsHere.length > 1 &&
+                      yearsHere.map((y) => {
+                        const on = lpYearFilter === y;
+                        return (
+                          <button
+                            key={`y-${y}`}
+                            onClick={() => setLpYearFilter(on ? "" : y)}
+                            className={cn(
+                              "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 transition-all",
+                              on
+                                ? "bg-[#064E3B] text-white border-[#064E3B]"
+                                : "bg-white text-[#064E3B] border-[#D1FAE5] hover:border-[#059669]",
+                            )}
+                          >
+                            {y}
+                          </button>
+                        );
+                      })}
+                    {yearsHere.length > 1 && subjectsHere.length > 1 && (
+                      <div className="h-5 w-px bg-[#D1FAE5] mx-1" />
+                    )}
+                    {subjectsHere.length > 1 &&
+                      subjectsHere.map((sub) => {
+                        const on = lpSubjectFilter === sub;
+                        return (
+                          <button
+                            key={`s-${sub}`}
+                            onClick={() => setLpSubjectFilter(on ? "" : sub)}
+                            title={sub}
+                            className={cn(
+                              "max-w-[16rem] truncate px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 transition-all",
+                              on
+                                ? "bg-[#059669] text-white border-[#059669]"
+                                : "bg-white text-[#064E3B] border-[#D1FAE5] hover:border-[#059669]",
+                            )}
+                          >
+                            {sub}
+                          </button>
+                        );
+                      })}
+                    {(lpYearFilter || lpSubjectFilter) && (
+                      <button
+                        onClick={() => {
+                          setLpYearFilter("");
+                          setLpSubjectFilter("");
+                        }}
+                        className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-[#854D0E] hover:bg-[#FFFBEB]"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-5">
               {shownPlans.map((p: any) => {
                 const lp = p?.content?.lessonPlan;
@@ -36381,7 +36551,38 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 group above.
               </p>
             )}
-            {plans.length > 0 && shownPlans.length === 0 && (
+            {/* Filtered down to nothing is a different thing from having
+                nothing, and saying "every plan has been submitted" to someone
+                who has simply typed a word that matches none of them would be
+                a lie with a clear button attached. */}
+            {shownPlans.length === 0 &&
+              inTab.length > 0 &&
+              (needle || lpYearFilter || lpSubjectFilter) && (
+                <div className="text-center space-y-3 pt-6">
+                  <p className="text-sm font-bold text-[#064E3B]/40">
+                    No plan here matches
+                    {needle ? ` “${lpSearch.trim()}”` : " that"}
+                    {lpYearFilter ? ` in ${lpYearFilter}` : ""}
+                    {lpSubjectFilter ? ` for ${lpSubjectFilter}` : ""}.
+                  </p>
+                  <button
+                    onClick={() => {
+                      setLpSearch("");
+                      setLpYearFilter("");
+                      setLpSubjectFilter("");
+                    }}
+                    className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider bg-white text-[#064E3B] border-2 border-[#D1FAE5] hover:border-[#059669]"
+                  >
+                    Show all {inTab.length}
+                  </button>
+                </div>
+              )}
+
+            {plans.length > 0 &&
+              shownPlans.length === 0 &&
+              !needle &&
+              !lpYearFilter &&
+              !lpSubjectFilter && (
               <div className="text-center space-y-3 pt-6">
                 <p className="text-sm font-bold text-[#064E3B]/40">
                   {tab === "submitted"
