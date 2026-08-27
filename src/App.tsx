@@ -12754,7 +12754,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       const result = await generateSessionPlan(
         sessionTopic,
         sessionSubtopics,
-        termWeeks as 10 | 12,
+        termWeeks,
         {
           yearGroup,
           lexileLevel,
@@ -26320,9 +26320,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       }
                       className="bg-white px-4 py-2 border-2 border-[#D1FAE5]/40 rounded-xl font-black text-[#064E3B] outline-none shadow-sm cursor-pointer"
                     >
-                      {Array.from({ length: 12 }, (_, i) => i + 1).map((wk) => (
-                        <option key={wk} value={wk}>
-                          Week {wk}
+                      {/* The term's own weeks, not a fixed twelve — this
+                          picker stopped three weeks before the term did. */}
+                      {TERM_WEEKS.map((w) => (
+                        <option key={w.id} value={w.id}>
+                          Week {w.id} · {termWeekLabel(w)}
                         </option>
                       ))}
                     </select>
@@ -37479,7 +37481,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             }
                             className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none cursor-pointer hover:border-[#059669] transition-all"
                           >
-                            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(
+                            {/* A whole term is 15 weeks. The list stopped at
+                                12, so the longest plan a teacher could ask
+                                for was three weeks short of their term and
+                                the rest had to be added by hand. */}
+                            {Array.from({ length: 15 }, (_, i) => i + 1).map(
                               (w) => (
                                 <option key={w} value={w}>
                                   {w} Weeks Program

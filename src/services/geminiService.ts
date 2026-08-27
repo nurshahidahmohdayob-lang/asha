@@ -1975,7 +1975,7 @@ export async function generateReadingProgram(lessonInput: string, options: EduOp
   }
 }
 
-export async function generateSessionPlan(topic: string, subtopics: string, weeks: 10 | 12, options: EduOptions): Promise<LessonPlan> {
+export async function generateSessionPlan(topic: string, subtopics: string, weeks: number, options: EduOptions): Promise<LessonPlan> {
   try {
     const contents: any[] = [];
     const mainPrompt = `As an expert Cambridge Educator, create a professional, detailed ${weeks}-WEEK Session Plan.
