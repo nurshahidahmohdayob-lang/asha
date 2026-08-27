@@ -3958,6 +3958,9 @@ const buildLessonPlanEditableHTML = (lp: any, title: string): string => {
           many ? `Lesson ${li + 1}` : "",
           l?.day || "",
           l?.period || "",
+          // This lesson's own length where it has one; the plan's otherwise,
+          // so a printed week always says how long each lesson runs.
+          (l?.duration || "").toString().trim() || lp?.duration || "",
           l?.focus || "",
         ]
           .filter(Boolean)
@@ -37940,6 +37943,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             <tr>
                               <td className={labelCls}>
                                 Target Lesson Duration
+                                <span className="block text-[9px] font-bold text-[#064E3B]/35 normal-case">
+                                  the usual length; a lesson can set its own
+                                </span>
                               </td>
                               <td className={cellCls}>
                                 <input
@@ -38232,6 +38238,26 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                                     }
                                                     placeholder="Period / time"
                                                     className="w-[110px] text-[12px] bg-transparent outline-none border-b border-transparent focus:border-[#D1FAE5]"
+                                                  />
+                                                  {/* This lesson's own length.
+                                                      Blank means the plan's. */}
+                                                  <input
+                                                    value={lesson.duration || ""}
+                                                    onChange={(e) =>
+                                                      updateWeekLesson(
+                                                        idx,
+                                                        li2,
+                                                        "duration",
+                                                        e.target.value,
+                                                      )
+                                                    }
+                                                    placeholder={
+                                                      lp.duration
+                                                        ? `${lp.duration}`
+                                                        : "Duration"
+                                                    }
+                                                    title="How long this lesson runs. Leave blank to use the plan's target duration."
+                                                    className="w-[92px] text-[12px] bg-transparent outline-none border-b border-transparent focus:border-[#D1FAE5]"
                                                   />
                                                   <input
                                                     value={lesson.focus || ""}

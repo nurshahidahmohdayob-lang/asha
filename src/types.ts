@@ -282,6 +282,13 @@ export interface DayLesson {
   day: string;
   /** Optional period or time, e.g. "Period 3" or "08:40–09:20". */
   period?: string;
+  /** How long THIS lesson runs, e.g. "40 mins".
+   *
+   *  The plan carries a duration too, but that is the usual length for the
+   *  subject. Periods differ — a double on Wednesday, a short one before
+   *  assembly — and a week of lessons that are not all the same length could
+   *  not be written down. Left empty, the lesson runs for the plan's. */
+  duration?: string;
   /** What this particular lesson covers, within the week's topic. */
   focus?: string;
   introduction?: string;
