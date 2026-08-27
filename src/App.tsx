@@ -11009,6 +11009,77 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   // editor, same Submit — because anything less means a teacher with a term of
   // planning in Word retypes it purely to be allowed to submit it.
   const [lpImportBusy, setLpImportBusy] = useState(false);
+  /** Build the plan being edited FROM a file the teacher already has.
+   *
+   *  The board's Upload A Plan makes a new card; this fills the plan that is
+   *  open, because it sits with the generators and that is what a teacher
+   *  pressing Generate expects — the same place, the same result, one of them
+   *  simply starts from a file instead of a blank page.
+   */
+  const buildPlanFromUpload = async (file: File | null | undefined) => {
+    if (!file) return;
+    setLpImportBusy(true);
+    try {
+      const part = await prepareFileForGemini(file);
+      if (!/^text\//i.test(part.mimeType)) {
+        alert(
+          `"${file.name}" has no readable text — if it is a scan or a photo, this cannot read it yet. A Word, PowerPoint, Excel, PDF-with-text or plain text file works.`,
+        );
+        return;
+      }
+      let text = "";
+      try {
+        text = decodeURIComponent(escape(atob(part.data)));
+      } catch {
+        text = "";
+      }
+
+      const plan = await importLessonPlan(text, {
+        subject: content?.lessonPlan?.subject || lpSubject || subject,
+        yearGroup: content?.lessonPlan?.class || yearGroup,
+        teacherName,
+      });
+
+      // Keep what the teacher has already filled in where the file is silent:
+      // the header fields are theirs, and a file rarely carries all of them.
+      const lp = content?.lessonPlan;
+      const keep = (mine: any, theirs: any) =>
+        (theirs ?? "").toString().trim() || (mine ?? "").toString().trim() || "";
+      const merged = {
+        ...plan,
+        term: keep(lp?.term, plan.term),
+        academicYear: keep(lp?.academicYear, plan.academicYear),
+        duration: keep(lp?.duration, plan.duration),
+        class: keep(lp?.class, plan.class),
+        subject: keep(lp?.subject, plan.subject),
+        preparedBy: keep(lp?.preparedBy, plan.preparedBy) || teacherName,
+        checkedBy: lp?.checkedBy || "",
+      };
+
+      setContent((prev) =>
+        prev
+          ? { ...prev, lessonPlan: merged as any }
+          : ({
+              ...makeBlankLessonPlanContent(
+                merged.subject || subject,
+                merged.class || yearGroup,
+              ),
+              lessonTitle:
+                merged.overallTopic || file.name.replace(/\.[^.]+$/, ""),
+              lessonPlan: merged,
+            } as EduContent),
+      );
+      setLpGenerateMode("week");
+      alert(
+        `Built a plan from "${file.name}" — ${merged.weeklyBreakdown.length} week(s). Check it over before you submit.`,
+      );
+    } catch (err: any) {
+      alert(`Could not build a plan from that file.\n\n${err?.message || err}`);
+    } finally {
+      setLpImportBusy(false);
+    }
+  };
+
   const importPlanFromFile = async (file: File | null | undefined) => {
     if (!file || !user) return;
     setLpImportBusy(true);
@@ -37185,6 +37256,49 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     open={lpOpenSections.generate}
                     onToggle={() => toggleLpSection("generate")}
                   >
+                    {/* Start from something the teacher already has. Neither
+                        generator could use it: one needs a topic typed and the
+                        other needs the weeks outlined, so a teacher holding
+                        last year's plan or a deck of slides had to retype it
+                        before the app could help. */}
+                    <label
+                      className={cn(
+                        "flex items-center gap-3 p-3 rounded-xl border-2 border-dashed transition-all",
+                        lpImportBusy
+                          ? "border-[#D1FAE5] bg-[#F0FDF4] cursor-wait"
+                          : "border-[#D1FAE5] bg-white hover:border-[#059669] hover:bg-[#F0FDF4] cursor-pointer",
+                      )}
+                    >
+                      {lpImportBusy ? (
+                        <Loader2 size={16} className="animate-spin text-[#059669] shrink-0" />
+                      ) : (
+                        <Upload size={16} className="text-[#059669] shrink-0" />
+                      )}
+                      <span className="min-w-0">
+                        <span className="block text-[11px] font-black uppercase tracking-wider text-[#064E3B]">
+                          {lpImportBusy ? "Reading your file…" : "Build from a file I already have"}
+                        </span>
+                        <span className="block text-[10px] font-bold text-[#064E3B]/45 leading-snug">
+                          A plan, a scheme of work, slides or notes. A plan is
+                          copied across as written; teaching material is turned
+                          into weeks.
+                        </span>
+                      </span>
+                      <input
+                        type="file"
+                        className="hidden"
+                        disabled={lpImportBusy}
+                        accept=".doc,.docx,.pdf,.xls,.xlsx,.csv,.ppt,.pptx,.txt,.md,.html"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          // Cleared so the same file can be chosen again after
+                          // a failure, without picking a different one first.
+                          e.target.value = "";
+                          void buildPlanFromUpload(f);
+                        }}
+                      />
+                    </label>
+
                     {/* One generator at a time instead of two stacked ones */}
                     <div className="grid grid-cols-2 gap-2 p-1 bg-[#F0FDF4] rounded-xl border-2 border-[#D1FAE5]">
                       {(

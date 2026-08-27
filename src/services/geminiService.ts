@@ -2502,11 +2502,24 @@ ${read
   .join("\n")}`
     : "";
 
-  const prompt = `You are transcribing a teacher's EXISTING lesson plan into a structured form. This is a transcription task, not a writing task.
+  const prompt = `You are turning a teacher's own material into a structured lesson plan.
+
+FIRST, decide what you have been given:
+
+A) A LESSON PLAN or SCHEME OF WORK — it already sets out weeks, units, topics or objectives.
+   TRANSCRIBE it. This is not a writing task; the rules below govern.
+
+B) TEACHING MATERIAL — slides, notes, a worksheet, a textbook chapter. It teaches
+   something but sets out no plan.
+   DERIVE a plan from it: work out what is being taught and in what order, and
+   lay that out as weeks. Take the units, topics and objectives from the
+   material's own content and sequence — its section headings, its order, the
+   vocabulary it uses. Do not bring in topics it never mentions. Where it holds
+   roughly one lesson's worth, return ONE week rather than padding it into a term.
 
 RULES — these matter more than completeness:
 - Use the teacher's OWN words, headings and sequence. Copy them across.
-- Do NOT invent units, topics, objectives, activities or assessments. If the document does not say something, return an empty string for that field.
+- Do NOT invent units, topics, objectives, activities or assessments beyond what the material actually covers. Where a plan does not say something, return an empty string for that field.
 - Keep the document's own week numbering. If it covers weeks 3 to 8, return weeks 3 to 8 — do not renumber them from 1.
 - One entry in weeklyBreakdown per week the document covers, in the document's order.
 - Where the document uses a table, each row is usually one week.
@@ -2598,8 +2611,10 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
   // A plan with no weeks would show as an empty card the teacher cannot tell
   // apart from a blank draft, so say so instead of filing it.
   if (!weeks.length) {
+    // Nothing at all came back — not even one week derived from teaching
+    // material, which is what a scan or an image-only file looks like here.
     throw new Error(
-      "No weekly rows could be found in that document. Check it contains a plan table or week-by-week sections.",
+      "Nothing could be read from that file. If it is a scan or a photo there is no text to work from — a Word, PowerPoint, Excel, PDF-with-text or plain text file works.",
     );
   }
 
