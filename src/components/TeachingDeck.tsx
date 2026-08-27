@@ -2284,7 +2284,7 @@ export default function TeachingDeck({
    *  It takes nothing: the app already holds the plan, the week, the pack and
    *  the Studio slides it handed to this deck, and it is THOSE that make the
    *  saved file work like this lesson rather than merely look like it. */
-  onDownloadHtml?: () => Promise<void>;
+  onDownloadHtml?: (slidesMarkup: string[]) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
   /* ── The lesson in another language ───────────────────────────────────
@@ -2413,14 +2413,33 @@ export default function TeachingDeck({
       setMenuOpen(false);
       try {
         if (!onDownloadHtml) throw new Error("This is not available here");
-        setExporting({ done: 0, total: 1 });
-        await onDownloadHtml();
+        setExporting({ done: 0, total: n });
+        // Each slide's REAL markup, taken from the deck itself rather than
+        // written a second time. Rewriting them by hand is what made the
+        // exported lesson a near-miss of the projected one — different type,
+        // different colour, different layout — and it would have drifted
+        // further with every change to the deck.
+        const markup: string[] = [];
+        for (let k = 0; k < n; k++) {
+          setCaptureIdx(k);
+          await new Promise<void>((r) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => r())),
+          );
+          const el = captureRef.current;
+          if (!el) continue;
+          await waitForStage(el);
+          markup.push(el.outerHTML);
+          setExporting({ done: k + 1, total: n });
+        }
+        if (!markup.length) throw new Error("Nothing was captured");
+        await onDownloadHtml(markup);
       } catch (err: any) {
         console.error("Deck HTML export failed:", err);
         alert(
           `Couldn't save the file — ${err?.message || "something went wrong"}. Please try again.`,
         );
       } finally {
+        setCaptureIdx(null);
         setExporting(null);
       }
       return;
@@ -2665,6 +2684,34 @@ export default function TeachingDeck({
           </button>
         </div>
       </div>
+
+      {/* One slide, rendered off screen at projector size so it can be
+          photographed or copied out.
+
+          captureRef was declared and read but never attached to anything, so
+          `captureRef.current` was always null: the export loop hit
+          `if (!el) continue` on every slide and finished with nothing, and
+          PDF and PowerPoint failed with "Nothing was captured". */}
+      {captureIdx !== null && slides[captureIdx] && (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed left-[-20000px] top-0 z-[-1]"
+        >
+          <div
+            ref={captureRef}
+            className={`relative deck-parent deck-glow ${
+              DECK_PATTERNS[
+                (week.week - 1 + DECK_PATTERNS.length) % DECK_PATTERNS.length
+              ]
+            } ${TONE_BG[slides[captureIdx].tone]} flex flex-col overflow-hidden px-10 py-6 font-sans`}
+            style={{ width: 1280, height: 720 }}
+          >
+            <FitStage key={`cap-${captureIdx}`}>
+              {slides[captureIdx].content}
+            </FitStage>
+          </div>
+        </div>
+      )}
 
       {/* Slide stage — the week's backdrop over the tone colour. Content is
           scaled to fit, so nothing ever scrolls. */}

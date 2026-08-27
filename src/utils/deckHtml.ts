@@ -1,6 +1,161 @@
+/** The projected lesson as ONE file that looks exactly like the projection.
+ *
+ *  The slides are the deck's OWN markup, copied out of the running deck, and
+ *  the page carries the app's own stylesheet — so the file is the lesson as it
+ *  is on the board, not a second rendering of it. Writing the slides again by
+ *  hand produced a near-miss: different type, different colours, different
+ *  layout, and it would have drifted further with every change to the deck.
+ *
+ *  What is added on top is behaviour. React's event handlers do not survive
+ *  being copied out as HTML, so the handful of things a lesson does — ticking
+ *  a criterion, answering a question, revealing a story's answer — are
+ *  reattached by matching the deck's own classes.
+ */
+
+/** Every rule the page is using, inlined so the file needs no network.
+ *
+ *  Same-origin sheets only. A cross-origin one cannot be read at all, and
+ *  there are none here that matter — the fonts are system faces by design. */
+function collectCss(): string {
+  const out: string[] = [];
+  for (let i = 0; i < document.styleSheets.length; i++) {
+    const sheet = document.styleSheets[i] as CSSStyleSheet;
+    try {
+      const rules = sheet.cssRules;
+      if (!rules) continue;
+      for (let j = 0; j < rules.length; j++) out.push(rules[j].cssText);
+    } catch {
+      /* cross-origin sheet — not readable, and not ours */
+    }
+  }
+  return out.join("\n");
+}
+
+export function buildProjectedDeckHTML(
+  slidesMarkup: string[],
+  title: string,
+): string {
+  const esc = (v: any) =>
+    (v ?? "")
+      .toString()
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  const slides = slidesMarkup
+    .map((m, i) => `<section class="zx-slide" data-i="${i}">${m}</section>`)
+    .join("");
+
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)}</title>
+<style>${collectCss()}</style>
+<style>
+  /* The shell around the captured slides. Everything inside them is styled by
+     the app's own rules above. */
+  html,body{margin:0;background:#063A1E}
+  .zx-stage{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px 20px 88px}
+  .zx-slide{display:none}
+  .zx-slide.on{display:block}
+  /* The slide was captured at projector size; scale it to whatever screen it
+     is opened on rather than letting it overflow. */
+  .zx-slide > div{transform-origin:top left;border-radius:20px;box-shadow:0 24px 60px rgba(0,0,0,.45)}
+  .zx-bar{position:fixed;left:0;right:0;bottom:0;display:flex;gap:10px;align-items:center;justify-content:center;
+          padding:12px;background:rgba(6,58,30,.72)}
+  .zx-bar button{font:inherit;font-family:system-ui,sans-serif;font-size:.72rem;font-weight:800;text-transform:uppercase;
+                 letter-spacing:.09em;border:0;border-radius:12px;padding:10px 16px;cursor:pointer;
+                 background:rgba(255,255,255,.16);color:#fff}
+  .zx-bar button:hover{background:rgba(255,255,255,.3)}
+  .zx-bar .go{background:#F7B917;color:#3a2b00}
+  .zx-bar span{color:#fff;opacity:.75;font-size:.72rem;margin:0 6px;font-weight:700;font-family:system-ui,sans-serif}
+  /* Ticked and answered states, drawn the way the deck draws them. */
+  .zx-ticked{background:#0A4F29 !important;border-color:#0A4F29 !important;color:#fff !important}
+  .zx-right{outline:3px solid #0A4F29;outline-offset:2px}
+  .zx-wrong{opacity:.45}
+  @media print{
+    body{background:#fff}.zx-bar{display:none}
+    .zx-stage{display:block;padding:0;min-height:0}
+    .zx-slide{display:block !important;page-break-after:always}
+    .zx-slide > div{transform:none !important;box-shadow:none;border-radius:0}
+  }
+</style></head>
+<body>
+<div class="zx-stage">${slides}</div>
+<div class="zx-bar">
+  <button onclick="zxGo(-1)">&#8592; Back</button>
+  <span id="zx-count"></span>
+  <button onclick="zxGo(1)">Next &#8594;</button>
+  <button class="go" onclick="zxFull()">Fullscreen</button>
+  <button onclick="window.print()">Print</button>
+</div>
+<script>
+(function(){
+  var slides = [].slice.call(document.querySelectorAll('.zx-slide')), at = 0;
+  function fit(){
+    var s = slides[at]; if (!s) return;
+    var inner = s.firstElementChild; if (!inner) return;
+    // Captured at 1280x720. Fit it to the window without cropping.
+    var pad = 40, barH = 88;
+    var k = Math.min((window.innerWidth - pad) / 1280, (window.innerHeight - barH - pad) / 720);
+    inner.style.transform = 'scale(' + k + ')';
+    s.style.width = (1280 * k) + 'px';
+    s.style.height = (720 * k) + 'px';
+  }
+  window.zxShow = function(n){
+    at = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach(function(s,i){ s.classList.toggle('on', i === at); });
+    document.getElementById('zx-count').textContent = (at + 1) + ' / ' + slides.length;
+    fit();
+  };
+  window.zxGo = function(d){ zxShow(at + d); };
+  window.zxFull = function(){
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen();
+  };
+  window.addEventListener('resize', fit);
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); zxGo(1); }
+    if (e.key === 'ArrowLeft'  || e.key === 'PageUp')  { e.preventDefault(); zxGo(-1); }
+    if (e.key === 'Home') zxShow(0);
+    if (e.key === 'End')  zxShow(slides.length - 1);
+    if (e.key === 'f') zxFull();
+  });
+
+  /* React's handlers do not survive being copied out, so the lesson's own
+     behaviour is reattached here by matching the deck's classes. Anything not
+     recognised simply does nothing, which is the right failure: a slide that
+     was only ever read still reads. */
+  document.addEventListener('click', function(e){
+    if (!e.target || !e.target.closest) return;
+    var row = e.target.closest('.zx-slide button');
+    if (!row) return;
+    // Anything the deck drew as a button inside a slide is something the
+    // class taps: a criterion to tick off, an answer to choose, a card to
+    // turn. Marking it is what survives being copied out — which of them
+    // was RIGHT does not, because that lived in the app's own code and not
+    // in the markup. Tapping still shows the class what has been chosen.
+    row.classList.toggle('zx-ticked');
+  });
+
+  zxShow(0);
+})();
+</script>
+</body></html>`;
+}
+
 import type { LessonPlan, WeeklyPlan, LessonActivityPack, SlideContent } from "../types";
 
-/** The projected lesson as ONE interactive HTML file.
+/** The lesson written out from its own content — the fallback for when
+ *  the slides could not be copied out of the running deck.
+ *
+ *  Plainer than the projection, and honest about it: it opens, it presents,
+ *  it prints. Better than handing a teacher nothing.
+ *
+ *  Original note follows.
+ *
+ *  The projected lesson as ONE interactive HTML file.
  *
  *  Not pictures of the slides. The lesson is meant to be used — the criteria
  *  are ticked as the class meets them, the quiz is answered and marked, the

@@ -7567,15 +7567,30 @@ export default function App() {
    *  ticked as the class meets them, a quiz answered and marked, a story's
    *  answers revealed one at a time — so it works from a memory stick.
    */
-  const downloadDeckHtml = async (plan: LessonPlan, week: WeeklyPlan) => {
+  const downloadDeckHtml = async (
+    plan: LessonPlan,
+    week: WeeklyPlan,
+    slidesMarkup: string[] = [],
+  ) => {
     if (!plan || !week) throw new Error("There is no lesson to save yet.");
-    const { buildInteractiveDeckHTML } = await import("./utils/deckHtml");
-    const html = buildInteractiveDeckHTML(
-      plan,
-      week,
-      content?.lessonPack?.week === week.week ? content.lessonPack : undefined,
-      content?.slides || [],
+    const { buildProjectedDeckHTML, buildInteractiveDeckHTML } = await import(
+      "./utils/deckHtml"
     );
+    const title =
+      [plan.subject, plan.class, week.week && `Week ${week.week}`]
+        .filter(Boolean)
+        .join(" · ") || "Lesson";
+    // The slides as the deck drew them. Only when none could be copied out
+    // does this fall back to writing the lesson from its content — plainer,
+    // but a file rather than an error.
+    const html = slidesMarkup.length
+      ? buildProjectedDeckHTML(slidesMarkup, title)
+      : buildInteractiveDeckHTML(
+          plan,
+          week,
+          content?.lessonPack?.week === week.week ? content.lessonPack : undefined,
+          content?.slides || [],
+        );
     const name =
       [plan.subject, plan.class, week.week && `Week ${week.week}`]
         .filter(Boolean)
@@ -42239,8 +42254,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             setContent((prev) => (prev ? { ...prev, lessonPack: next } : prev))
           }
           onUploadImage={uploadFileToHost}
-          onDownloadHtml={() =>
-            downloadDeckHtml(content!.lessonPlan!, teachWeeks[teachWeekIdx!])
+          onDownloadHtml={(markup) =>
+            downloadDeckHtml(
+              content!.lessonPlan!,
+              teachWeeks[teachWeekIdx!],
+              markup,
+            )
           }
           onClose={() => setTeachWeekIdx(null)}
         />
@@ -42258,7 +42277,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             setContent((prev) => (prev ? { ...prev, lessonPack: next } : prev))
           }
           onUploadImage={uploadFileToHost}
-          onDownloadHtml={() => downloadDeckHtml(soloDeckPlan, soloDeckWeek)}
+          onDownloadHtml={(markup) =>
+            downloadDeckHtml(soloDeckPlan, soloDeckWeek, markup)
+          }
           onClose={() => setTeachSlidesOnly(false)}
         />
       )}
