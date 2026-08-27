@@ -59,6 +59,7 @@ export default async function handler(req: any, res: any) {
       generateEduContent,
       suggestWeeklyInput,
       importLessonPlan,
+      suggestReflection,
       translateContent,
       generateEduNotes,
       relevelReadingPassage,
@@ -125,6 +126,10 @@ export default async function handler(req: any, res: any) {
       // lessonInput carries the extracted text.
       case "importPlan":
         result = await importLessonPlan(lessonInput, options);
+        break;
+      // The reflection draft. lessonInput carries the whole prompt.
+      case "reflection":
+        result = await suggestReflection(options?.plan, options);
         break;
       // A finished worksheet or lesson, in another language, same shape.
       case "translate":

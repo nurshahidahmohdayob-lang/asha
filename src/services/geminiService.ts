@@ -2701,6 +2701,89 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
   } as LessonPlan;
 }
 
+/** A first draft of the reflection, written from the plan the teacher taught.
+ *
+ *  A reflection is written at the end of a long day about a lesson taught
+ *  hours earlier, and a blank box is the hardest thing to start. This reads
+ *  what was actually planned — the objective, what the class did, how it was
+ *  assessed — and offers something to react to. It is a draft, not a verdict:
+ *  it cannot know how the lesson went, so it says what was intended and leaves
+ *  the judgement to the person who was in the room.
+ */
+export async function suggestReflection(
+  plan: LessonPlan,
+  options: { teacherName?: string } = {},
+): Promise<string> {
+  // The browser holds no AI key, so the work happens server-side. Send the
+  // PLAN and let the server build the prompt — one description of what a
+  // reflection should be, not two that drift.
+  if (typeof window !== "undefined") {
+    return callAiProxy("reflection", "", { ...options, plan });
+  }
+
+  const weeks = Array.isArray(plan?.weeklyBreakdown) ? plan.weeklyBreakdown : [];
+  const said = (v: any) => (v ?? "").toString().trim();
+  const body = weeks
+    .map((w: any) =>
+      [
+        `WEEK ${w?.week}`,
+        said(w?.unit) && `Unit: ${said(w.unit)}`,
+        said(w?.topic) && `Topic: ${said(w.topic)}`,
+        said(w?.learningObjective) && `Objective: ${said(w.learningObjective)}`,
+        said(w?.activities) && `Activities: ${said(w.activities)}`,
+        said(w?.assessment) && `Assessment: ${said(w.assessment)}`,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    )
+    .filter(Boolean)
+    .join("\n\n");
+
+  if (!body.trim())
+    throw new Error(
+      "There is nothing in the plan to reflect on yet — fill in a week first.",
+    );
+
+  const prompt = `A teacher has taught the lessons below and now has to write their reflection on how it went.
+
+Write that reflection FOR THEM as a first draft, in the first person, 3 to 5 sentences, British English, plain and unshowy — the way a teacher writes for their own file, not a report to a manager.
+
+Ground every sentence in what the plan below actually says: name the topic, the objective, and at least one activity or assessment by name. Do NOT invent events, pupil names, incidents or results — you were not in the room.
+
+Cover, in this order:
+- what the class worked on and whether the objective was a reasonable fit
+- how the main activity went in practice, written as something to confirm or correct
+- one thing worth doing differently next time, drawn from the plan itself
+- one thing to carry forward
+
+End nothing with a flourish. Return ONLY the reflection text — no heading, no bullet points, no quotation marks.
+
+${said(plan?.subject) ? `SUBJECT: ${said(plan.subject)}` : ""}
+${said(plan?.class) ? `CLASS: ${said(plan.class)}` : ""}
+${said(plan?.overallTopic) ? `OVERALL TOPIC: ${said(plan.overallTopic)}` : ""}
+
+THE PLAN AS TAUGHT:
+<<<
+${body.slice(0, 9000)}
+>>>`;
+
+  const response = await generateContentWithRetry({
+    contents: { parts: [{ text: prompt }] },
+    // A few sentences, with room to finish the last one. 500 cut the draft
+    // off mid-sentence; the default 7,000 would spend the per-minute
+    // allowance on space this never uses.
+    config: { maxOutputTokens: 900 },
+  });
+  const draft = (response.text || "").trim().replace(/^["'“]|["'”]$/g, "");
+  // A reflection that stops mid-sentence reads as a mistake the teacher made.
+  // If the last sentence never closed, drop it rather than hand it over.
+  if (draft && !/[.!?]["'”]?$/.test(draft)) {
+    const cut = draft.lastIndexOf(".");
+    if (cut > 40) return draft.slice(0, cut + 1);
+  }
+  return draft;
+}
+
 export async function generateWeeklyPlan(activity: string, weekNum: number, options: EduOptions, unit?: string, topic?: string): Promise<WeeklyPlan> {
   try {
     const contents: any[] = [];

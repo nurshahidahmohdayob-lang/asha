@@ -3455,6 +3455,7 @@ import {
   generateEduContent,
   generateWeeklyPlan,
   suggestWeeklyInput,
+  suggestReflection,
   importLessonPlan,
   translateContent,
   translationLanguagesFor,
@@ -7562,61 +7563,40 @@ export default function App() {
     return data.url as string;
   };
 
-  /** Publish a projected lesson and return a link that OPENS it.
+  /** Save a projected lesson as one interactive HTML file.
    *
-   *  Pictures of the slides were the first attempt and they were the wrong
-   *  thing: the lesson is meant to be used, not looked at — the checklists
-   *  tick, the quiz answers, the timer runs — and a photograph does none of
-   *  that. What travels with the link is the lesson's own data, so the person
-   *  who opens it gets the same deck the class sees.
-   *
-   *  The page published to the host holds that data AND sends a browser on to
-   *  the app, so one link works whether it is fetched or clicked. */
-  const shareTeachingDeck = async (
-    plan: LessonPlan,
-    week: WeeklyPlan,
-  ): Promise<string> => {
-    const missing = [
-      !plan && "the lesson plan",
-      !week && "the week",
-      plan && !plan.subject?.trim() && !plan.overallTopic?.trim() && "a subject",
-      week && !week.topic?.trim() && !week.learningObjective?.trim() && "a topic",
-    ].filter(Boolean);
-    if (missing.length) {
-      // Better to refuse here, naming the gap, than to publish a link that
-      // opens to "This lesson is incomplete" for whoever was sent it.
-      throw new Error(`This lesson is missing ${missing.join(" and ")}.`);
-    }
-    const code = `d${Math.random().toString(36).slice(2, 9)}`;
-    const payload = {
-      v: 1,
-      title:
-        [plan.subject, plan.class, week.week && `Week ${week.week}`]
-          .filter(Boolean)
-          .join(" · ") || "Lesson",
+   *  A link was the first answer and it was the wrong one for a classroom: it
+   *  needs this app to be reachable, and a machine in a hall with no network
+   *  gets nothing. The file carries the lesson's own content and the handful
+   *  of behaviours that make it a lesson rather than a slideshow — criteria
+   *  ticked as the class meets them, a quiz answered and marked, a story's
+   *  answers revealed one at a time — so it works from a memory stick.
+   */
+  const downloadDeckHtml = async (plan: LessonPlan, week: WeeklyPlan) => {
+    if (!plan || !week) throw new Error("There is no lesson to save yet.");
+    const { buildInteractiveDeckHTML } = await import("./utils/deckHtml");
+    const html = buildInteractiveDeckHTML(
       plan,
       week,
-      pack: content?.lessonPack?.week === week.week ? content.lessonPack : null,
-      studioSlides: content?.slides || [],
-    };
-    const target = `${window.location.origin}${window.location.pathname}#deck=${code}`;
-    const esc = (v: string) =>
-      v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    // The JSON is escaped for a <script type="application/json"> block, which
-    // is only ended by "</script>" — so that is the one sequence to break up.
-    const json = JSON.stringify(payload).replace(/<\/script/gi, "<\\/script");
-    const page = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(payload.title)}</title>
-<script type="application/json" id="zera-deck">${json}</script>
-</head><body style="font-family:system-ui;padding:2rem;text-align:center">
-<p>Opening the lesson…</p>
-<p><a id="go" href="${esc(target)}">${esc(target)}</a></p>
-<script>location.replace(${JSON.stringify(target)});</script>
-</body></html>`;
-    await uploadSharedHtml(page, code);
-    return target;
+      content?.lessonPack?.week === week.week ? content.lessonPack : undefined,
+      content?.slides || [],
+    );
+    const name =
+      [plan.subject, plan.class, week.week && `Week ${week.week}`]
+        .filter(Boolean)
+        .join(" ")
+        .replace(/[^\w\s-]/g, "")
+        .trim()
+        .replace(/\s+/g, "_") || "Lesson";
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const publishHtml = async (html: string, presetCode?: string) => {
@@ -11016,6 +10996,32 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
    *  pressing Generate expects — the same place, the same result, one of them
    *  simply starts from a file instead of a blank page.
    */
+  const [reflectionBusy, setReflectionBusy] = useState(false);
+  /** A first draft of the reflection, from the plan as taught.
+   *
+   *  Written into the box rather than offered beside it: the other Suggest
+   *  buttons fill a field of a few words, where copying is nothing, but a
+   *  reflection is a paragraph and the teacher is going to rewrite it in
+   *  place anyway. Anything already written is left alone. */
+  const suggestReflectionText = async () => {
+    const lp = content?.lessonPlan;
+    if (!lp) return;
+    if (
+      (lp.reflection || "").trim() &&
+      !window.confirm("Replace what you have written with a suggested draft?")
+    )
+      return;
+    setReflectionBusy(true);
+    try {
+      const draft = await suggestReflection(lp, { teacherName });
+      if (draft?.trim()) updateLessonPlanMetadata("reflection", draft.trim());
+    } catch (err: any) {
+      alert(`Couldn't suggest a reflection.\n\n${err?.message || err}`);
+    } finally {
+      setReflectionBusy(false);
+    }
+  };
+
   const buildPlanFromUpload = async (file: File | null | undefined) => {
     if (!file) return;
     setLpImportBusy(true);
@@ -38519,7 +38525,24 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
                       {/* REFLECTION */}
                       <section>
-                        <div className={secLabel}>Reflection</div>
+                        <div className="flex items-center justify-between">
+                          <div className={secLabel}>Reflection</div>
+                          {!isReviewMode && (
+                            <button
+                              onClick={suggestReflectionText}
+                              disabled={reflectionBusy}
+                              title="Draft a reflection from the plan you taught"
+                              className="flex items-center gap-1 text-[11px] font-black text-[#059669] hover:underline disabled:opacity-50"
+                            >
+                              {reflectionBusy ? (
+                                <Loader2 size={12} className="animate-spin" />
+                              ) : (
+                                <Sparkles size={12} />
+                              )}
+                              Suggest
+                            </button>
+                          )}
+                        </div>
                         <div className="border border-[#E5E7EB] rounded-lg p-4">
                           <textarea
                             value={lp.reflection || ""}
@@ -42153,8 +42176,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             setContent((prev) => (prev ? { ...prev, lessonPack: next } : prev))
           }
           onUploadImage={uploadFileToHost}
-          onShareLink={() =>
-            shareTeachingDeck(content!.lessonPlan!, teachWeeks[teachWeekIdx!])
+          onDownloadHtml={() =>
+            downloadDeckHtml(content!.lessonPlan!, teachWeeks[teachWeekIdx!])
           }
           onClose={() => setTeachWeekIdx(null)}
         />
@@ -42172,7 +42195,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             setContent((prev) => (prev ? { ...prev, lessonPack: next } : prev))
           }
           onUploadImage={uploadFileToHost}
-          onShareLink={() => shareTeachingDeck(soloDeckPlan, soloDeckWeek)}
+          onDownloadHtml={() => downloadDeckHtml(soloDeckPlan, soloDeckWeek)}
           onClose={() => setTeachSlidesOnly(false)}
         />
       )}

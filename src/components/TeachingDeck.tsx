@@ -2265,7 +2265,7 @@ export default function TeachingDeck({
   onPackChange,
   onUploadImage,
   onClose,
-  onShareLink,
+  onDownloadHtml,
 }: {
   plan: LessonPlan;
   week: WeeklyPlan;
@@ -2278,13 +2278,13 @@ export default function TeachingDeck({
   /** Supply this to allow pictures to be added to slides while editing. */
   onUploadImage?: (file: File) => Promise<string>;
   onClose: () => void;
-  /** Publish this lesson and return a link to it. Supply this to offer
-   *  "Share a link" alongside the file downloads.
+  /** Save this lesson as one interactive HTML file. Supply this to offer it
+   *  alongside the PDF and PowerPoint.
    *
    *  It takes nothing: the app already holds the plan, the week, the pack and
-   *  the Studio slides it handed to this deck, and publishing THOSE is what
-   *  makes the shared lesson work like this one rather than look like it. */
-  onShareLink?: () => Promise<string>;
+   *  the Studio slides it handed to this deck, and it is THOSE that make the
+   *  saved file work like this lesson rather than merely look like it. */
+  onDownloadHtml?: () => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
   /* ── The lesson in another language ───────────────────────────────────
@@ -2381,9 +2381,7 @@ export default function TeachingDeck({
      is rendered off-screen at 16:9 and photographed, then the pictures are
      bound into a PDF or a PowerPoint. */
   const [menuOpen, setMenuOpen] = useState(false);
-  /** The published link for this deck, so it can be shown and copied again
-   *  without republishing. */
-  const [shareUrl, setShareUrl] = useState<string | null>(null);
+
   const [captureIdx, setCaptureIdx] = useState<number | null>(null);
   const [exporting, setExporting] = useState<{ done: number; total: number } | null>(
     null,
@@ -2408,22 +2406,19 @@ export default function TeachingDeck({
     // Sharing publishes the lesson itself, not pictures of it, so it skips
     // the capture entirely — a 21-slide deck was photographing every slide
     // before it could hand back a link.
+    // The interactive file is written from the lesson's own content, so it
+    // skips the capture entirely — a 21-slide deck was photographing every
+    // slide before it could hand anything back.
     if (mode === "link") {
       setMenuOpen(false);
       try {
-        if (!onShareLink) throw new Error("Sharing is not available here");
+        if (!onDownloadHtml) throw new Error("This is not available here");
         setExporting({ done: 0, total: 1 });
-        const url = await onShareLink();
-        setShareUrl(url);
-        try {
-          await navigator.clipboard.writeText(url);
-        } catch {
-          /* clipboard blocked — the link is on screen to copy by hand */
-        }
+        await onDownloadHtml();
       } catch (err: any) {
-        console.error("Deck share failed:", err);
+        console.error("Deck HTML export failed:", err);
         alert(
-          `Couldn't create the link — ${err?.message || "something went wrong"}. Please try again.`,
+          `Couldn't save the file — ${err?.message || "something went wrong"}. Please try again.`,
         );
       } finally {
         setExporting(null);
@@ -2558,16 +2553,6 @@ export default function TeachingDeck({
             </button>
           )}
           <div className="relative">
-            {onShareLink && (
-              <button
-                onClick={() => runExport("link")}
-                disabled={Boolean(exporting)}
-                title="Publish this lesson and copy a link to it"
-                className="grid h-11 min-w-11 place-items-center rounded-2xl bg-white/20 px-3 text-sm font-black backdrop-blur transition-all hover:bg-white/30 active:scale-90 disabled:opacity-60"
-              >
-                <Icon d={I.link} className="h-5 w-5" />
-              </button>
-            )}
             <button
               onClick={() => setMenuOpen((o) => !o)}
               disabled={Boolean(exporting)}
@@ -2609,16 +2594,16 @@ export default function TeachingDeck({
                       Opens on any classroom machine
                     </span>
                   </button>
-                  {onShareLink && (
+                  {onDownloadHtml && (
                     <button
                       onClick={() => runExport("link")}
                       className="block w-full border-t border-zinc-100 px-4 py-3 text-left transition-colors hover:bg-brand-50"
                     >
                       <span className="block text-sm font-bold text-ink">
-                        Share a link
+                        Interactive HTML
                       </span>
                       <span className="block text-xs text-zinc-500">
-                        Opens the lesson itself — clickable, no sign-in
+                        One file that still ticks, answers and marks — offline
                       </span>
                     </button>
                   )}
@@ -2753,84 +2738,6 @@ export default function TeachingDeck({
         </div>
       )}
 
-      {/* The published link, shown until it is dismissed. Copied already, but
-          a teacher needs to SEE it to trust that it exists. */}
-      {shareUrl && !exporting && (
-        <div className="absolute inset-x-0 bottom-6 z-30 grid place-items-center px-6">
-          <div className="flex w-full max-w-2xl items-center gap-3 rounded-2xl bg-white p-4 shadow-2xl ring-1 ring-black/10">
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-bold uppercase tracking-wider text-zinc-500">
-                Anyone with this link can view the lesson
-              </p>
-              {/* An input, not a link: the whole point is to get the URL
-                  OUT of here, so it has to be selectable and copyable the way
-                  the address bar is. Read-only, and selected on focus. */}
-              <input
-                readOnly
-                value={shareUrl}
-                onFocus={(e) => e.currentTarget.select()}
-                onClick={(e) => e.currentTarget.select()}
-                className="mt-0.5 w-full rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-sm font-bold text-brand-700"
-              />
-            </div>
-            <button
-              onClick={() => {
-                navigator.clipboard?.writeText(shareUrl).catch(() => {});
-              }}
-              className="shrink-0 rounded-xl bg-brand-600 px-4 py-2 text-xs font-black uppercase tracking-wider text-white hover:bg-brand-700"
-            >
-              Copy
-            </button>
-            <button
-              onClick={() => setShareUrl(null)}
-              aria-label="Dismiss"
-              className="shrink-0 rounded-xl px-3 py-2 text-xs font-black text-zinc-500 hover:bg-zinc-100"
-            >
-              Done
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* The photo booth. Each slide is mounted here at a fixed 1280×720 so
-          every page of the download is the same size whatever the window is.
-          It sits at the deck's own top-left, under the opaque progress panel,
-          rather than parked off-screen: html2canvas photographs a clone in a
-          viewport-sized frame, and anything at a negative offset gets clipped
-          out of it. Hidden by what's in front, not by where it is. */}
-      {captureIdx !== null && slides[captureIdx] && (
-        <div
-          ref={captureRef}
-          aria-hidden
-          className={`absolute z-10 flex flex-col font-sans ${TONE_BG[slides[captureIdx].tone]}`}
-          style={{
-            left: 0,
-            top: 0,
-            width: 1280,
-            height: 720,
-            pointerEvents: "none",
-          }}
-        >
-          <div
-            className={`px-9 pt-5 ${
-              TONE_ON_LIGHT[slides[captureIdx].tone] ? "text-brand-900" : "text-white"
-            }`}
-          >
-            <p className="truncate text-sm font-bold uppercase tracking-wider opacity-80">
-              {slides[captureIdx].kicker}
-            </p>
-          </div>
-          <div
-            className={`relative deck-glow ${pattern} flex min-h-0 flex-1 flex-col overflow-hidden px-10 py-6`}
-          >
-            <EditCtx.Provider value={null}>
-              <FitStage key={`capture-${captureIdx}`}>
-                {slides[captureIdx].content}
-              </FitStage>
-            </EditCtx.Provider>
-          </div>
-        </div>
-      )}
     </div>,
     document.body,
   );
