@@ -1975,7 +1975,55 @@ export async function generateReadingProgram(lessonInput: string, options: EduOp
   }
 }
 
-export async function generateSessionPlan(topic: string, subtopics: string, weeks: number, options: EduOptions): Promise<LessonPlan> {
+/** How many weeks to ask for in one request.
+ *
+ *  A term of ten or fifteen weeks, each with an introduction, activities and
+ *  an assessment, does not fit in one reply: the model stops at its output
+ *  ceiling mid-sentence and the JSON that comes back is unparseable, which is
+ *  the error a teacher saw when they pressed Generate. Asked for a few weeks
+ *  at a time it always fits, and the chunks run together so it is no slower.
+ *  Five is well inside the ceiling with room for a wordy week. */
+const SESSION_PLAN_CHUNK = 5;
+
+export async function generateSessionPlan(
+  topic: string,
+  subtopics: string,
+  weeks: number,
+  options: EduOptions,
+): Promise<LessonPlan> {
+  const total = Math.max(1, Math.floor(weeks) || 1);
+  if (total > SESSION_PLAN_CHUNK) {
+    const ranges: { from: number; to: number }[] = [];
+    for (let start = 1; start <= total; start += SESSION_PLAN_CHUNK) {
+      ranges.push({ from: start, to: Math.min(start + SESSION_PLAN_CHUNK - 1, total) });
+    }
+    const parts = await Promise.all(
+      ranges.map((r) => sessionPlanRange(topic, subtopics, total, r.from, r.to, options)),
+    );
+    const head = parts[0] || ({} as LessonPlan);
+    const weeksOut = parts
+      .flatMap((p: any) => p?.weeklyBreakdown || [])
+      .sort((a: any, b: any) => (Number(a?.week) || 0) - (Number(b?.week) || 0));
+    // A chunk that came back short would leave a gap in the middle of a term,
+    // so say so rather than hand over a plan with weeks missing.
+    if (weeksOut.length < total) {
+      throw new Error(
+        `Only ${weeksOut.length} of ${total} weeks came back. Please try again.`,
+      );
+    }
+    return { ...head, weeklyBreakdown: weeksOut } as LessonPlan;
+  }
+  return sessionPlanRange(topic, subtopics, total, 1, total, options);
+}
+
+async function sessionPlanRange(
+  topic: string,
+  subtopics: string,
+  weeks: number,
+  from: number,
+  to: number,
+  options: EduOptions,
+): Promise<LessonPlan> {
   try {
     const contents: any[] = [];
     const mainPrompt = `As an expert Cambridge Educator, create a professional, detailed ${weeks}-WEEK Session Plan.
@@ -1994,8 +2042,8 @@ export async function generateSessionPlan(topic: string, subtopics: string, week
       - Incorporate methodology consistent with Cambridge Schemes of Work (SoW).
       - Follow the official framework, scheme of work, and textbook/reference materials.
       
-      ${weeks}-WEEK OVERVIEW:
-      Generate a logical, curriculum-appropriate progression for exactly ${weeks} weeks based on the provided topic and subtopics.
+      WEEKS ${from}-${to} OF ${weeks}:
+      Generate a logical, curriculum-appropriate progression for weeks ${from} to ${to} of a ${weeks}-week term, based on the provided topic and subtopics.${from > 1 ? `\n      These weeks continue a term already under way — carry the progression on from week ${from - 1} rather than starting again.` : ""}
       
       Format the response as a JSON object with:
       - "term": "${options.term || ''}"
@@ -2007,8 +2055,8 @@ export async function generateSessionPlan(topic: string, subtopics: string, week
       - "preparedBy": "${options.preparedBy || ''}"
       - "checkedBy": "${options.checkedBy || ''}"
       - "overallTopic": "${topic}"
-      - "weeklyBreakdown": Array of exactly ${weeks} objects, each with:
-        - "week": number (1-${weeks})
+      - "weeklyBreakdown": Array of exactly ${to - from + 1} objects, one per week from ${from} to ${to}, each with:
+        - "week": number (${from}-${to})
         - "unit": string (The Cambridge curriculum unit number and title)
         - "topic": string (A specific focus for this week)
         - "subTopic": string (ONE narrower slice of that week's topic — teachable in a lesson or two, e.g. topic "Electricity" -> subTopic "Series and parallel circuits")
@@ -2071,7 +2119,15 @@ export async function generateSessionPlan(topic: string, subtopics: string, week
 
     const text = response.text;
     if (!text) throw new Error("Empty response");
-    return JSON.parse(text);
+    try {
+      return JSON.parse(text);
+    } catch {
+      // Cut short at the output ceiling despite the chunking. A bare
+      // SyntaxError told the teacher nothing they could act on.
+      throw new Error(
+        `Weeks ${from}-${to} came back incomplete. Please try again, or generate fewer weeks at a time.`,
+      );
+    }
   } catch (err: any) {
     if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
       return callAiProxy('sessionPlan', topic, { ...options, subtopics, weeks });
