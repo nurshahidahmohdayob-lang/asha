@@ -63,6 +63,7 @@ export default async function handler(req: any, res: any) {
         notes: () => gs.generateEduNotes(lessonInput, options),
         suggest: () => gs.suggestWeeklyInput(lessonInput, options, options.weekNum),
         importPlan: () => gs.importLessonPlan(lessonInput, options),
+        reflection: () => gs.suggestReflection(options.plan, options),
         translate: () =>
           gs.translateContent(JSON.parse(lessonInput), options.targetLanguage),
         all: () => gs.generateEduContent(lessonInput, options),
@@ -81,7 +82,10 @@ export default async function handler(req: any, res: any) {
         image: () => gs.generatePosterImage(lessonInput),
       };
       const fn = dispatch[type];
-      if (!fn) throw new Error(`Unknown generation type: ${type}`);
+      if (!fn)
+            throw new Error(
+              `Unknown generation type: ${type}. Available: ${Object.keys(dispatch).sort().join(", ")}`,
+            );
       result = await fn();
     }
     send({ event: "result", result });

@@ -74,7 +74,7 @@ async function startServer() {
       const gsPath = "./src/services/geminiService.ts";
       const gsSpecifier =
         process.env.NODE_ENV === "production" ? gsPath : `${gsPath}?t=${Date.now()}`;
-      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateLessonActivities, generateEduContent, suggestWeeklyInput, importLessonPlan, translateContent, generateEduNotes, relevelReadingPassage, generateInteractiveSortingGame, askAI, generatePosterImage, generateLeveledQuestions, relevelWorksheet } = await import(gsSpecifier);
+      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateLessonActivities, generateEduContent, suggestWeeklyInput, importLessonPlan, suggestReflection, translateContent, generateEduNotes, relevelReadingPassage, generateInteractiveSortingGame, askAI, generatePosterImage, generateLeveledQuestions, relevelWorksheet } = await import(gsSpecifier);
       
       let result;
       switch (type) {
@@ -90,6 +90,8 @@ async function startServer() {
         case 'suggest': result = await suggestWeeklyInput(lessonInput as any, options, options.weekNum); break;
         // The teacher's own plan document, transcribed into the app's structure.
         case 'importPlan': result = await importLessonPlan(lessonInput, options); break;
+        // A draft reflection, written from the plan as taught.
+        case 'reflection': result = await suggestReflection(options.plan, options); break;
         // A finished worksheet or lesson, in another language, same shape.
         case 'translate': result = await translateContent(JSON.parse(lessonInput), options.targetLanguage); break;
         case 'all': result = await generateEduContent(lessonInput, options); break;
@@ -158,6 +160,7 @@ async function startServer() {
           notes: () => gs.generateEduNotes(lessonInput, options),
           suggest: () => gs.suggestWeeklyInput(lessonInput, options, options.weekNum),
           importPlan: () => gs.importLessonPlan(lessonInput, options),
+          reflection: () => gs.suggestReflection(options.plan, options),
           translate: () => gs.translateContent(JSON.parse(lessonInput), options.targetLanguage),
           all: () => gs.generateEduContent(lessonInput, options),
           relevelPassage: () => gs.relevelReadingPassage(lessonInput, options.targetLexile, options.subject, options.yearGroup),
@@ -167,7 +170,10 @@ async function startServer() {
           image: () => gs.generatePosterImage(lessonInput),
         };
         const fn = dispatch[type];
-        if (!fn) throw new Error(`Unknown generation type: ${type}`);
+        if (!fn)
+            throw new Error(
+              `Unknown generation type: ${type}. Available: ${Object.keys(dispatch).sort().join(", ")}`,
+            );
         result = await fn();
       }
       send({ event: "result", result });
