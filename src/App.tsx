@@ -4358,6 +4358,79 @@ const subjectKey = (value?: string | null): string =>
     .replace(/\s+/g, " ")
     .trim();
 
+/* ── Finding a plan again ──────────────────────────────────────────────────
+   Saved projects and submitted plans are different records, but a teacher
+   looks for both the same way — by year, by subject, by what the lesson was
+   about. These read either shape, so the board and Submission Status search
+   identically instead of drifting apart the way two copies would. */
+
+/** What year group a plan is for. The plan's own content is the live answer;
+ *  the stamped column is the fallback for records that carry no content. */
+const planYearOf = (p: any): string =>
+  (p?.content?.lessonPlan?.class ||
+    p?.content?.gradeLevel ||
+    p?.yearGroup ||
+    "").trim();
+
+const planSubjectOf = (p: any): string =>
+  (p?.content?.lessonPlan?.subject ||
+    p?.content?.subject ||
+    p?.subject ||
+    "").trim();
+
+/** Everything a teacher might reasonably type to find a plan again. */
+const planSearchText = (p: any): string => {
+  const lp = p?.content?.lessonPlan;
+  return [
+    p?.title,
+    p?.content?.lessonTitle,
+    lp?.overallTopic,
+    lp?.subject,
+    lp?.class,
+    lp?.term,
+    ...(lp?.weeklyBreakdown || []).flatMap((w: any) => [
+      `week ${w?.week}`,
+      w?.unit,
+      w?.topic,
+      w?.subTopic,
+      w?.learningObjective,
+    ]),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+};
+
+/** Turn what was typed into a test a plan either passes or does not.
+ *
+ *  "Year 3" means the YEAR GROUP, not the characters. Left as plain text it
+ *  matched anything containing a 3 — an objective code like 3Bp.01 is in most
+ *  plans — so searching "year 3" returned the lot. Pulled out and compared as
+ *  a year group it narrows properly, and the rest of what was typed is still
+ *  matched as words.
+ *
+ *  Every word has to appear somewhere, so "plants seeds" narrows rather than
+ *  widening the way a single-phrase match would. */
+const makePlanSearch = (query: string): ((p: any) => boolean) => {
+  const needle = (query || "").trim().toLowerCase();
+  if (!needle) return () => true;
+
+  const yearInQuery = /\byear\s*(\d{1,2})\b|\by(\d{1,2})\b/.exec(needle);
+  const queryYear = yearInQuery
+    ? `year ${yearInQuery[1] || yearInQuery[2]}`
+    : "";
+  const words = (queryYear ? needle.replace(yearInQuery![0], " ") : needle)
+    .split(/\s+/)
+    .filter(Boolean);
+
+  return (p: any) => {
+    if (queryYear && !sameYearGroup(planYearOf(p), queryYear)) return false;
+    if (!words.length) return true;
+    const text = planSearchText(p);
+    return words.every((w) => text.includes(w));
+  };
+};
+
 const sameSubject = (a?: string | null, b?: string | null): boolean => {
   const x = subjectKey(a);
   const y = subjectKey(b);
@@ -6479,18 +6552,58 @@ export default function App() {
    *
    *  Anything that names neither is filed under "Other", rather than being
    *  dropped — a plan nobody can find is worse than an untidy heading. */
-  const submissionShelves = useMemo(() => {
-    const yearOf = (p: any) =>
-      (p?.yearGroup || p?.content?.lessonPlan?.class || p?.content?.gradeLevel || "").trim();
-    const subjectOf = (p: any) =>
-      (p?.subject || p?.content?.lessonPlan?.subject || p?.content?.subject || "").trim();
+  /** What is left of the teacher's submissions after the search box and the
+   *  year and subject chips. */
+  const shownSubmissions = useMemo(() => {
+    const matches = makePlanSearch(ssSearch);
+    return mySubmittedPlans.filter((p: any) => {
+      if (ssYearFilter && !sameYearGroup(planYearOf(p), ssYearFilter))
+        return false;
+      if (ssSubjectFilter && !sameSubject(planSubjectOf(p), ssSubjectFilter))
+        return false;
+      return matches(p);
+    });
+  }, [mySubmittedPlans, ssSearch, ssYearFilter, ssSubjectFilter]);
 
+  /** The year groups a teacher has submitted for, with a count each, and the
+   *  subjects taught inside whichever year is open — a shelf within a shelf,
+   *  rather than two lists to combine in your head. The chips are built from
+   *  every submission, not from what the search left, so narrowing never
+   *  removes the chip you would use to widen again. */
+  const submissionChips = useMemo(() => {
+    const years = Array.from(
+      new Set(mySubmittedPlans.map(planYearOf).filter(Boolean)),
+    ).sort((a, b) => {
+      const na = parseInt(/(\d+)/.exec(a)?.[1] || "999", 10);
+      const nb = parseInt(/(\d+)/.exec(b)?.[1] || "999", 10);
+      return na === nb ? a.localeCompare(b) : na - nb;
+    });
+    const inYear = ssYearFilter
+      ? mySubmittedPlans.filter((p: any) =>
+          sameYearGroup(planYearOf(p), ssYearFilter),
+        )
+      : mySubmittedPlans;
+    const subjects = Array.from(
+      new Set(inYear.map(planSubjectOf).filter(Boolean)),
+    ).sort((a, b) => a.localeCompare(b));
+    return {
+      years,
+      subjects,
+      countForYear: (y: string) =>
+        mySubmittedPlans.filter((p: any) => sameYearGroup(planYearOf(p), y))
+          .length,
+      countForSubject: (sub: string) =>
+        inYear.filter((p: any) => sameSubject(planSubjectOf(p), sub)).length,
+    };
+  }, [mySubmittedPlans, ssYearFilter]);
+
+  const submissionShelves = useMemo(() => {
     const years = new Map<string, { label: string; subjects: Map<string, { label: string; plans: any[] }> }>();
-    for (const plan of mySubmittedPlans) {
-      const yLabel = yearOf(plan) || "Other";
+    for (const plan of shownSubmissions) {
+      const yLabel = planYearOf(plan) || "Other";
       const yKey = yearGroupKey(yLabel) || "other";
       const year = years.get(yKey) || { label: yLabel, subjects: new Map() };
-      const sLabel = subjectOf(plan) || "Other";
+      const sLabel = planSubjectOf(plan) || "Other";
       const sKey = subjectKey(sLabel) || "other";
       const subject = year.subjects.get(sKey) || { label: sLabel, plans: [] };
       subject.plans.push(plan);
@@ -6517,7 +6630,7 @@ export default function App() {
           .sort((a, b) => a.label.localeCompare(b.label))
           .map((s) => ({ label: s.label, plans: [...s.plans].sort(byNewest) })),
       }));
-  }, [mySubmittedPlans]);
+  }, [shownSubmissions]);
 
   /** The submission this plan was filed as, if it has been sent.
    *
@@ -15179,6 +15292,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   /** Finding a plan again: a search box and shelves by year group and
    *  subject. Kept here rather than in the board so a teacher's filters
    *  survive opening a plan and coming back. */
+  /** Submission Status has its own search and shelves. Sharing the board's
+   *  would mean filtering one screen silently filtered the other. */
+  const [ssSearch, setSsSearch] = useState("");
+  const [ssYearFilter, setSsYearFilter] = useState("");
+  const [ssSubjectFilter, setSsSubjectFilter] = useState("");
+
   const [lpSearch, setLpSearch] = useState("");
   const [lpYearFilter, setLpYearFilter] = useState("");
   const [lpSubjectFilter, setLpSubjectFilter] = useState("");
@@ -29223,6 +29342,120 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               </div>
             </div>
 
+            {/* Same search and shelves as the plan board, so finding a
+                submission works the way finding a plan does. */}
+            {mySubmittedPlans.length > 3 && (
+              <div className="space-y-3 pb-1">
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1 max-w-md">
+                    <Search
+                      size={14}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 text-[#064E3B]/40"
+                    />
+                    <input
+                      value={ssSearch}
+                      onChange={(e) => setSsSearch(e.target.value)}
+                      placeholder="Search by topic, subject, week or year…"
+                      className="w-full pl-9 pr-8 py-2.5 bg-white border-2 border-[#D1FAE5] rounded-xl text-xs font-bold outline-none focus:border-[#059669]"
+                    />
+                    {ssSearch && (
+                      <button
+                        onClick={() => setSsSearch("")}
+                        aria-label="Clear search"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-lg text-[#064E3B]/40 hover:bg-[#F0FDF4]"
+                      >
+                        <X size={12} className="stroke-[3]" />
+                      </button>
+                    )}
+                  </div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[#064E3B]/40">
+                    {shownSubmissions.length} of {mySubmittedPlans.length}
+                  </span>
+                </div>
+
+                {submissionChips.years.length > 1 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
+                      Year group
+                    </span>
+                    {submissionChips.years.map((y: string) => {
+                      const on = ssYearFilter === y;
+                      return (
+                        <button
+                          key={`ssy-${y}`}
+                          onClick={() => {
+                            setSsYearFilter(on ? "" : y);
+                            // The subject shelf belongs to the year being left
+                            // behind, so it does not come along.
+                            setSsSubjectFilter("");
+                          }}
+                          className={cn(
+                            "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 transition-all",
+                            on
+                              ? "bg-[#064E3B] text-white border-[#064E3B]"
+                              : "bg-white text-[#064E3B] border-[#D1FAE5] hover:border-[#059669]",
+                          )}
+                        >
+                          {y}
+                          <span className="ml-1.5 opacity-60">
+                            {submissionChips.countForYear(y)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {ssYearFilter && (
+                      <button
+                        onClick={() => {
+                          setSsYearFilter("");
+                          setSsSubjectFilter("");
+                        }}
+                        className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-[#854D0E] hover:bg-[#FFFBEB]"
+                      >
+                        All years
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {submissionChips.subjects.length > 1 && (
+                  <div className="flex flex-wrap items-center gap-1.5 pl-3 border-l-2 border-[#D1FAE5]">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
+                      {ssYearFilter ? `${ssYearFilter} · subject` : "Subject"}
+                    </span>
+                    {submissionChips.subjects.map((sub: string) => {
+                      const on = ssSubjectFilter === sub;
+                      return (
+                        <button
+                          key={`sss-${sub}`}
+                          onClick={() => setSsSubjectFilter(on ? "" : sub)}
+                          title={sub}
+                          className={cn(
+                            "max-w-[16rem] truncate px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 transition-all",
+                            on
+                              ? "bg-[#059669] text-white border-[#059669]"
+                              : "bg-white text-[#064E3B] border-[#D1FAE5] hover:border-[#059669]",
+                          )}
+                        >
+                          {sub}
+                          <span className="ml-1.5 opacity-60">
+                            {submissionChips.countForSubject(sub)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {ssSubjectFilter && (
+                      <button
+                        onClick={() => setSsSubjectFilter("")}
+                        className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-[#854D0E] hover:bg-[#FFFBEB]"
+                      >
+                        All subjects
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {mySubmittedPlans.length === 0 ? (
               <div className="bg-white p-12 rounded-[2.5rem] border-2 border-dashed border-[#064E3B]/10 text-center">
                 <div className="w-16 h-16 bg-[#FBF9F1] rounded-2xl flex items-center justify-center text-[#064E3B]/20 mx-auto mb-4">
@@ -29243,6 +29476,28 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               /* Shelved by year group, then subject. A term's submissions are
                  not something anyone reads a row at a time. */
               <div className="space-y-8 max-w-[984px]">
+               {/* Narrowed to nothing. Saying so, with a way back, beats an
+                   empty space that reads as though the plans have gone. */}
+               {shownSubmissions.length === 0 && (
+                 <div className="bg-white p-8 rounded-2xl border-2 border-dashed border-[#064E3B]/10 text-center">
+                   <p className="text-sm font-black text-[#064E3B]">
+                     No submission matches
+                     {ssSearch.trim() ? ` “${ssSearch.trim()}”` : " that"}
+                     {ssYearFilter ? ` in ${ssYearFilter}` : ""}
+                     {ssSubjectFilter ? ` for ${ssSubjectFilter}` : ""}.
+                   </p>
+                   <button
+                     onClick={() => {
+                       setSsSearch("");
+                       setSsYearFilter("");
+                       setSsSubjectFilter("");
+                     }}
+                     className="mt-3 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-[#854D0E] hover:bg-[#FFFBEB]"
+                   >
+                     Show all {mySubmittedPlans.length}
+                   </button>
+                 </div>
+               )}
                {submissionShelves.map((year: any) => (
                 <div key={year.label} className="space-y-3">
                   <div className="flex items-center gap-3">
@@ -36248,10 +36503,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
      *  and the plans already SAY which year and subject they are for. These
      *  are those answers, so the shelves build themselves and cannot go stale.
      */
-    const planYear = (p: any) =>
-      (p?.content?.lessonPlan?.class || p?.content?.gradeLevel || "").trim();
-    const planSubject = (p: any) =>
-      (p?.content?.lessonPlan?.subject || p?.content?.subject || "").trim();
+    const planYear = planYearOf;
+    const planSubject = planSubjectOf;
 
     const yearsHere = Array.from(new Set(inTab.map(planYear).filter(Boolean))).sort(
       (a, b) => {
@@ -36279,54 +36532,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     const countForSubject = (sub: string) =>
       inYear.filter((p: any) => sameSubject(planSubject(p), sub)).length;
 
-    // Everything a teacher might reasonably type to find a plan again.
-    const searchText = (p: any) => {
-      const lp = p?.content?.lessonPlan;
-      return [
-        p?.title,
-        p?.content?.lessonTitle,
-        lp?.overallTopic,
-        lp?.subject,
-        lp?.class,
-        lp?.term,
-        ...(lp?.weeklyBreakdown || []).flatMap((w: any) => [
-          `week ${w?.week}`,
-          w?.unit,
-          w?.topic,
-          w?.subTopic,
-          w?.learningObjective,
-        ]),
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-    };
-
     const needle = lpSearch.trim().toLowerCase();
-    /* "Year 3" typed into the box means the YEAR GROUP, not the characters.
-     *
-     *  Left as plain text it matched anything containing a 3 — an objective
-     *  code like 3Bp.01 is in most plans — so searching "year 3" returned the
-     *  lot. Pulled out and compared as a year group, it narrows properly, and
-     *  the rest of what was typed is still matched as words. */
-    const yearInQuery = /\byear\s*(\d{1,2})\b|\by(\d{1,2})\b/.exec(needle);
-    const queryYear = yearInQuery
-      ? `year ${yearInQuery[1] || yearInQuery[2]}`
-      : "";
-    const words = (queryYear ? needle.replace(yearInQuery![0], " ") : needle)
-      .split(/\s+/)
-      .filter(Boolean);
+    const matchesSearch = makePlanSearch(lpSearch);
 
     const shownPlans = inTab.filter((p: any) => {
       if (lpYearFilter && !sameYearGroup(planYear(p), lpYearFilter)) return false;
       if (lpSubjectFilter && !sameSubject(planSubject(p), lpSubjectFilter))
         return false;
-      if (queryYear && !sameYearGroup(planYear(p), queryYear)) return false;
-      // Every word has to appear somewhere, so "plants seeds" narrows rather
-      // than widening the way a single-phrase match would.
-      if (words.length && !words.every((w) => searchText(p).includes(w)))
-        return false;
-      return true;
+      return matchesSearch(p);
     });
 
     const submittable = shownPlans.filter((p: any) => p?.content);
