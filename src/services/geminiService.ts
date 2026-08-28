@@ -2296,7 +2296,15 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
 
     const text = response.text;
     if (!text) throw new Error("Empty response");
-    return JSON.parse(text);
+    const plan = JSON.parse(text);
+    // Every week gets exactly the days the teacher ticked — the same rule as
+    // the week-by-week generator, applied across the term.
+    if (Array.isArray(plan?.weeklyBreakdown)) {
+      plan.weeklyBreakdown = plan.weeklyBreakdown.map((w: any) =>
+        alignLessonsToDays(w, chosenDays),
+      );
+    }
+    return plan;
   } catch (err: any) {
     if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
       return callAiProxy('lessonPlan', lessonInput, options);
@@ -2785,6 +2793,46 @@ ${body.slice(0, 9000)}
   return draft;
 }
 
+/** Make a week's lessons match the days the teacher actually ticked.
+ *
+ *  The prompt asks for one lesson per taught day, but a prompt is a request,
+ *  not a guarantee: models return five when two were asked for, or repeat a
+ *  day, or drop one. The teacher's ticks are the fact here, so the answer is
+ *  trimmed to them rather than trusted.
+ *
+ *  No days ticked means one lesson for the week, which the week's own
+ *  introduction, activities and assessment already describe — so the array is
+ *  removed entirely rather than left holding a stray day.
+ */
+function alignLessonsToDays(week: any, chosenDays: string[]): any {
+  if (!week || typeof week !== "object") return week;
+  if (!chosenDays.length) {
+    const { lessons, ...rest } = week;
+    return rest;
+  }
+  const given = Array.isArray(week.lessons) ? week.lessons : [];
+  const byDay = new Map<string, any>();
+  given.forEach((l: any) => {
+    const day = (l?.day || "").toString().trim().toLowerCase();
+    if (day && !byDay.has(day)) byDay.set(day, l);
+  });
+  // Anything the model returned without a usable day, in order, to fill gaps.
+  const spare = given.filter(
+    (l: any) => !byDay.has((l?.day || "").toString().trim().toLowerCase()),
+  );
+  let next = 0;
+
+  const lessons = chosenDays.map((day) => {
+    const found = byDay.get(day.toLowerCase());
+    if (found) return { ...found, day };
+    const fill = spare[next++];
+    return fill
+      ? { ...fill, day }
+      : { day, focus: "", introduction: "", activities: "", assessment: "" };
+  });
+  return { ...week, lessons };
+}
+
 export async function generateWeeklyPlan(activity: string, weekNum: number, options: EduOptions, unit?: string, topic?: string): Promise<WeeklyPlan> {
   try {
     const contents: any[] = [];
@@ -2880,7 +2928,8 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
 
     const text = response.text;
     if (!text) throw new Error("Empty response");
-    return JSON.parse(text);
+    // The ticks decide, not the model.
+    return alignLessonsToDays(JSON.parse(text), chosenDays);
   } catch (err: any) {
     if (typeof window !== 'undefined' && (err.message?.includes('API Key') || err.message?.includes('configured'))) {
       return callAiProxy('weeklyPlan', activity, { ...options, weekNum, unit, topic });
