@@ -11288,6 +11288,126 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   // editor, same Submit — because anything less means a teacher with a term of
   // planning in Word retypes it purely to be allowed to submit it.
   const [lpImportBusy, setLpImportBusy] = useState(false);
+  /** "3 of 7" while a batch is being read, so a long import does not look
+   *  like a hung one. Empty for a single file, which needs no counting. */
+  const [lpImportProgress, setLpImportProgress] = useState("");
+
+  /** Read ONE file and turn it into a lesson plan.
+   *
+   *  Throws with something a teacher can act on. Both upload buttons go
+   *  through here, so a file that works in one works in the other. */
+  const planFromFile = async (
+    file: File,
+    /** What to assume where the file itself is silent. The two upload
+     *  buttons pass different things: the editor's fills the plan on screen
+     *  so it starts from that plan, while the board's makes a new card and
+     *  must NOT inherit whatever happens to be open — importing a Maths
+     *  file while an English plan is up would have filed it as English. */
+    hint: { subject?: string; yearGroup?: string },
+  ) => {
+    const part = await prepareFileForGemini(file);
+    // A scanned PDF or a photo comes back as bytes, not text. Nothing can be
+    // read out of it here, and saying so beats filing an empty card.
+    if (!/^text\//i.test(part.mimeType)) {
+      throw new Error(
+        `"${file.name}" has no readable text — if it is a scan or a photo, this cannot read it yet. A Word, Excel, PowerPoint, PDF-with-text or plain text file works.`,
+      );
+    }
+    let text = "";
+    try {
+      text = decodeURIComponent(escape(atob(part.data)));
+    } catch {
+      text = "";
+    }
+    return importLessonPlan(text, {
+      subject: hint.subject || "",
+      yearGroup: hint.yearGroup || "",
+      teacherName,
+    });
+  };
+
+  /** Save an imported plan as its own card on the board. */
+  const savePlanAsProject = async (plan: any, fileName: string) => {
+    if (!user) return;
+    const subj = plan.subject || lpQuickSubject || "General";
+    const yearGroupLabel = plan.class || "General";
+    const id = Math.random().toString(36).substring(2, 15);
+    const built = {
+      ...makeBlankLessonPlanContent(subj, yearGroupLabel),
+      lessonTitle: plan.overallTopic || fileName.replace(/\.[^.]+$/, ""),
+      lessonPlan: plan,
+    } as EduContent;
+
+    await store.put("projects", id, {
+      id,
+      userId: user.uid,
+      folderId: activeFolderId,
+      timestamp: Date.now(),
+      title: deriveProjectTitle(built),
+      category: "lesson-plan",
+      status: "draft",
+      teacherName: teacherName,
+      content: built,
+      settings: {
+        includeStory,
+        isTemplateMode,
+        workspaceMode: "lesson-plan",
+      },
+    });
+  };
+
+  /** Read a pile of files one after another, and say what happened once.
+   *
+   *  Sequential on purpose. The AI is rate-limited per minute, and firing ten
+   *  imports at once spends the whole budget on the first few and leaves the
+   *  rest retrying — slower overall than simply queueing them.
+   *
+   *  One file that cannot be read must not lose the nine that could, so each
+   *  is caught on its own and the summary lists what went in and what did
+   *  not. */
+  const runImportBatch = async (
+    files: File[],
+    handle: (file: File, index: number) => Promise<string>,
+  ) => {
+    const done: string[] = [];
+    const failed: { name: string; why: string }[] = [];
+    setLpImportBusy(true);
+    try {
+      for (let i = 0; i < files.length; i++) {
+        setLpImportProgress(files.length > 1 ? `${i + 1} of ${files.length}` : "");
+        try {
+          done.push(await handle(files[i], i));
+        } catch (err: any) {
+          failed.push({ name: files[i].name, why: err?.message || String(err) });
+        }
+      }
+    } finally {
+      setLpImportBusy(false);
+      setLpImportProgress("");
+    }
+
+    const lines: string[] = [];
+    if (done.length) {
+      lines.push(
+        done.length === 1
+          ? done[0]
+          : `Imported ${done.length} plans:\n${done.map((d) => `  • ${d}`).join("\n")}`,
+      );
+    }
+    if (failed.length) {
+      lines.push(
+        `${failed.length} could not be read:\n${failed
+          .map((f) => `  • ${f.name} — ${f.why}`)
+          .join("\n")}`,
+      );
+    }
+    if (lines.length) alert(lines.join("\n\n"));
+  };
+
+  /** Whatever the file picker handed back, as a plain list. */
+  const chosenFiles = (list: FileList | null | undefined): File[] =>
+    Array.from(list || []);
+
   /** Build the plan being edited FROM a file the teacher already has.
    *
    *  The board's Upload A Plan makes a new card; this fills the plan that is
@@ -11321,29 +11441,22 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     }
   };
 
-  const buildPlanFromUpload = async (file: File | null | undefined) => {
-    if (!file) return;
-    setLpImportBusy(true);
-    try {
-      const part = await prepareFileForGemini(file);
-      if (!/^text\//i.test(part.mimeType)) {
-        alert(
-          `"${file.name}" has no readable text — if it is a scan or a photo, this cannot read it yet. A Word, PowerPoint, Excel, PDF-with-text or plain text file works.`,
-        );
-        return;
-      }
-      let text = "";
-      try {
-        text = decodeURIComponent(escape(atob(part.data)));
-      } catch {
-        text = "";
-      }
-
-      const plan = await importLessonPlan(text, {
+  const buildPlanFromUpload = async (files: FileList | null | undefined) => {
+    const chosen = chosenFiles(files);
+    if (!chosen.length) return;
+    await runImportBatch(chosen, async (file, index) => {
+      const plan = await planFromFile(file, {
         subject: content?.lessonPlan?.subject || lpSubject || subject,
         yearGroup: content?.lessonPlan?.class || yearGroup,
-        teacherName,
       });
+
+      // Only the first file fills the plan that is open — a second one would
+      // overwrite the first, which is not what choosing two files means. The
+      // rest are filed as their own cards, the same as the board's Upload.
+      if (index > 0) {
+        await savePlanAsProject(plan, file.name);
+        return `"${file.name}" — ${plan.weeklyBreakdown.length} week(s), saved as its own plan.`;
+      }
 
       // Keep what the teacher has already filled in where the file is silent:
       // the header fields are theirs, and a file rarely carries all of them.
@@ -11375,76 +11488,18 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             } as EduContent),
       );
       setLpGenerateMode("week");
-      alert(
-        `Built a plan from "${file.name}" — ${merged.weeklyBreakdown.length} week(s). Check it over before you submit.`,
-      );
-    } catch (err: any) {
-      alert(`Could not build a plan from that file.\n\n${err?.message || err}`);
-    } finally {
-      setLpImportBusy(false);
-    }
+      return `Built a plan from "${file.name}" — ${merged.weeklyBreakdown.length} week(s). Check it over before you submit.`;
+    });
   };
 
-  const importPlanFromFile = async (file: File | null | undefined) => {
-    if (!file || !user) return;
-    setLpImportBusy(true);
-    try {
-      const part = await prepareFileForGemini(file);
-      // A scanned PDF or an image comes back as bytes, not text. Nothing can
-      // be read out of it here, and saying so beats filing an empty card.
-      if (!/^text\//i.test(part.mimeType)) {
-        alert(
-          `"${file.name}" has no readable text — if it is a scan or a photo, this cannot read it yet. A Word, Excel, PowerPoint, PDF-with-text or plain text file works.`,
-        );
-        return;
-      }
-      let text = "";
-      try {
-        text = decodeURIComponent(escape(atob(part.data)));
-      } catch {
-        text = "";
-      }
-
-      const plan = await importLessonPlan(text, {
-        subject: lpQuickSubject,
-        teacherName,
-      });
-
-      const subj = plan.subject || lpQuickSubject || "General";
-      const yearGroupLabel = plan.class || "General";
-      const id = Math.random().toString(36).substring(2, 15);
-      const content = {
-        ...makeBlankLessonPlanContent(subj, yearGroupLabel),
-        lessonTitle: plan.overallTopic || file.name.replace(/\.[^.]+$/, ""),
-        lessonPlan: plan,
-      } as EduContent;
-
-      await store.put("projects", id, {
-        id,
-        userId: user.uid,
-        folderId: activeFolderId,
-        timestamp: Date.now(),
-        title: deriveProjectTitle(content),
-        category: "lesson-plan",
-        status: "draft",
-        teacherName: teacherName,
-        content,
-        settings: {
-          includeStory,
-          isTemplateMode,
-          workspaceMode: "lesson-plan",
-        },
-      });
-      alert(
-        `Imported "${file.name}" as a lesson plan with ${plan.weeklyBreakdown.length} week(s). Open the card to check it, then submit.`,
-      );
-    } catch (err: any) {
-      // The service already explains the readable cases (no text, no weekly
-      // rows, unreadable layout); anything else is worth showing as-is.
-      alert(`Could not import that plan.\n\n${err?.message || err}`);
-    } finally {
-      setLpImportBusy(false);
-    }
+  const importPlanFromFile = async (files: FileList | null | undefined) => {
+    const chosen = chosenFiles(files);
+    if (!chosen.length || !user) return;
+    await runImportBatch(chosen, async (file) => {
+      const plan = await planFromFile(file, { subject: lpQuickSubject });
+      await savePlanAsProject(plan, file.name);
+      return `Imported "${file.name}" as a lesson plan with ${plan.weeklyBreakdown.length} week(s). Open the card to check it, then submit.`;
+    });
   };
 
   /** Make one blank plan, because the teacher asked for one.
@@ -36401,29 +36456,31 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       ? "bg-[#F0FDF4] text-[#064E3B]/40 border-[#D1FAE5] cursor-wait"
                       : "bg-white text-[#064E3B] border-[#D1FAE5] hover:border-[#059669] hover:bg-[#F0FDF4] cursor-pointer"
                   }`}
-                  title="Word, Excel, PowerPoint, PDF with text, or plain text"
+                  title="Pick as many as you like — Word, Excel, PowerPoint, PDF with text, or plain text"
                 >
                   {lpImportBusy ? (
                     <>
-                      <Loader2 size={16} className="animate-spin" /> Reading…
+                      <Loader2 size={16} className="animate-spin" />{" "}
+                      {lpImportProgress ? `Reading ${lpImportProgress}…` : "Reading…"}
                     </>
                   ) : (
                     <>
-                      <Upload size={16} /> Upload A Plan
+                      <Upload size={16} /> Upload Plans
                     </>
                   )}
                   <input
                     type="file"
+                    multiple
                     className="hidden"
                     disabled={lpImportBusy}
                     accept=".doc,.docx,.pdf,.xls,.xlsx,.csv,.ppt,.pptx,.txt,.md,.html"
                     onChange={(e) => {
-                      const f = e.target.files?.[0];
+                      const picked = e.target.files;
                       // Cleared so choosing the SAME file again still fires a
                       // change event — otherwise a failed import cannot be
                       // retried without picking a different file first.
+                      void importPlanFromFile(picked);
                       e.target.value = "";
-                      void importPlanFromFile(f);
                     }}
                   />
                 </label>
@@ -37539,25 +37596,31 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       )}
                       <span className="min-w-0">
                         <span className="block text-[11px] font-black uppercase tracking-wider text-[#064E3B]">
-                          {lpImportBusy ? "Reading your file…" : "Build from a file I already have"}
+                          {lpImportBusy
+                            ? lpImportProgress
+                              ? `Reading file ${lpImportProgress}…`
+                              : "Reading your file…"
+                            : "Build from files I already have"}
                         </span>
                         <span className="block text-[10px] font-bold text-[#064E3B]/45 leading-snug">
                           A plan, a scheme of work, slides or notes. A plan is
                           copied across as written; teaching material is turned
-                          into weeks.
+                          into weeks. Pick several and the first fills this
+                          plan, the rest are saved as their own.
                         </span>
                       </span>
                       <input
                         type="file"
+                        multiple
                         className="hidden"
                         disabled={lpImportBusy}
                         accept=".doc,.docx,.pdf,.xls,.xlsx,.csv,.ppt,.pptx,.txt,.md,.html"
                         onChange={(e) => {
-                          const f = e.target.files?.[0];
+                          const picked = e.target.files;
                           // Cleared so the same file can be chosen again after
                           // a failure, without picking a different one first.
+                          void buildPlanFromUpload(picked);
                           e.target.value = "";
-                          void buildPlanFromUpload(f);
                         }}
                       />
                     </label>
