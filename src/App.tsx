@@ -4217,6 +4217,22 @@ const isPlaceholderTitle = (t?: string): boolean =>
   /^untitled/i.test(t.trim()) ||
   /^new lesson plan$/i.test(t.trim());
 
+/** Lesson lengths, counted in periods.
+ *
+ *  A period here is 35 minutes, so a teacher picks "2 periods" rather than
+ *  working out that it comes to 70 and typing it — and two teachers writing
+ *  the same length write it the same way, which free text never managed:
+ *  "70 mins", "70 minutes", "70min" and "1h10" were all in use.
+ *
+ *  The minutes are kept in the value, not only the label, so everything that
+ *  already reads a duration as text — the printed plan, the exports, the
+ *  generators — carries on reading it. */
+const PERIOD_MINUTES = 35;
+const LESSON_DURATIONS = [1, 2, 3, 4, 5, 6].map((n) => ({
+  value: `${n * PERIOD_MINUTES} mins`,
+  label: `${n} period${n > 1 ? "s" : ""} · ${n * PERIOD_MINUTES} mins`,
+}));
+
 /** The year groups a lesson plan can be written for.
  *
  *  One list, because the tracker matches a submission's year group against
@@ -37216,8 +37232,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       <label className="text-[11px] font-black uppercase text-[#064E3B]/50">
                         Duration
                       </label>
-                      <input
-                        type="text"
+                      <select
                         value={content?.lessonPlan?.duration || lpDuration}
                         onChange={(e) => {
                           setLpDuration(e.target.value);
@@ -37227,8 +37242,23 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                               e.target.value,
                             );
                         }}
-                        className="w-full p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold outline-none focus:border-[#059669]"
-                      />
+                        className="w-full p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold outline-none focus:border-[#059669] cursor-pointer"
+                      >
+                        {/* Whatever a plan already says, kept as an option so
+                            opening an older one cannot change its length. */}
+                        {(() => {
+                          const now = content?.lessonPlan?.duration || lpDuration;
+                          return now &&
+                            !LESSON_DURATIONS.some((d) => d.value === now) ? (
+                            <option value={now}>{now}</option>
+                          ) : null;
+                        })()}
+                        {LESSON_DURATIONS.map((d) => (
+                          <option key={d.value} value={d.value}>
+                            {d.label}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div className="space-y-1">
                       <label className="text-[11px] font-black uppercase text-[#064E3B]/50">
@@ -38241,7 +38271,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                                   />
                                                   {/* This lesson's own length.
                                                       Blank means the plan's. */}
-                                                  <input
+                                                  <select
                                                     value={lesson.duration || ""}
                                                     onChange={(e) =>
                                                       updateWeekLesson(
@@ -38251,14 +38281,35 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                                         e.target.value,
                                                       )
                                                     }
-                                                    placeholder={
-                                                      lp.duration
-                                                        ? `${lp.duration}`
-                                                        : "Duration"
-                                                    }
-                                                    title="How long this lesson runs. Leave blank to use the plan's target duration."
-                                                    className="w-[92px] text-[12px] bg-transparent outline-none border-b border-transparent focus:border-[#D1FAE5]"
-                                                  />
+                                                    title="How long this lesson runs. Leave it on the plan's length unless this period differs."
+                                                    className="w-[132px] text-[12px] bg-transparent outline-none border-b border-transparent focus:border-[#D1FAE5] cursor-pointer"
+                                                  >
+                                                    <option value="">
+                                                      {lp.duration
+                                                        ? `Same as plan · ${lp.duration}`
+                                                        : "Same as plan"}
+                                                    </option>
+                                                    {lesson.duration &&
+                                                      !LESSON_DURATIONS.some(
+                                                        (d) =>
+                                                          d.value ===
+                                                          lesson.duration,
+                                                      ) && (
+                                                        <option
+                                                          value={lesson.duration}
+                                                        >
+                                                          {lesson.duration}
+                                                        </option>
+                                                      )}
+                                                    {LESSON_DURATIONS.map((d) => (
+                                                      <option
+                                                        key={d.value}
+                                                        value={d.value}
+                                                      >
+                                                        {d.label}
+                                                      </option>
+                                                    ))}
+                                                  </select>
                                                   <input
                                                     value={lesson.focus || ""}
                                                     onChange={(e) =>

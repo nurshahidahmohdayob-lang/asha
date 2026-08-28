@@ -2154,7 +2154,7 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
       ? `
         - "lessons": Array of EXACTLY ${chosenDays.length} objects, one per taught day, in this order: ${chosenDays.join(", ")}. Each with:
           - "day": string (exactly one of: ${chosenDays.join(", ")})
-          - "duration": string (how long THIS lesson runs, e.g. "40 mins". Use "${options.duration || "60 mins"}" unless the teacher's own plan says otherwise for this day — periods are not all the same length)
+          - "duration": string (how long THIS lesson runs. A period is 35 minutes, so use exactly one of "35 mins", "70 mins", "105 mins", "140 mins". Use "${options.duration || "35 mins"}" unless the teacher's own plan says otherwise for this day — periods are not all the same length)
           - "focus": string (what THIS lesson covers — a distinct slice of the week's topic)
           - "introduction": string (how this particular lesson starts)
           - "activities": string (what the class does in THIS lesson only — detailed, complete sentences, EACH STEP ON ITS OWN LINE separated by a newline; do NOT put a whole week of activities here)
@@ -2845,7 +2845,7 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
       ? `
       - "lessons": Array of EXACTLY ${chosenDays.length} objects, one per taught day, in this order: ${chosenDays.join(", ")}. Each with:
         - "day": string (exactly one of: ${chosenDays.join(", ")})
-        - "duration": string (how long THIS lesson runs, e.g. "40 mins". Use "${options.duration || "60 mins"}" unless the teacher's own plan says otherwise for this day — periods are not all the same length)
+        - "duration": string (how long THIS lesson runs. A period is 35 minutes, so use exactly one of "35 mins", "70 mins", "105 mins", "140 mins". Use "${options.duration || "35 mins"}" unless the teacher's own plan says otherwise for this day — periods are not all the same length)
         - "focus": string (what THIS lesson covers — a distinct slice of the week's topic)
         - "introduction": string (how this particular lesson starts)
         - "activities": string (what the class does in THIS lesson only — detailed, complete sentences, EACH STEP ON ITS OWN LINE separated by a newline; do NOT put a whole week of activities here)
