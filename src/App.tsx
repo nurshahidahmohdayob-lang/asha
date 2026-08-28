@@ -6455,8 +6455,8 @@ export default function App() {
    *
    *  submittedProjects holds every submission for a reviewer — a Head of
    *  Department, a coordinator or an admin is served the whole school by the
-   *  watcher, which is what the review queue needs. "Submission History &
-   *  Status" is not that screen: it is the teacher's own record, and a
+   *  watcher, which is what the review queue needs. "Submission Status" is
+   *  not that screen: it is the teacher's own record, and a
    *  reviewer is a teacher too, so reading the shared list there put every
    *  colleague's history and marks in front of them.
    *
@@ -6470,6 +6470,54 @@ export default function App() {
         : sameTeacherIdentity(p?.teacherName, teacherName),
     );
   }, [submittedProjects, user?.uid, teacherName]);
+
+  /** The teacher's own submissions, shelved by year group and then subject.
+   *
+   *  A flat list was fine for a handful of plans; a term's worth is not
+   *  something anyone reads a row at a time. Both answers are stamped on the
+   *  submission itself, so the shelves build themselves and cannot go stale.
+   *
+   *  Anything that names neither is filed under "Other", rather than being
+   *  dropped — a plan nobody can find is worse than an untidy heading. */
+  const submissionShelves = useMemo(() => {
+    const yearOf = (p: any) =>
+      (p?.yearGroup || p?.content?.lessonPlan?.class || p?.content?.gradeLevel || "").trim();
+    const subjectOf = (p: any) =>
+      (p?.subject || p?.content?.lessonPlan?.subject || p?.content?.subject || "").trim();
+
+    const years = new Map<string, { label: string; subjects: Map<string, { label: string; plans: any[] }> }>();
+    for (const plan of mySubmittedPlans) {
+      const yLabel = yearOf(plan) || "Other";
+      const yKey = yearGroupKey(yLabel) || "other";
+      const year = years.get(yKey) || { label: yLabel, subjects: new Map() };
+      const sLabel = subjectOf(plan) || "Other";
+      const sKey = subjectKey(sLabel) || "other";
+      const subject = year.subjects.get(sKey) || { label: sLabel, plans: [] };
+      subject.plans.push(plan);
+      year.subjects.set(sKey, subject);
+      years.set(yKey, year);
+    }
+
+    // Newest first inside a subject: a teacher is looking for what they just
+    // sent far more often than for what they sent in week one.
+    const byNewest = (a: any, b: any) => (b?.timestamp || 0) - (a?.timestamp || 0);
+    const yearNumber = (label: string) =>
+      parseInt(/(\d+)/.exec(label)?.[1] || "999", 10);
+
+    return [...years.values()]
+      .sort((a, b) => {
+        const na = yearNumber(a.label);
+        const nb = yearNumber(b.label);
+        return na === nb ? a.label.localeCompare(b.label) : na - nb;
+      })
+      .map((year) => ({
+        label: year.label,
+        count: [...year.subjects.values()].reduce((n, s) => n + s.plans.length, 0),
+        subjects: [...year.subjects.values()]
+          .sort((a, b) => a.label.localeCompare(b.label))
+          .map((s) => ({ label: s.label, plans: [...s.plans].sort(byNewest) })),
+      }));
+  }, [mySubmittedPlans]);
 
   /** The submission this plan was filed as, if it has been sent.
    *
@@ -29169,7 +29217,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4 flex-1">
                 <h3 className="text-lg font-black uppercase tracking-[0.4em] text-[#064E3B]">
-                  Submission History & Status
+                  Submission Status
                 </h3>
                 <div className="h-px flex-1 bg-gradient-to-r from-[#064E3B]/20 to-transparent" />
               </div>
@@ -29192,7 +29240,34 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             ) : (
               /* One row per submission, read left to right: which week, what
                  it is, when it went in, and where it has got to. */
-              <div className="bg-white rounded-2xl border-2 border-emerald-100 shadow-sm overflow-hidden max-w-[984px]">
+              /* Shelved by year group, then subject. A term's submissions are
+                 not something anyone reads a row at a time. */
+              <div className="space-y-8 max-w-[984px]">
+               {submissionShelves.map((year: any) => (
+                <div key={year.label} className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <span className="px-3 py-1 rounded-full bg-[#064E3B] text-white text-[10px] font-black uppercase tracking-widest whitespace-nowrap">
+                      {year.label}
+                    </span>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-[#064E3B]/40 whitespace-nowrap">
+                      {year.count} {year.count === 1 ? "plan" : "plans"}
+                    </span>
+                    <div className="h-px flex-1 bg-[#064E3B]/10" />
+                  </div>
+
+                  {year.subjects.map((subject: any) => (
+                   <div
+                    key={subject.label}
+                    className="bg-white rounded-2xl border-2 border-emerald-100 shadow-sm overflow-hidden"
+                   >
+                    <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-[#F0FDF4] border-b-2 border-[#D1FAE5]">
+                      <h4 className="text-[11px] font-black uppercase tracking-widest text-[#064E3B]">
+                        {subject.label}
+                      </h4>
+                      <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/40">
+                        {subject.plans.length}
+                      </span>
+                    </div>
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[820px] text-left border-collapse">
                     <thead>
@@ -29205,7 +29280,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       </tr>
                     </thead>
                     <tbody>
-                      {mySubmittedPlans.map((plan: any) => {
+                      {subject.plans.map((plan: any) => {
                         const week = trackerWeeks.find(
                           (w) => w.id === plan.weekId,
                         );
@@ -29270,17 +29345,16 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                               {/* Subject and year, the topic under it, then
                                   what kind of submission it is */}
                               <td className="px-3 py-2.5">
+                                {/* The shelf already says the subject and the
+                                    year, so the row leads with the topic —
+                                    repeating the heading here left every row
+                                    in a shelf looking identical. */}
                                 <h4
                                   className="text-sm font-black text-[#064E3B] leading-snug"
                                   title={rawTitle}
                                 >
-                                  {headingLine}
+                                  {topicLine || headingLine}
                                 </h4>
-                                {topicLine && (
-                                  <p className="text-[11px] font-bold text-[#064E3B]/70 leading-snug">
-                                    {topicLine}
-                                  </p>
-                                )}
                                 {/* The subject already leads the heading, so
                                     repeating it here only invited the two to
                                     disagree — content.subject is often a stale
@@ -29329,7 +29403,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                 </div>
                               </td>
 
-                              {/* Open, delete */}
+                              {/* Open a copy. A teacher cannot delete their
+                                  own submission from here — the reviewers work
+                                  from this queue, and a plan withdrawn after
+                                  they had started on it left them marking
+                                  something that no longer existed. Deleting
+                                  stays with the Admin. */}
                               <td className="px-3 py-2.5">
                                 <div className="flex items-center justify-end gap-2">
                                   <button
@@ -29337,13 +29416,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                     className="px-3 py-1.5 bg-[#FEFCE8] text-[#854D0E] hover:bg-[#FACC15] hover:text-[#064E3B] rounded-lg font-black text-[10px] uppercase tracking-wider transition-all whitespace-nowrap"
                                   >
                                     View Copy
-                                  </button>
-                                  <button
-                                    onClick={() => deleteSubmittedPlan(plan.id)}
-                                    className="p-1.5 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition-all active:scale-95 flex items-center justify-center border border-red-100"
-                                    title="Delete Submission"
-                                  >
-                                    <Trash2 size={14} />
                                   </button>
                                 </div>
                               </td>
@@ -29401,6 +29473,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     </tbody>
                   </table>
                 </div>
+                   </div>
+                  ))}
+                </div>
+               ))}
               </div>
             )}
           </div>
