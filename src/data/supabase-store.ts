@@ -207,6 +207,47 @@ const autoId = (): string => {
  *  so nothing is stale by the time it is seen. */
 const POLL_MS = 15000;
 
+/** Watching is polling, so a change this tab just made would otherwise sit
+ *  invisible until the next tick — up to POLL_MS away. Firestore reflected a
+ *  local write at once, and losing that is what made pressing Submit feel like
+ *  nothing had happened: the plan really had gone, but no list showed it for
+ *  another fifteen seconds, so teachers pressed Submit again.
+ *
+ *  Every write announces its table here and the watchers on it re-read
+ *  immediately. It costs one extra read per write, only on tables being
+ *  watched, and only in the tab that made the change. */
+const watchersOf = new Map<string, Set<() => void>>();
+
+const onChanged = (table: string, refetch: () => void): (() => void) => {
+  const set = watchersOf.get(table) || new Set();
+  set.add(refetch);
+  watchersOf.set(table, set);
+  return () => {
+    set.delete(refetch);
+    if (!set.size) watchersOf.delete(table);
+  };
+};
+
+/** Bumped on every write. A poll that started before a change landed cannot
+ *  be carrying it, so its results are dropped rather than emitted — otherwise
+ *  the in-flight read would paint the old rows back over a card that had just
+ *  moved, and the teacher would watch it bounce. */
+const changeTick = new Map<string, number>();
+const tickOf = (table: string): number => changeTick.get(table) || 0;
+const changedSince = (table: string, mark: number): boolean =>
+  tickOf(table) !== mark;
+
+const announceChange = (table: string): void => {
+  changeTick.set(table, tickOf(table) + 1);
+  for (const refetch of watchersOf.get(table) || []) {
+    try {
+      refetch();
+    } catch {
+      // One misbehaving watcher must not stop the others being told.
+    }
+  }
+};
+
 const isHidden = (): boolean =>
   typeof document !== "undefined" && document.visibilityState === "hidden";
 
@@ -281,6 +322,7 @@ export function createSupabaseStore(getToken: TokenGetter) {
         }
       }
       await call("put", { table, id: requireId(table, id), row: encodeRow(table, row) }, getToken);
+      announceChange(table);
     },
 
     /** Patch fields on an existing record.
@@ -311,17 +353,20 @@ export function createSupabaseStore(getToken: TokenGetter) {
         if (map[field]) encoded[map[field]] = stripUndefined(changes[field]);
       }
       await call("patch", { table, id: requireId(table, id), changes: encoded }, getToken);
+      announceChange(table);
     },
 
     /** Create a record with a generated id, and return that id. */
     async add(table: string, data: Record<string, any>): Promise<string> {
       const id = autoId();
       await call("put", { table, id, row: encodeRow(table, data) }, getToken);
+      announceChange(table);
       return id;
     },
 
     async remove(table: string, id: string): Promise<void> {
       await call("remove", { table, id: requireId(table, id) }, getToken);
+      announceChange(table);
     },
 
     async get(table: string, id: string): Promise<Row | null> {
@@ -356,6 +401,10 @@ export function createSupabaseStore(getToken: TokenGetter) {
     ): () => void {
       let stopped = false;
       let inFlight = false;
+      /** A nudge that arrived mid-poll. The poll in flight was already reading
+       *  when the write landed, so it may not carry the change; run once more
+       *  the moment it finishes rather than dropping the nudge. */
+      let again = false;
       /** Everything currently known, by id, so a poll need only mend it. */
       let cache = new Map<string, Row>();
       let stamps_ = new Map<string, number>();
@@ -373,13 +422,23 @@ export function createSupabaseStore(getToken: TokenGetter) {
         );
       };
 
-      const tick = async () => {
-        if (stopped || inFlight || isHidden()) return;
+      const tick = async (force = false) => {
+        if (stopped) return;
+        // A nudge follows a write this tab just made, so it is worth doing
+        // even hidden — a background tab that wrote must not show stale rows
+        // when it is looked at again.
+        if (inFlight) {
+          if (force) again = true;
+          return;
+        }
+        if (isHidden() && !force) return;
         inFlight = true;
+        const mark = tickOf(table);
         try {
           if (!primed) {
             const rows = await readRows(table, server);
             if (stopped) return;
+            if (changedSince(table, mark)) return void (again = true);
             cache = new Map(rows.map((r) => [r.id, r]));
             stamps_ = new Map(rows.map((r) => [r.id, Number(r.updatedAt) || 0]));
             primed = true;
@@ -402,6 +461,9 @@ export function createSupabaseStore(getToken: TokenGetter) {
           // full rows and says so, and the honest response is to use them as
           // the whole picture rather than diff against stamps that do not
           // exist. Costs bandwidth; keeps working.
+          if (stopped) return;
+          if (changedSince(table, mark)) return void (again = true);
+
           if (stamps === false) {
             const rows = (marks || [])
               .map((r: any) => decodeRow(table, r))
@@ -435,6 +497,7 @@ export function createSupabaseStore(getToken: TokenGetter) {
           if (stale.length) {
             const fresh = await readRows(table, server, stale);
             if (stopped) return;
+            if (changedSince(table, mark)) return void (again = true);
             for (const row of fresh) {
               cache.set(row.id, row);
               stamps_.set(row.id, seen.get(row.id) ?? 0);
@@ -456,20 +519,27 @@ export function createSupabaseStore(getToken: TokenGetter) {
           if (!stopped) onError?.(err);
         } finally {
           inFlight = false;
+          if (again && !stopped) {
+            again = false;
+            void tick(true);
+          }
         }
       };
 
       void tick();
-      const timer = setInterval(tick, POLL_MS);
+      const timer = setInterval(() => void tick(), POLL_MS);
       // Coming back to the tab refetches at once, so a tab that polled nothing
       // while hidden is up to date the moment it is looked at again.
       const wake = () => void tick();
       window.addEventListener("focus", wake);
       document.addEventListener("visibilitychange", wake);
+      // And a write in this tab shows without waiting for the next poll.
+      const unlisten = onChanged(table, () => void tick(true));
 
       return () => {
         stopped = true;
         clearInterval(timer);
+        unlisten();
         window.removeEventListener("focus", wake);
         document.removeEventListener("visibilitychange", wake);
       };
@@ -484,28 +554,42 @@ export function createSupabaseStore(getToken: TokenGetter) {
     ): () => void {
       let stopped = false;
       let inFlight = false;
+      let again = false;
 
-      const tick = async () => {
-        if (stopped || inFlight) return;
+      const tick = async (force = false) => {
+        if (stopped) return;
+        if (inFlight) {
+          if (force) again = true;
+          return;
+        }
         inFlight = true;
+        const mark = tickOf(table);
         try {
           const { row } = await call("get", { table, id: requireId(table, id) }, getToken);
-          if (!stopped) onRow(decodeRow(table, row), { fromCache: false });
+          if (stopped) return;
+          if (changedSince(table, mark)) return void (again = true);
+          onRow(decodeRow(table, row), { fromCache: false });
         } catch (err) {
           if (!stopped) onError?.(err);
         } finally {
           inFlight = false;
+          if (again && !stopped) {
+            again = false;
+            void tick(true);
+          }
         }
       };
 
       void tick();
-      const timer = setInterval(tick, POLL_MS);
+      const timer = setInterval(() => void tick(), POLL_MS);
       const onFocus = () => void tick();
       window.addEventListener("focus", onFocus);
+      const unlisten = onChanged(table, () => void tick(true));
 
       return () => {
         stopped = true;
         clearInterval(timer);
+        unlisten();
         window.removeEventListener("focus", onFocus);
       };
     },

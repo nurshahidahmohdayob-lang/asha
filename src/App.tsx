@@ -8878,6 +8878,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   } | null>(null);
   const [interactiveDesign, setInteractiveDesign] = useState<string>("detective");
   const [isGenerating, setIsGenerating] = useState(false);
+  /** A submission is in flight. Submit showed nothing while it worked, so a
+   *  teacher who saw no change pressed it again — which is where the duplicate
+   *  submissions came from. */
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
   const [generatingMessage, setGeneratingMessage] = useState("Generating...");
 
@@ -10772,6 +10776,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       ?.weekId;
 
   const submitToAdmin = async () => {
+    if (isSubmitting) return; // Already going; a second press only duplicates.
     if (!user) {
       console.warn("SubmitToAdmin: No user logged in");
       return;
@@ -10780,6 +10785,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     // Fixing a plan that was sent back: update that same submission so the
     // reviewers see one plan moving through the flow, not a pile of copies.
     if (revisionTargetId && content) {
+      setIsSubmitting(true);
       try {
         const previous =
           submittedProjects.find((p: any) => p.id === revisionTargetId) || {};
@@ -10819,11 +10825,19 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           OperationType.WRITE,
           `submitted_plans/${revisionTargetId}`,
         );
+      } finally {
+        setIsSubmitting(false);
       }
       return;
     }
 
     console.log("SubmitToAdmin: Initiating submission for", user.email);
+    setIsSubmitting(true);
+    // The card leaves To Submit on the press. If the write then fails, the
+    // undo below puts it back rather than leaving it looking sent.
+    const undoMove = currentProjectId
+      ? markSubmittedLocally([currentProjectId])
+      : () => {};
     try {
       if (content) {
         // Straight into this teacher's own folder in the submissions area.
@@ -10880,7 +10894,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       alert("Successfully submitted to Admin Dashboard!");
     } catch (err) {
       console.error("SubmitToAdmin: ERROR", err);
+      undoMove();
       handleFirestoreError(err, OperationType.WRITE, "submitted_plans");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -11367,20 +11384,44 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     }
   };
 
+  /** Show a plan as submitted right now, without waiting for the network.
+   *
+   *  The board reads its own state, so the card leaves To Submit on the press
+   *  rather than several round trips later — waiting was what made teachers
+   *  unsure whether the press had registered. Returns an undo, because a
+   *  submission that then fails must not leave the card looking sent. */
+  const markSubmittedLocally = (ids: string[], folderId?: string | null) => {
+    const wanted = new Set(ids.filter(Boolean));
+    if (!wanted.size) return () => {};
+    const at = Date.now();
+    const before = new Map<string, any>();
+    setUserProjects((prev: any[]) =>
+      prev.map((p: any) => {
+        if (!wanted.has(p?.id)) return p;
+        before.set(p.id, p);
+        return {
+          ...p,
+          status: "submitted",
+          submittedAt: at,
+          ...(folderId ? { folderId } : {}),
+        };
+      }),
+    );
+    return () =>
+      setUserProjects((prev: any[]) =>
+        prev.map((p: any) => before.get(p?.id) || p),
+      );
+  };
+
   const fileAsSubmitted = async (projects: any[]) => {
     const valid = (projects || []).filter((p: any) => p?.id);
     if (!user || !valid.length) return;
+    // Shown as submitted first; the folder it lands in follows, since finding
+    // it can cost a round trip and the card should not wait on that.
+    markSubmittedLocally(valid.map((v: any) => v.id));
     const folderId = await ensureSubmittedFolder();
     const at = Date.now();
-    // The board reads this straight away rather than waiting for the watcher,
-    // so the card moves the moment the teacher presses Submit.
-    setUserProjects((prev: any[]) =>
-      prev.map((p: any) =>
-        valid.some((v: any) => v.id === p.id)
-          ? { ...p, status: "submitted", submittedAt: at, ...(folderId ? { folderId } : {}) }
-          : p,
-      ),
-    );
+    if (folderId) markSubmittedLocally(valid.map((v: any) => v.id), folderId);
     await Promise.all(
       valid.map((v: any) =>
         store
@@ -29807,9 +29848,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 />
                 <button
                   onClick={() => submitToAdmin()}
-                  className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
+                  disabled={isSubmitting}
+                  className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  <CheckCircle size={14} /> Submit
+                  {isSubmitting ? (
+                    <Loader2 className="animate-spin" size={14} />
+                  ) : (
+                    <CheckCircle size={14} />
+                  )}{" "}
+                  {isSubmitting ? "Submitting…" : "Submit"}
                 </button>
               </>
             )}
@@ -31718,9 +31765,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           />
                           <button
                             onClick={() => submitToAdmin()}
-                            className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
+                            disabled={isSubmitting}
+                            className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                           >
-                            <CheckCircle size={14} /> Submit
+                            {isSubmitting ? (
+                              <Loader2 className="animate-spin" size={14} />
+                            ) : (
+                              <CheckCircle size={14} />
+                            )}{" "}
+                            {isSubmitting ? "Submitting…" : "Submit"}
                           </button>
                         </div>
                       </>
@@ -34111,9 +34164,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       />
                       <button
                         onClick={() => submitToAdmin()}
-                        className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2"
+                        disabled={isSubmitting}
+                        className="px-4 py-2 bg-[#FACC15] text-[#064E3B] rounded-xl font-black text-xs uppercase tracking-widest hover:bg-yellow-300 transition-all shadow-sm flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
                       >
-                        <CheckCircle size={14} /> Submit
+                        {isSubmitting ? (
+                          <Loader2 className="animate-spin" size={14} />
+                        ) : (
+                          <CheckCircle size={14} />
+                        )}{" "}
+                        {isSubmitting ? "Submitting…" : "Submit"}
                       </button>
                     </div>
                   </>
@@ -36993,10 +37052,19 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   <div className="h-px w-6 bg-[#D1FAE5]" />
                   <button
                     onClick={() => submitToAdmin()}
-                    title={`Submit this plan for Week ${selectedWeekForSubmission}`}
-                    className="p-2 rounded-xl bg-[#FACC15] text-[#064E3B] hover:bg-yellow-300 transition-colors shadow-sm"
+                    disabled={isSubmitting}
+                    title={
+                      isSubmitting
+                        ? "Submitting…"
+                        : `Submit this plan for Week ${selectedWeekForSubmission}`
+                    }
+                    className="p-2 rounded-xl bg-[#FACC15] text-[#064E3B] hover:bg-yellow-300 transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    <CheckCircle size={16} />
+                    {isSubmitting ? (
+                      <Loader2 className="animate-spin" size={16} />
+                    ) : (
+                      <CheckCircle size={16} />
+                    )}
                   </button>
                   <button
                     onClick={() => submitAllToAdmin()}
@@ -37160,15 +37228,24 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       )}
                       <button
                         onClick={() => submitToAdmin()}
+                        disabled={isSubmitting}
                         title={
                           revisionTargetId
                             ? "Resubmit this corrected plan to your Head of Department"
                             : "Submit this plan for the selected week"
                         }
-                        className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all active:scale-95 bg-[#FACC15] text-[#064E3B] hover:bg-yellow-300 shadow-sm"
+                        className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all active:scale-95 bg-[#FACC15] text-[#064E3B] hover:bg-yellow-300 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
                       >
-                        <CheckCircle size={16} />{" "}
-                        {revisionTargetId ? "Resubmit Plan" : "Submit This Plan"}
+                        {isSubmitting ? (
+                          <Loader2 className="animate-spin" size={16} />
+                        ) : (
+                          <CheckCircle size={16} />
+                        )}{" "}
+                        {isSubmitting
+                          ? "Submitting…"
+                          : revisionTargetId
+                            ? "Resubmit Plan"
+                            : "Submit This Plan"}
                       </button>
                       <button
                         onClick={() => submitAllToAdmin()}
