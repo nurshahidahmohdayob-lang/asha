@@ -6524,6 +6524,12 @@ export default function App() {
     }
   };
 
+  /** Submission Status has its own search and shelves. Sharing the board's
+   *  would mean filtering one screen silently filtered the other. */
+  const [ssSearch, setSsSearch] = useState("");
+  const [ssYearFilter, setSsYearFilter] = useState("");
+  const [ssSubjectFilter, setSsSubjectFilter] = useState("");
+
   /** The signed-in teacher's OWN submissions.
    *
    *  submittedProjects holds every submission for a reviewer — a Head of
@@ -15292,12 +15298,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   /** Finding a plan again: a search box and shelves by year group and
    *  subject. Kept here rather than in the board so a teacher's filters
    *  survive opening a plan and coming back. */
-  /** Submission Status has its own search and shelves. Sharing the board's
-   *  would mean filtering one screen silently filtered the other. */
-  const [ssSearch, setSsSearch] = useState("");
-  const [ssYearFilter, setSsYearFilter] = useState("");
-  const [ssSubjectFilter, setSsSubjectFilter] = useState("");
-
   const [lpSearch, setLpSearch] = useState("");
   const [lpYearFilter, setLpYearFilter] = useState("");
   const [lpSubjectFilter, setLpSubjectFilter] = useState("");
