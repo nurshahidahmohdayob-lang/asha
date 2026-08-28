@@ -29191,140 +29191,147 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              /* A list, not a wall of cards. Six saved plans filled the
+                 screen as cards and told you six titles; as rows the same
+                 space holds a term's worth and still reads at a glance. */
+              <div className="bg-white rounded-2xl border-2 border-[#F0EFE2] divide-y divide-[#F0EFE2]">
                 {visibleProjects.map((project: any) => (
                   <div
                     key={project.id}
-                    className="group bg-white p-6 rounded-[2rem] border-2 border-transparent hover:border-[#FACC15] hover:shadow-xl transition-all relative"
+                    className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-[#FFFEF8] first:rounded-t-[0.9rem] last:rounded-b-[0.9rem]"
                   >
-                    <div className="flex justify-between items-start mb-4">
-                      <div
-                        className={cn(
-                          "p-3 rounded-2xl flex items-center justify-center text-white",
-                          project.category === "lesson-plan"
-                            ? "bg-blue-500"
-                            : project.category === "slides"
-                              ? "bg-[#FACC15] text-[#064E3B]"
-                              : project.category === "worksheet"
-                                ? "bg-green-500"
-                                : project.category === "notes"
-                                  ? "bg-amber-500"
-                                  : project.category === "journal"
-                                    ? "bg-[#064E3B]"
-                                    : "bg-purple-500",
-                        )}
-                      >
-                        {project.category === "lesson-plan" && (
-                          <BookOpen size={20} />
-                        )}
-                        {project.category === "slides" && (
-                          <Presentation size={20} />
-                        )}
-                        {project.category === "worksheet" && (
-                          <FileText size={20} />
-                        )}
-                        {project.category === "notes" && <BookOpen size={20} />}
-                        {project.category === "journal" && <Edit2 size={20} />}
-                      </div>
+                    <div
+                      className={cn(
+                        "p-2 rounded-xl flex items-center justify-center text-white shrink-0",
+                        project.category === "lesson-plan"
+                          ? "bg-blue-500"
+                          : project.category === "slides"
+                            ? "bg-[#FACC15] text-[#064E3B]"
+                            : project.category === "worksheet"
+                              ? "bg-green-500"
+                              : project.category === "notes"
+                                ? "bg-amber-500"
+                                : project.category === "journal"
+                                  ? "bg-[#064E3B]"
+                                  : "bg-purple-500",
+                      )}
+                    >
+                      {project.category === "lesson-plan" && (
+                        <BookOpen size={16} />
+                      )}
+                      {project.category === "slides" && (
+                        <Presentation size={16} />
+                      )}
+                      {project.category === "worksheet" && (
+                        <FileText size={16} />
+                      )}
+                      {project.category === "notes" && <BookOpen size={16} />}
+                      {project.category === "journal" && <Edit2 size={16} />}
+                    </div>
 
-                      <div className="flex items-center gap-1">
-                        <div className="relative">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setIsMovingProject(
-                                isMovingProject === project.id
-                                  ? null
-                                  : project.id,
-                              );
-                            }}
-                            className={cn(
-                              "text-gray-300 hover:text-[#064E3B] transition-all p-2 hover:bg-gray-50 rounded-lg active:scale-95",
-                              isMovingProject === project.id &&
-                                "text-[#064E3B] bg-gray-50",
-                            )}
-                            title="Move to Folder"
-                          >
-                            <ArrowRightCircle size={18} />
-                          </button>
+                    {/* The whole row opens the project. A card had a button
+                        because it had room for one; a row is the target. */}
+                    <button
+                      onClick={() => loadProject(project)}
+                      className="flex-1 min-w-0 text-left outline-none"
+                      title={project.title}
+                    >
+                      <h4 className="font-black text-[#064E3B] text-sm leading-tight truncate">
+                        {project.title}
+                      </h4>
+                      <p className="text-[9px] font-black text-[#064E3B]/40 uppercase tracking-widest">
+                        {(project.category || "project").replace("-", " ")} •{" "}
+                        {new Date(project.timestamp).toLocaleDateString()}
+                      </p>
+                    </button>
 
-                          {isMovingProject === project.id && (
-                            <>
-                              <div
-                                className="fixed inset-0 z-40"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setIsMovingProject(null);
-                                }}
-                              />
-                              <div className="absolute top-full right-0 mt-2 w-48 bg-white rounded-2xl shadow-2xl border border-gray-100 py-3 z-50 animate-in fade-in zoom-in duration-200">
-                                <p className="px-4 py-1 text-[8px] font-black uppercase text-gray-400 tracking-widest mb-2">
-                                  Move to
-                                </p>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    moveProjectToFolder(project.id, null);
-                                  }}
-                                  className="w-full px-4 py-2 hover:bg-[#F0FDF4] text-left text-xs font-black text-[#064E3B] flex items-center gap-2"
-                                >
-                                  <LayoutGrid
-                                    size={14}
-                                    className="opacity-40"
-                                  />{" "}
-                                  All Projects
-                                </button>
-                                {folders.map((f) => (
-                                  <button
-                                    key={f.id}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      moveProjectToFolder(project.id, f.id);
-                                    }}
-                                    className="w-full px-4 py-2 hover:bg-[#F0FDF4] text-left text-xs font-black text-[#064E3B] flex items-center gap-2"
-                                  >
-                                    <Folder
-                                      size={14}
-                                      className={cn(
-                                        "opacity-40",
-                                        project.folderId === f.id &&
-                                          "opacity-100 text-[#059669]",
-                                      )}
-                                    />{" "}
-                                    {f.name}
-                                  </button>
-                                ))}
-                              </div>
-                            </>
-                          )}
-                        </div>
-
+                    <div className="flex items-center gap-1 shrink-0">
+                      <div className="relative">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            deleteProject(project.id);
+                            setIsMovingProject(
+                              isMovingProject === project.id
+                                ? null
+                                : project.id,
+                            );
                           }}
-                          className="text-red-300 hover:text-red-500 transition-all p-2 hover:bg-red-50 rounded-lg active:scale-95"
-                          title="Delete Project"
+                          className={cn(
+                            "text-gray-300 hover:text-[#064E3B] transition-all p-2 hover:bg-gray-50 rounded-lg active:scale-95",
+                            isMovingProject === project.id &&
+                              "text-[#064E3B] bg-gray-50",
+                          )}
+                          title="Move to Folder"
                         >
-                          <Trash2 size={18} />
+                          <ArrowRightCircle size={16} />
                         </button>
-                      </div>
-                    </div>
 
-                    <h4 className="font-black text-[#064E3B] text-lg leading-tight mb-2 line-clamp-1">
-                      {project.title}
-                    </h4>
-                    <p className="text-[10px] font-black text-[#064E3B]/40 uppercase tracking-widest mb-6">
-                      {(project.category || "project").replace("-", " ")} •{" "}
-                      {new Date(project.timestamp).toLocaleDateString()}
-                    </p>
-                    <button
-                      onClick={() => loadProject(project)}
-                      className="w-full py-3 bg-[#F0FDF4] text-[#059669] rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-[#059669] hover:text-white transition-all outline-none"
-                    >
-                      Open Project
-                    </button>
+                        {isMovingProject === project.id && (
+                          <>
+                            <div
+                              className="fixed inset-0 z-40"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setIsMovingProject(null);
+                              }}
+                            />
+                            <div className="absolute top-full right-0 mt-2 w-48 bg-white rounded-2xl shadow-2xl border border-gray-100 py-3 z-50 animate-in fade-in zoom-in duration-200">
+                              <p className="px-4 py-1 text-[8px] font-black uppercase text-gray-400 tracking-widest mb-2">
+                                Move to
+                              </p>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  moveProjectToFolder(project.id, null);
+                                }}
+                                className="w-full px-4 py-2 hover:bg-[#F0FDF4] text-left text-xs font-black text-[#064E3B] flex items-center gap-2"
+                              >
+                                <LayoutGrid size={14} className="opacity-40" />{" "}
+                                All Projects
+                              </button>
+                              {folders.map((f) => (
+                                <button
+                                  key={f.id}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    moveProjectToFolder(project.id, f.id);
+                                  }}
+                                  className="w-full px-4 py-2 hover:bg-[#F0FDF4] text-left text-xs font-black text-[#064E3B] flex items-center gap-2"
+                                >
+                                  <Folder
+                                    size={14}
+                                    className={cn(
+                                      "opacity-40",
+                                      project.folderId === f.id &&
+                                        "opacity-100 text-[#059669]",
+                                    )}
+                                  />{" "}
+                                  {f.name}
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteProject(project.id);
+                        }}
+                        className="text-red-300 hover:text-red-500 transition-all p-2 hover:bg-red-50 rounded-lg active:scale-95"
+                        title="Delete Project"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+
+                      <button
+                        onClick={() => loadProject(project)}
+                        className="px-3 py-1.5 bg-[#F0FDF4] text-[#059669] rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-[#059669] hover:text-white transition-all outline-none whitespace-nowrap"
+                      >
+                        Open
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
