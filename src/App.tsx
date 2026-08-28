@@ -4217,6 +4217,71 @@ const isPlaceholderTitle = (t?: string): boolean =>
   /^untitled/i.test(t.trim()) ||
   /^new lesson plan$/i.test(t.trim());
 
+/** A picker inside a day-lesson row. Bare selects styled to blend in read
+ *  as plain text, so nobody knew to open them — this one keeps its own
+ *  outline and the browser's arrow. */
+const pickerClass =
+  "max-w-[190px] text-[12px] font-semibold text-[#064E3B] bg-white " +
+  "border border-[#D1FAE5] rounded-md px-2 py-1 outline-none cursor-pointer " +
+  "hover:border-[#059669] focus:border-[#059669]";
+
+/** The school day, slot by slot, in order.
+ *
+ *  KS1-KS2 run 8 teaching periods with break after P2; KS3-KS4 run 9 with
+ *  break after P3. Registration, break and lunch sit in the same list so a
+ *  period's clock time is read off the day itself rather than guessed.
+ *
+ *  The timetable generator builds its ruler from this, and the lesson plan
+ *  offers the same periods for a teacher to pick — one list, so a period
+ *  cannot mean 10:20 in one screen and 10:55 in the other. */
+const SCHOOL_DAY = {
+  primary: [
+    { start: "08:20", end: "08:30", type: "registration" },
+    { start: "08:30", end: "09:10", type: "period" },
+    { start: "09:10", end: "09:45", type: "period" },
+    { start: "09:45", end: "10:20", type: "breakfast" },
+    { start: "10:20", end: "10:55", type: "period" },
+    { start: "10:55", end: "11:30", type: "period" },
+    { start: "11:30", end: "12:05", type: "period" },
+    { start: "12:05", end: "12:40", type: "lunch" },
+    { start: "12:40", end: "13:15", type: "period" },
+    { start: "13:15", end: "13:50", type: "period" },
+    { start: "13:50", end: "14:30", type: "period" },
+  ],
+  secondary: [
+    { start: "08:20", end: "08:30", type: "registration" },
+    { start: "08:30", end: "09:10", type: "period" },
+    { start: "09:10", end: "09:45", type: "period" },
+    { start: "09:45", end: "10:20", type: "period" },
+    { start: "10:20", end: "10:55", type: "breakfast" },
+    { start: "10:55", end: "11:30", type: "period" },
+    { start: "11:30", end: "12:05", type: "period" },
+    { start: "12:05", end: "12:40", type: "period" },
+    { start: "12:40", end: "13:15", type: "lunch" },
+    { start: "13:15", end: "13:50", type: "period" },
+    { start: "13:50", end: "14:25", type: "period" },
+    { start: "14:25", end: "15:00", type: "period" },
+  ],
+} as const;
+
+/** Is this year group on the primary day? Year 1-6, plus the combined
+ *  primary class, which sits with them. */
+const onPrimaryDay = (yearGroup?: string) => {
+  const yg = String(yearGroup || "").toUpperCase();
+  if (yg.includes("PRIMARY")) return true;
+  return /\bYEAR\s*[1-6]\b/.test(yg);
+};
+
+/** The teaching periods of a year group's day, numbered, with their times.
+ *  Break and lunch are not periods, so they are not offered. */
+const schoolPeriods = (yearGroup?: string) =>
+  SCHOOL_DAY[onPrimaryDay(yearGroup) ? "primary" : "secondary"]
+    .filter((slot) => slot.type === "period")
+    .map((slot, i) => ({
+      value: `Period ${i + 1} (${slot.start}-${slot.end})`,
+      label: `Period ${i + 1} · ${slot.start}-${slot.end}`,
+    }));
+
 /** Lesson lengths, counted in periods.
  *
  *  A period here is 35 minutes, so a teacher picks "2 periods" rather than
@@ -15423,34 +15488,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         end: string;
         type: string;
         label?: string;
-      }[] = primary
-        ? [
-            { start: "08:20", end: "08:30", type: "registration" },
-            { start: "08:30", end: "09:10", type: "period" },
-            { start: "09:10", end: "09:45", type: "period" },
-            { start: "09:45", end: "10:20", type: "breakfast" },
-            { start: "10:20", end: "10:55", type: "period" },
-            { start: "10:55", end: "11:30", type: "period" },
-            { start: "11:30", end: "12:05", type: "period" },
-            { start: "12:05", end: "12:40", type: "lunch" },
-            { start: "12:40", end: "13:15", type: "period" },
-            { start: "13:15", end: "13:50", type: "period" },
-            { start: "13:50", end: "14:30", type: "period" },
-          ]
-        : [
-            { start: "08:20", end: "08:30", type: "registration" },
-            { start: "08:30", end: "09:10", type: "period" },
-            { start: "09:10", end: "09:45", type: "period" },
-            { start: "09:45", end: "10:20", type: "period" },
-            { start: "10:20", end: "10:55", type: "breakfast" },
-            { start: "10:55", end: "11:30", type: "period" },
-            { start: "11:30", end: "12:05", type: "period" },
-            { start: "12:05", end: "12:40", type: "period" },
-            { start: "12:40", end: "13:15", type: "lunch" },
-            { start: "13:15", end: "13:50", type: "period" },
-            { start: "13:50", end: "14:25", type: "period" },
-            { start: "14:25", end: "15:00", type: "period" },
-          ];
+      }[] = SCHOOL_DAY[primary ? "primary" : "secondary"].map((slot) => ({
+        ...slot,
+      }));
 
       // Friday is a short day: keep the morning, then CCA closes the week.
       const week = isFriday
@@ -38256,7 +38296,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                                       );
                                                     })}
                                                   </div>
-                                                  <input
+                                                  {/* Which period of the day
+                                                      this lesson sits in, read
+                                                      off the school day for
+                                                      this year group. */}
+                                                  <select
                                                     value={lesson.period || ""}
                                                     onChange={(e) =>
                                                       updateWeekLesson(
@@ -38266,9 +38310,47 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                                         e.target.value,
                                                       )
                                                     }
-                                                    placeholder="Period / time"
-                                                    className="w-[110px] text-[12px] bg-transparent outline-none border-b border-transparent focus:border-[#D1FAE5]"
-                                                  />
+                                                    title="Which period of the day this lesson runs in."
+                                                    className={pickerClass}
+                                                  >
+                                                    <option value="">
+                                                      Period / time
+                                                    </option>
+                                                    {(() => {
+                                                      const periods =
+                                                        schoolPeriods(lp.class);
+                                                      const known = periods.some(
+                                                        (o) =>
+                                                          o.value ===
+                                                          lesson.period,
+                                                      );
+                                                      return (
+                                                        <>
+                                                          {/* Anything already
+                                                              written by hand
+                                                              stays offered. */}
+                                                          {lesson.period &&
+                                                            !known && (
+                                                              <option
+                                                                value={
+                                                                  lesson.period
+                                                                }
+                                                              >
+                                                                {lesson.period}
+                                                              </option>
+                                                            )}
+                                                          {periods.map((o) => (
+                                                            <option
+                                                              key={o.value}
+                                                              value={o.value}
+                                                            >
+                                                              {o.label}
+                                                            </option>
+                                                          ))}
+                                                        </>
+                                                      );
+                                                    })()}
+                                                  </select>
                                                   {/* This lesson's own length.
                                                       Blank means the plan's. */}
                                                   <select
@@ -38282,7 +38364,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                                       )
                                                     }
                                                     title="How long this lesson runs. Leave it on the plan's length unless this period differs."
-                                                    className="w-[132px] text-[12px] bg-transparent outline-none border-b border-transparent focus:border-[#D1FAE5] cursor-pointer"
+                                                    className={pickerClass}
                                                   >
                                                     <option value="">
                                                       {lp.duration
