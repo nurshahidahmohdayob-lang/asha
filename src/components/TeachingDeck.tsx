@@ -539,7 +539,12 @@ function TeachTimer({ minutes = 5, compact = false }: { minutes?: number; compac
   const C = 2 * Math.PI * R;
 
   return (
-    <div className={`flex flex-wrap items-center justify-center ${compact ? "gap-5" : "gap-7"}`}>
+    /* Marked up for the downloaded HTML, which has no React to run the
+       clock and has to find these parts by name. Inert in the app. */
+    <div
+      data-zx-timer={total}
+      className={`flex flex-wrap items-center justify-center ${compact ? "gap-5" : "gap-7"}`}
+    >
       <div
         className={`relative grid shrink-0 place-items-center ${
           compact ? "h-24 w-24" : "h-36 w-36"
@@ -555,12 +560,14 @@ function TeachTimer({ minutes = 5, compact = false }: { minutes?: number; compac
             stroke={done || nearlyUp ? "#f7b917" : "#0a4f29"}
             strokeWidth="11"
             strokeLinecap="round"
+            data-zx-timer-ring={C}
             strokeDasharray={C}
             strokeDashoffset={C * (1 - pct)}
             className="transition-[stroke-dashoffset] duration-1000 ease-linear"
           />
         </svg>
         <span
+          data-zx-timer-face=""
           className={`relative font-mono font-bold tabular-nums ${
             done
               ? `${compact ? "text-2xl" : "text-3xl"} text-brand-700`
@@ -575,6 +582,7 @@ function TeachTimer({ minutes = 5, compact = false }: { minutes?: number; compac
         <div className="flex items-center gap-2.5">
           <button
             onClick={() => (done ? set(total / 60, true) : setRunning((r) => !r))}
+            data-zx-timer-toggle=""
             className={`flex items-center gap-2 rounded-2xl bg-brand-600 font-bold text-white shadow-lg transition-all hover:bg-brand-700 active:scale-95 ${
               compact ? "px-5 py-3 text-lg" : "px-7 py-4 text-xl"
             } ${done ? "anim-halo" : ""}`}
@@ -587,6 +595,7 @@ function TeachTimer({ minutes = 5, compact = false }: { minutes?: number; compac
           </button>
           <button
             onClick={() => set(total / 60)}
+            data-zx-timer-reset=""
             className={`grid place-items-center rounded-2xl border-2 border-silver bg-white text-brand-700 transition-all hover:border-brand-400 active:scale-95 ${
               compact ? "h-11 w-11" : "h-14 w-14"
             }`}
@@ -601,6 +610,7 @@ function TeachTimer({ minutes = 5, compact = false }: { minutes?: number; compac
             <button
               key={m}
               onClick={() => set(m)}
+              data-zx-timer-preset={m}
               className={`rounded-xl font-bold transition-all active:scale-95 ${
                 compact ? "px-3 py-1.5 text-sm" : "px-4 py-2 text-base"
               } ${
@@ -686,6 +696,12 @@ function TeachReveal({
         <li key={i} className={tilted ? TILTS[i % TILTS.length] : ""}>
           <button
             onClick={() => setShown((s) => s.map((v, j) => (j === i ? true : v)))}
+            /* The text lives in React state, so a copy of this markup taken
+               for the downloaded HTML contained the placeholder and nothing
+               else — tapping it there could not reveal what was never in the
+               file. Carried on the element, the export can do the reveal
+               itself. Hidden visually either way. */
+            data-zx-reveal={it}
             className={`w-full rounded-3xl border-4 p-6 text-left transition-all active:scale-[0.98] ${
               reveal(i)
                 ? "border-brand-300 bg-brand-50 shadow-xl"
@@ -788,6 +804,10 @@ function QuizCard({
                   if (editor?.on) return;
                   setPicked((p) => (p === null ? i : p));
                 }}
+                /* Which option is right lives in the pack, not the markup, so
+                   the downloaded HTML could highlight a tap but never mark
+                   it. Carried here so the exported file can. */
+                data-zx-answer={isAnswer ? "right" : "wrong"}
                 className={`flex w-full items-center gap-4 rounded-3xl border-4 p-5 text-left transition-all active:scale-[0.98] ${state}`}
               >
                 <span

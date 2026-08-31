@@ -74,6 +74,7 @@ export function buildProjectedDeckHTML(
   .zx-ticked{background:#0A4F29 !important;border-color:#0A4F29 !important;color:#fff !important}
   .zx-right{outline:3px solid #0A4F29;outline-offset:2px}
   .zx-wrong{opacity:.45}
+  .zx-picked{outline:3px solid #F7B917;outline-offset:2px;opacity:1}
   @media print{
     body{background:#fff}.zx-bar{display:none}
     .zx-stage{display:block;padding:0;min-height:0}
@@ -124,19 +125,128 @@ export function buildProjectedDeckHTML(
   });
 
   /* React's handlers do not survive being copied out, so the lesson's own
-     behaviour is reattached here by matching the deck's classes. Anything not
-     recognised simply does nothing, which is the right failure: a slide that
-     was only ever read still reads. */
+     behaviour is written again here, driven by the data- attributes the deck
+     puts on the parts that do something. Anything not recognised falls back
+     to marking what was tapped, which is the right failure: a slide that was
+     only ever read still reads. */
+
+  /* ── Tap to see the question ──────────────────────────────────────────
+     The text was never in the copied markup — it lived in React state — so
+     the deck now carries it on the element and this puts it on screen. */
+  function reveal(btn){
+    var text = btn.getAttribute('data-zx-reveal');
+    if (text === null || btn.hasAttribute('data-zx-shown')) return;
+    btn.setAttribute('data-zx-shown', '');
+    btn.className = btn.className
+      .replace(/border-dashed|border-silver|bg-white|hover:[^\s]+/g, '')
+      .trim() + ' border-brand-300 bg-brand-50 shadow-xl';
+    var span = document.createElement('span');
+    span.className = 'anim-pop block text-2xl font-semibold leading-snug text-brand-900 sm:text-3xl';
+    span.textContent = text;
+    btn.innerHTML = '';
+    btn.appendChild(span);
+  }
+
+  /* ── The timer ────────────────────────────────────────────────────────
+     A whole clock, because a picture of one is no use to a class. */
+  function wireTimer(root){
+    if (root.hasAttribute('data-zx-live')) return;
+    root.setAttribute('data-zx-live', '');
+
+    var ring   = root.querySelector('[data-zx-timer-ring]');
+    var face   = root.querySelector('[data-zx-timer-face]');
+    var toggle = root.querySelector('[data-zx-timer-toggle]');
+    var reset  = root.querySelector('[data-zx-timer-reset]');
+    var presets = [].slice.call(root.querySelectorAll('[data-zx-timer-preset]'));
+    if (!face || !toggle) return;
+
+    var C = ring ? parseFloat(ring.getAttribute('data-zx-timer-ring')) : 0;
+    var total = parseInt(root.getAttribute('data-zx-timer'), 10) || 180;
+    var left = total, running = false, tick = null;
+
+    function paint(){
+      var done = left === 0;
+      var two = function(n){ return (n < 10 ? '0' : '') + n; };
+      face.textContent = done ? 'Time!' : two(Math.floor(left / 60)) + ':' + two(left % 60);
+      if (ring) {
+        var pct = total > 0 ? left / total : 0;
+        ring.setAttribute('stroke-dashoffset', String(C * (1 - pct)));
+        ring.setAttribute('stroke', done || left <= 10 ? '#f7b917' : '#0a4f29');
+      }
+      // The label is the second text node in the button; the icon is an svg
+      // and is left alone.
+      var label = [].filter.call(toggle.childNodes, function(n){
+        return n.nodeType === 3 && n.textContent.trim();
+      })[0];
+      if (label) label.textContent = done ? 'Again' : running ? 'Pause' : 'Start';
+      presets.forEach(function(b){
+        var mine = parseInt(b.getAttribute('data-zx-timer-preset'), 10) * 60 === total;
+        b.style.background = mine ? '#0a4f29' : '';
+        b.style.color = mine ? '#fff' : '';
+      });
+    }
+    function stop(){ if (tick) { clearInterval(tick); tick = null; } }
+    function run(){
+      stop();
+      tick = setInterval(function(){
+        left = Math.max(0, left - 1);
+        if (left === 0) { running = false; stop(); }
+        paint();
+      }, 1000);
+    }
+    function set(mins, start){
+      total = mins * 60; left = total; running = !!start;
+      running ? run() : stop();
+      paint();
+    }
+
+    toggle.addEventListener('click', function(e){
+      e.preventDefault(); e.stopPropagation();
+      if (left === 0) { set(total / 60, true); return; }
+      running = !running;
+      running ? run() : stop();
+      paint();
+    });
+    if (reset) reset.addEventListener('click', function(e){
+      e.preventDefault(); e.stopPropagation();
+      running = false; stop(); left = total; paint();
+    });
+    presets.forEach(function(b){
+      b.addEventListener('click', function(e){
+        e.preventDefault(); e.stopPropagation();
+        set(parseInt(b.getAttribute('data-zx-timer-preset'), 10), false);
+      });
+    });
+    paint();
+  }
+  [].forEach.call(document.querySelectorAll('[data-zx-timer]'), wireTimer);
+
   document.addEventListener('click', function(e){
     if (!e.target || !e.target.closest) return;
-    var row = e.target.closest('.zx-slide button');
-    if (!row) return;
-    // Anything the deck drew as a button inside a slide is something the
-    // class taps: a criterion to tick off, an answer to choose, a card to
-    // turn. Marking it is what survives being copied out — which of them
-    // was RIGHT does not, because that lived in the app's own code and not
-    // in the markup. Tapping still shows the class what has been chosen.
-    row.classList.toggle('zx-ticked');
+    var btn = e.target.closest('.zx-slide button');
+    if (!btn) return;
+    // The timer wires its own buttons and has already handled this.
+    if (btn.closest('[data-zx-timer]')) return;
+
+    if (btn.hasAttribute('data-zx-reveal')) { reveal(btn); return; }
+
+    // A quiz option: mark the whole question once, the way the deck does,
+    // so a wrong answer stays on screen to be talked about.
+    if (btn.hasAttribute('data-zx-answer')) {
+      var list = btn.closest('ul');
+      if (!list || list.hasAttribute('data-zx-answered')) return;
+      list.setAttribute('data-zx-answered', '');
+      [].forEach.call(list.querySelectorAll('[data-zx-answer]'), function(o){
+        if (o.getAttribute('data-zx-answer') === 'right') o.classList.add('zx-right');
+        else if (o !== btn) o.classList.add('zx-wrong');
+      });
+      if (btn.getAttribute('data-zx-answer') === 'wrong') btn.classList.add('zx-picked');
+      return;
+    }
+
+    // Everything else the class taps — a criterion to tick off, a card to
+    // turn — is marked as chosen.
+    btn.classList.toggle('zx-ticked');
   });
 
   zxShow(0);
