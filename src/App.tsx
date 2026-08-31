@@ -3460,6 +3460,7 @@ import {
   competenciesForTerm,
   valuesForTerm,
   curriculumLinkForTerm,
+  wasStampedByScheme,
   translateContent,
   translationLanguagesFor,
   relevelReadingPassage,
@@ -9186,22 +9187,30 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       const followsTerm =
         field === "term" || field === "subject"
           ? {
+              /* Whatever the scheme last stamped comes off; a teacher's own
+                 writing stays. Moving a plan to Maths used to leave Life
+                 Competencies' values sitting on it, because the old rule only
+                 ever wrote values in and never took them out. */
               keyCompetencies:
                 competenciesForTerm(forTerm, forSubject).join("\n") ||
-                lp.keyCompetencies ||
-                "",
+                (wasStampedByScheme(lp.keyCompetencies)
+                  ? ""
+                  : lp.keyCompetencies || ""),
               zeraValue:
-                valuesForTerm(forTerm, forSubject).join(", ") || lp.zeraValue || "",
+                valuesForTerm(forTerm, forSubject).join(", ") ||
+                (wasStampedByScheme(lp.zeraValue) ? "" : lp.zeraValue || ""),
               // Every week's Curriculum Link is the term's, so they all move
               // together rather than each week keeping whatever it was
               // written with.
               weeklyBreakdown: (() => {
                 const link = curriculumLinkForTerm(forTerm, forSubject);
-                if (!link) return lp.weeklyBreakdown;
-                return (lp.weeklyBreakdown || []).map((w: any) => ({
-                  ...w,
-                  strand: link,
-                }));
+                return (lp.weeklyBreakdown || []).map((w: any) =>
+                  link
+                    ? { ...w, strand: link }
+                    : wasStampedByScheme(w?.strand)
+                      ? { ...w, strand: "" }
+                      : w,
+                );
               })(),
             }
           : {};

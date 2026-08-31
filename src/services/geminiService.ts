@@ -4241,23 +4241,28 @@ export const termKey = (term?: string | null): string =>
 export const isLifeCompetenciesSubject = (subject?: string | null): boolean =>
   /life\s*competenc/i.test(String(subject ?? ""));
 
-/** The competencies this term develops, for Life Competencies plans. */
-export const competenciesForTerm = (
-  term?: string | null,
-  subject?: string | null,
-): string[] =>
-  subject !== undefined && !isLifeCompetenciesSubject(subject)
-    ? []
-    : TERM_FOCUS[termKey(term)]?.competencies || [];
+/* The subject is REQUIRED on both of these, and deliberately so. It was
+   optional, defaulting to "applies", which meant any call that forgot it
+   stamped the Life Competencies scheme onto a Maths plan — the one thing
+   this must never do. Forgetting it is now a compile error. */
 
-/** The ZeraOS values this term works on, for Life Competencies plans. */
-export const valuesForTerm = (
-  term?: string | null,
-  subject?: string | null,
+/** The competencies this term develops. Empty for any other subject. */
+export const competenciesForTerm = (
+  term: string | null | undefined,
+  subject: string | null | undefined,
 ): string[] =>
-  subject !== undefined && !isLifeCompetenciesSubject(subject)
-    ? []
-    : TERM_FOCUS[termKey(term)]?.values || [];
+  isLifeCompetenciesSubject(subject)
+    ? TERM_FOCUS[termKey(term)]?.competencies || []
+    : [];
+
+/** The ZeraOS values this term works on. Empty for any other subject. */
+export const valuesForTerm = (
+  term: string | null | undefined,
+  subject: string | null | undefined,
+): string[] =>
+  isLifeCompetenciesSubject(subject)
+    ? TERM_FOCUS[termKey(term)]?.values || []
+    : [];
 
 /** The Curriculum Link a week shows: the term's competencies and its values,
  *  laid out the way the scheme of work writes them —
@@ -4266,12 +4271,33 @@ export const valuesForTerm = (
  *  Returns "" for any subject this scheme does not cover, so those weeks keep
  *  whatever their own teacher wrote. */
 export const curriculumLinkForTerm = (
-  term?: string | null,
-  subject?: string | null,
+  term: string | null | undefined,
+  subject: string | null | undefined,
 ): string => {
   const c = competenciesForTerm(term, subject);
   const v = valuesForTerm(term, subject);
   return [c.join(", "), v.join(", ")].filter(Boolean).join(" · ");
+};
+
+/** Was this text put there by the scheme of work rather than typed?
+ *
+ *  Needed when a plan is moved to another subject. Everything the scheme
+ *  stamped has to come off — a Maths plan must not keep Life Competencies'
+ *  values — but a teacher's own writing must survive being moved, and from
+ *  the field alone the two are indistinguishable. Comparing against what the
+ *  scheme would have written tells them apart exactly. */
+export const wasStampedByScheme = (text?: string | null): boolean => {
+  const t = String(text ?? "").trim();
+  if (!t) return false;
+  const LC = "Life Competencies";
+  return ["1", "2", "3"].some((term) =>
+    [
+      competenciesForTerm(term, LC).join("\n"),
+      competenciesForTerm(term, LC).join(", "),
+      valuesForTerm(term, LC).join(", "),
+      curriculumLinkForTerm(term, LC),
+    ].includes(t),
+  );
 };
 
 /** Snap a value to the school's own spelling, or reject it. Returns "" for
