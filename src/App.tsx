@@ -3457,6 +3457,8 @@ import {
   suggestWeeklyInput,
   suggestReflection,
   importLessonPlan,
+  competenciesForTerm,
+  valueForTerm,
   translateContent,
   translationLanguagesFor,
   relevelReadingPassage,
@@ -9171,11 +9173,25 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         weeklyBreakdown: [],
       };
 
+      /* Changing the term changes what the term is working on. The school
+         sets those, so they follow the term rather than being retyped on
+         every plan — and a teacher who has written their own competencies
+         keeps them. */
+      const followsTerm =
+        field === "term"
+          ? {
+              keyCompetencies:
+                competenciesForTerm(value).join("\n") || lp.keyCompetencies || "",
+              zeraValue: valueForTerm(value) || lp.zeraValue || "",
+            }
+          : {};
+
       return {
         ...base,
         lessonPlan: {
           ...lp,
           [field]: value,
+          ...followsTerm,
         },
       };
     });
@@ -39104,6 +39120,18 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                               <li key={i}>{q}</li>
                             ))}
                           </ul>
+                        </section>
+                      )}
+
+                      {/* Set for the whole term by the school, so it is shown
+                          rather than typed — the same value on every plan for
+                          the term is the point of it. */}
+                      {lp?.zeraValue?.trim() && (
+                        <section>
+                          <div className={secLabel}>ZeraOS Value</div>
+                          <div className="border border-[#E5E7EB] rounded-lg p-5 text-[13px] font-semibold">
+                            {lp.zeraValue.trim()}
+                          </div>
                         </section>
                       )}
 

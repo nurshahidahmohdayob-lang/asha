@@ -356,6 +356,9 @@ export interface LessonPlan {
   successCriteria?: string;
   essentialQuestions?: string;
   keyCompetencies?: string;
+  /** The ZeraOS value this term is working on, set by the school rather than
+   *  chosen per lesson. See TERM_FOCUS in services/geminiService. */
+  zeraValue?: string;
   portfolioEvidence?: string;
   reflection?: string;
 }
