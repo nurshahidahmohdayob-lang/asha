@@ -2310,6 +2310,58 @@ function buildSequence(
   // it. The week's resources and attachments stay on the lesson plan, where
   // the teacher already reads them.
   // Last: the goal board, now a review of what the lesson covered.
+  /* What the lesson built in them, beyond the subject. Placed just before
+     the closing goal board, so the two reviews sit together: what we learned,
+     and what we practised being. Each line names a moment from THIS lesson —
+     a wall of competency words that would suit any lesson teaches nobody. */
+  const growth = [
+    ...(pack?.growing?.competencies || []).map((g) => ({ ...g, kind: "competency" as const })),
+    ...(pack?.growing?.values || []).map((g) => ({ ...g, kind: "value" as const })),
+  ];
+  if (growth.length) {
+    slides.push({
+      kicker: "More than the lesson",
+      tone: "share",
+      content: (
+        <div className="anim-pop rounded-[2.5rem] bg-white p-9 shadow-2xl">
+          <span className="inline-flex items-center gap-2.5 rounded-full bg-teal px-5 py-2 text-lg font-bold text-white">
+            <Icon d={I.star} className="h-5 w-5" />
+            What we grew today
+          </span>
+          <h2 className="mt-4 text-[2.7rem] font-bold leading-[1.05] text-ink">
+            Not just what we learned — what we practised being
+          </h2>
+          <div className="anim-stagger mt-7 grid gap-4">
+            {growth.map((g, i) => (
+              <div
+                key={`${g.kind}-${g.label}-${i}`}
+                style={{ "--i": i } as React.CSSProperties}
+                className={`flex items-start gap-5 rounded-[1.6rem] border-4 p-5 text-left ${
+                  g.kind === "value"
+                    ? "border-sunny bg-sun-soft"
+                    : "border-silver bg-brand-50"
+                }`}
+              >
+                <span className="shrink-0 text-5xl leading-none">{g.emoji}</span>
+                <span className="min-w-0">
+                  <span className="block text-[1.7rem] font-bold leading-tight text-ink">
+                    {g.label}
+                    <span className="ml-3 align-middle text-base font-bold uppercase tracking-wider text-zinc-400">
+                      {g.kind === "value" ? "Our value" : "Competency"}
+                    </span>
+                  </span>
+                  <span className="mt-1 block text-[1.45rem] leading-snug text-zinc-600">
+                    {g.how}
+                  </span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ),
+    });
+  }
+
   slides.push(goalBoard);
 
   return slides;

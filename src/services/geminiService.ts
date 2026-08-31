@@ -3020,6 +3020,11 @@ async function generateLessonActivitiesDirect(
   const source = [
     week.unit && `UNIT: ${week.unit}`,
     `TOPIC: ${focus}`,
+    plan.term && `TERM: ${plan.term}`,
+    plan.keyCompetencies?.trim() &&
+      `KEY COMPETENCIES FOR THIS PLAN: ${plan.keyCompetencies.trim()}`,
+    SCHOOL_VALUES.length &&
+      `THIS SCHOOL'S VALUES: ${SCHOOL_VALUES.join(", ")}`,
     week.learningObjective && `LEARNING OBJECTIVE: ${week.learningObjective}`,
     week.introduction && `INTRODUCTION / DO NOW: ${week.introduction}`,
     week.activities && `ACTIVITIES: ${week.activities}`,
@@ -3125,7 +3130,13 @@ You are writing the TEACHING slides — the part the teacher actually teaches fr
 
 4. "sequence": ONLY if this topic has a natural order or change — feelings changing, a life cycle, steps of a method. Give a "title", 3-4 ordered "steps" (emoji + short label) and one "line" explaining it. Omit entirely if the topic has no sequence.
 
-5. "celebrate": the slide the lesson ends on — a "title" like "Great job! 🌟" and one "line" telling the children what they can now do, naming the actual learning.
+5. "growing": what this lesson builds in a child BEYOND its subject content.
+   - "competencies": 2-3 entries. Take them from the KEY COMPETENCIES listed in the teacher's plan above where it names any; where it does not, choose from the Cambridge Life Competencies areas — Creative Thinking, Critical Thinking, Learning to Learn and Metacognition, Communication, Collaboration, Social Responsibilities.
+   - "values": 2-3 entries, taken ONLY from the school values listed above. If none are listed, return an empty array — never invent a school's values.
+   - Each entry is an "emoji", a "label" (the competency or value, named exactly as it is given), and a "how": ONE sentence saying what the class DOES in this very lesson to build it — "We listen to our partner's answer before we speak, so everyone in the pair gets heard."
+   - A "how" that would suit any lesson has failed. "This lesson develops communication" and "Children work together" are FAILURES: they name no moment from this lesson. Point at the actual activity — the partner talk, the matching game, the acting out.
+
+6. "celebrate": the slide the lesson ends on — a "title" like "Great job! 🌟" and one "line" telling the children what they can now do, naming the actual learning.
 
 EMOJI RULES: exactly one emoji per tile, and it must genuinely depict the label. 👍 for "Surprised" is WRONG (use 😲); 🌿 for "Deep breaths" is WRONG (use 🫁). Never use a letter, digit, or punctuation as an emoji.
 
@@ -3135,6 +3146,16 @@ LABEL RULES: a label names the thing itself — "Happy", not "Happy Face". Do no
     type: Type.OBJECT,
     properties: { emoji: { type: Type.STRING }, label: { type: Type.STRING } },
     required: ["emoji", "label"],
+  };
+
+  const growthSchema = {
+    type: Type.OBJECT,
+    properties: {
+      emoji: { type: Type.STRING },
+      label: { type: Type.STRING },
+      how: { type: Type.STRING },
+    },
+    required: ["emoji", "label", "how"],
   };
 
   const teachSchema = {
@@ -3173,6 +3194,13 @@ LABEL RULES: a label names the thing itself — "Happy", not "Happy Face". Do no
         type: Type.OBJECT,
         properties: { title: { type: Type.STRING }, line: { type: Type.STRING } },
         required: ["title", "line"],
+      },
+      growing: {
+        type: Type.OBJECT,
+        properties: {
+          competencies: { type: Type.ARRAY, items: growthSchema },
+          values: { type: Type.ARRAY, items: growthSchema },
+        },
       },
     },
     required: ["keyIdeas", "teach"],
@@ -3318,6 +3346,34 @@ LABEL RULES: a label names the thing itself — "Happy", not "Happy Face". Do no
     discussion: strings(parsed.discussion),
     questions,
     keyIdeas: tiles(parsed.keyIdeas),
+    growing: (() => {
+      // A value the school does not hold is not a value of this school, so
+      // anything invented is dropped rather than projected. Competencies are
+      // open — a plan may name its own — but must still come with a "how".
+      const rows = (xs: any, allowed?: string[]) =>
+        (Array.isArray(xs) ? xs : [])
+          .filter(
+            (g: any) =>
+              g && typeof g.label === "string" && g.label.trim() &&
+              typeof g.how === "string" && g.how.trim(),
+          )
+          .filter(
+            (g: any) =>
+              !allowed ||
+              allowed.some(
+                (a) => a.toLowerCase().trim() === g.label.toLowerCase().trim(),
+              ),
+          )
+          .slice(0, 3)
+          .map((g: any) => ({
+            emoji: (typeof g.emoji === "string" && g.emoji.trim()) || "\u2B50",
+            label: g.label.trim(),
+            how: g.how.trim(),
+          }));
+      const competencies = rows(parsed.growing?.competencies);
+      const values = rows(parsed.growing?.values, SCHOOL_VALUES);
+      return competencies.length || values.length ? { competencies, values } : undefined;
+    })(),
     bigIdea: parsed.bigIdea?.explain?.trim()
       ? { title: parsed.bigIdea.title?.trim() || `What is ${focus}?`, explain: parsed.bigIdea.explain.trim() }
       : undefined,
@@ -3913,6 +3969,17 @@ async function groqGenerate(
  *  seconds for one of them, twice, across three models, is how a lesson plan
  *  took three minutes to read while every other model sat idle. Anything
  *  longer than a breath, move on: something else will answer sooner. */
+/** The school's values, named here and nowhere else.
+ *
+ *  The lesson deck shows which of them a lesson builds, and the generator is
+ *  only allowed to name one that appears in this list — a value the school
+ *  does not hold is worse than no value slide at all, so anything invented is
+ *  dropped rather than projected in front of a class.
+ *
+ *  Empty until the school's own list is filled in, and the slide simply does
+ *  not appear while it is. */
+export const SCHOOL_VALUES: string[] = [];
+
 const RATE_LIMIT_PATIENCE_MS = 3000;
 
 /** The longest the Groq chain may spend in total before handing over.

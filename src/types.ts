@@ -101,6 +101,19 @@ export interface LessonActivityPack {
   strategies?: { title: string; items: LessonTile[] };
   /** Three closing recall questions for the review slide. */
   review?: string[];
+  /** What this lesson builds in a child beyond its subject content — the
+   *  school's competencies, and its values. Each names one and says how THIS
+   *  lesson develops it, so the slide is about the lesson rather than a
+   *  poster of words that would suit any lesson at all. */
+  growing?: { competencies?: LessonGrowth[]; values?: LessonGrowth[] };
+}
+
+/** One competency or value, and how the lesson in hand develops it. */
+export interface LessonGrowth {
+  emoji: string;
+  label: string;
+  /** One sentence naming what the class does in THIS lesson to build it. */
+  how: string;
 }
 
 /** One piece of evidence that a teacher attended training — the certificate,
