@@ -2809,6 +2809,18 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
     );
   }
 
+  // Read once, because the term and the subject together decide the
+  // competencies and the values below.
+  const term = str(parsed.term) || str(options.term) || "1";
+  const subjectName = str(parsed.subject) || options.subject || "";
+
+  /* The week's Curriculum Link — the term's competencies and its values, in
+     the scheme of work's own layout: "Communication, Learning to Learn ·
+     Authenticity, Resilience".
+     Left to the model this came back with one value instead of two, and a
+     different pairing week to week. It is the term's, so it is built. */
+  const termLink = curriculumLinkForTerm(term, subjectName);
+
   const mapped = weeks.map((w: any, i: number) => {
     const lessons = (Array.isArray(w?.lessons) ? w.lessons : [])
       .map((l: any) => ({
@@ -2829,7 +2841,7 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
       topic: str(w?.topic),
       subTopic: str(w?.subTopic),
       learningObjective: str(w?.learningObjective),
-      strand: str(w?.strand),
+      strand: termLink || str(w?.strand),
       introduction: str(w?.introduction),
       activities: str(w?.activities),
       assessment: str(w?.assessment),
@@ -2867,11 +2879,6 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
     one.subTopic = one.subTopic || subTopic;
     one.topic = one.topic || overallTopic;
   }
-
-  // Read once, because the term and the subject together decide the
-  // competencies and the values below.
-  const term = str(parsed.term) || str(options.term) || "1";
-  const subjectName = str(parsed.subject) || options.subject || "";
 
   return {
     term,
@@ -4251,6 +4258,21 @@ export const valuesForTerm = (
   subject !== undefined && !isLifeCompetenciesSubject(subject)
     ? []
     : TERM_FOCUS[termKey(term)]?.values || [];
+
+/** The Curriculum Link a week shows: the term's competencies and its values,
+ *  laid out the way the scheme of work writes them —
+ *  "Communication, Learning to Learn · Authenticity, Resilience".
+ *
+ *  Returns "" for any subject this scheme does not cover, so those weeks keep
+ *  whatever their own teacher wrote. */
+export const curriculumLinkForTerm = (
+  term?: string | null,
+  subject?: string | null,
+): string => {
+  const c = competenciesForTerm(term, subject);
+  const v = valuesForTerm(term, subject);
+  return [c.join(", "), v.join(", ")].filter(Boolean).join(" · ");
+};
 
 /** Snap a value to the school's own spelling, or reject it. Returns "" for
  *  anything outside the six — including a competency handed over by mistake. */

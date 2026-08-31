@@ -3459,6 +3459,7 @@ import {
   importLessonPlan,
   competenciesForTerm,
   valuesForTerm,
+  curriculumLinkForTerm,
   translateContent,
   translationLanguagesFor,
   relevelReadingPassage,
@@ -9191,6 +9192,17 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 "",
               zeraValue:
                 valuesForTerm(forTerm, forSubject).join(", ") || lp.zeraValue || "",
+              // Every week's Curriculum Link is the term's, so they all move
+              // together rather than each week keeping whatever it was
+              // written with.
+              weeklyBreakdown: (() => {
+                const link = curriculumLinkForTerm(forTerm, forSubject);
+                if (!link) return lp.weeklyBreakdown;
+                return (lp.weeklyBreakdown || []).map((w: any) => ({
+                  ...w,
+                  strand: link,
+                }));
+              })(),
             }
           : {};
 
