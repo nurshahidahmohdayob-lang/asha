@@ -872,6 +872,84 @@ function normQType(t: any): string {
 // Best-effort recovery of question objects from a possibly-truncated JSON string.
 // Groq can cut a response off at max_tokens, leaving invalid JSON; rather than
 // lose the whole batch we extract every complete {"text":...,"type":...} object.
+/** Parse JSON that may have been cut off, or lightly malformed.
+ *
+ *  A model that runs out of output tokens simply stops — usually mid-string,
+ *  a long way inside a large object. The reply is perfectly good JSON with
+ *  the end missing, and throwing it away costs a teacher the whole lesson
+ *  over the last few characters. This closes whatever was still open and
+ *  parses what did arrive; the caller's own checks then drop any section
+ *  that came back incomplete, which they already do.
+ *
+ *  If closing it is not enough — an unescaped quote inside a string, say —
+ *  it walks backwards to the last complete item and tries again, so a lesson
+ *  with four teaching slides instead of five is still a lesson. */
+function parsePossiblyTruncatedJson(text: string): any {
+  const raw = String(text ?? "").trim();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    /* fall through and try to mend it */
+  }
+
+  // Drop code fences and any chat before the object actually starts.
+  const start = raw.search(/[{[]/);
+  if (start < 0) throw new Error("The reply contained no JSON at all.");
+  const body = raw.slice(start).replace(/```[\s\S]*$/, "");
+
+  /** Where each container opened, so a cut can be taken between items. */
+  const close = (upTo: number): string | null => {
+    const stack: string[] = [];
+    let inString = false;
+    let escaped = false;
+    for (let i = 0; i < upTo; i++) {
+      const c = body[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (c === "\\") escaped = true;
+        else if (c === '"') inString = false;
+        continue;
+      }
+      if (c === '"') inString = true;
+      else if (c === "{" || c === "[") stack.push(c === "{" ? "}" : "]");
+      else if (c === "}" || c === "]") stack.pop();
+    }
+    if (!stack.length && !inString) return body.slice(0, upTo);
+
+    let out = body.slice(0, upTo);
+    if (inString) out += '"';
+    // A dangling "key": or a trailing comma is not a value; take it off.
+    out = out.replace(/,\s*$/, "").replace(/,?\s*"[^"]*"\s*:\s*$/, "");
+    return out + stack.reverse().join("");
+  };
+
+  const mended = close(body.length);
+  if (mended) {
+    try {
+      return JSON.parse(mended);
+    } catch {
+      /* still broken — cut back to an earlier item below */
+    }
+  }
+
+  // Walk back through the item boundaries. Bounded, so a badly mangled reply
+  // fails quickly rather than grinding through every comma in it.
+  const cuts: number[] = [];
+  for (let i = body.length - 1; i >= 0 && cuts.length < 60; i--) {
+    if (body[i] === "," || body[i] === "}" || body[i] === "]") cuts.push(i);
+  }
+  for (const at of cuts) {
+    const attempt = close(at);
+    if (!attempt) continue;
+    try {
+      return JSON.parse(attempt);
+    } catch {
+      /* keep walking back */
+    }
+  }
+  throw new Error("The reply was not valid JSON, and could not be mended.");
+}
+
 function salvageQuestions(text: string): any[] {
   if (!text) return [];
   try {
@@ -3153,6 +3231,13 @@ BE SPECIFIC TO THIS LESSON — this is what most often goes wrong:
 
 8. "review": 3 short closing questions for the whole class, each answerable out loud in a few words.
 
+9. "growing": what this lesson builds in a child BEYOND its subject content.
+   - "competencies": 2-3 entries. Take them from the KEY COMPETENCIES listed in the teacher's plan above where it names any; where it does not, choose from the Cambridge Life Competencies areas — Creative Thinking, Critical Thinking, Learning to Learn and Metacognition, Communication, Collaboration, Social Responsibilities.
+   - "values": 2-3 entries, taken ONLY from the school values listed above. If none are listed, return an empty array — never invent a school's values.
+   - Each entry is an "emoji", a "label" (the competency or value, named exactly as it is given), and a "how": ONE sentence saying what the class DOES in this very lesson to build it — "We listen to our partner's answer before we speak, so everyone in the pair gets heard."
+   - A "how" that would suit any lesson has failed. "This lesson develops communication" and "Children work together" are FAILURES: they name no moment from this lesson. Point at the actual activity — the partner talk, the matching game, the acting out.
+
+
 EMOJI RULES: exactly one emoji per tile, and it must genuinely depict the label — a child pointing at the picture must be able to say the label. 👍 for "Surprised" is WRONG (use 😲); 🌿 for "Deep breaths" is WRONG (use 🫁). Never use a letter, digit, or punctuation as an emoji. If no emoji truly fits a label, choose a different label.
 
 LABEL RULES: a label names the thing itself — "Happy", not "Happy Face". Do not append "face", "picture" or "icon" to every label.
@@ -3188,13 +3273,7 @@ You are writing the TEACHING slides — the part the teacher actually teaches fr
 
 4. "sequence": ONLY if this topic has a natural order or change — feelings changing, a life cycle, steps of a method. Give a "title", 3-4 ordered "steps" (emoji + short label) and one "line" explaining it. Omit entirely if the topic has no sequence.
 
-5. "growing": what this lesson builds in a child BEYOND its subject content.
-   - "competencies": 2-3 entries. Take them from the KEY COMPETENCIES listed in the teacher's plan above where it names any; where it does not, choose from the Cambridge Life Competencies areas — Creative Thinking, Critical Thinking, Learning to Learn and Metacognition, Communication, Collaboration, Social Responsibilities.
-   - "values": 2-3 entries, taken ONLY from the school values listed above. If none are listed, return an empty array — never invent a school's values.
-   - Each entry is an "emoji", a "label" (the competency or value, named exactly as it is given), and a "how": ONE sentence saying what the class DOES in this very lesson to build it — "We listen to our partner's answer before we speak, so everyone in the pair gets heard."
-   - A "how" that would suit any lesson has failed. "This lesson develops communication" and "Children work together" are FAILURES: they name no moment from this lesson. Point at the actual activity — the partner talk, the matching game, the acting out.
-
-6. "celebrate": the slide the lesson ends on — a "title" like "Great job! 🌟" and one "line" telling the children what they can now do, naming the actual learning.
+5. "celebrate": the slide the lesson ends on — a "title" like "Great job! 🌟" and one "line" telling the children what they can now do, naming the actual learning.
 
 EMOJI RULES: exactly one emoji per tile, and it must genuinely depict the label. 👍 for "Surprised" is WRONG (use 😲); 🌿 for "Deep breaths" is WRONG (use 🫁). Never use a letter, digit, or punctuation as an emoji.
 
@@ -3252,13 +3331,6 @@ LABEL RULES: a label names the thing itself — "Happy", not "Happy Face". Do no
         type: Type.OBJECT,
         properties: { title: { type: Type.STRING }, line: { type: Type.STRING } },
         required: ["title", "line"],
-      },
-      growing: {
-        type: Type.OBJECT,
-        properties: {
-          competencies: { type: Type.ARRAY, items: growthSchema },
-          values: { type: Type.ARRAY, items: growthSchema },
-        },
       },
     },
     required: ["keyIdeas", "teach"],
@@ -3333,6 +3405,13 @@ LABEL RULES: a label names the thing itself — "Happy", not "Happy Face". Do no
             required: ["title", "items"],
           },
           review: { type: Type.ARRAY, items: { type: Type.STRING } },
+          growing: {
+            type: Type.OBJECT,
+            properties: {
+              competencies: { type: Type.ARRAY, items: growthSchema },
+              values: { type: Type.ARRAY, items: growthSchema },
+            },
+          },
         },
         required: ["discussion", "questions"],
   };
@@ -3343,7 +3422,10 @@ LABEL RULES: a label names the thing itself — "Happy", not "Happy Face". Do no
       config: { responseMimeType: "application/json", responseSchema: schema },
     });
     if (!r.text) throw new Error("Empty response");
-    return JSON.parse(r.text);
+    // A lesson is a big reply and the teaching half is the biggest part of
+    // it. Cut off at the output ceiling it used to fail outright, taking the
+    // slides that HAD been written with it.
+    return parsePossiblyTruncatedJson(r.text);
   };
 
   // Deliberately sequential. Run in parallel these two blow through Groq's
