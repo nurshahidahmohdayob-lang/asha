@@ -10238,6 +10238,71 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     }
   };
 
+  /** The plan and the projected lesson, in the shape the generators want.
+   *
+   *  Written once. The slides already read the plan this way; the worksheet
+   *  did not read it at all, and a fourth hand-rolled copy of these fields is
+   *  how they drift apart. */
+  const lessonContextFor = (week: any) => {
+    const plan = content?.lessonPlan;
+    if (!plan || !week) return {};
+
+    const lessonPlanContext = {
+      overallTopic: plan.overallTopic || "",
+      week: week.week,
+      unit: week.unit || "",
+      topic: week.topic || "",
+      subTopic: week.subTopic || plan.subTopic || "",
+      strand: week.strand || plan.strandSummary || "",
+      learningObjective: week.learningObjective || plan.learningObjectiveSummary || "",
+      introduction: week.introduction || "",
+      activities: week.activities || "",
+      assessment: week.assessment || "",
+      resources: week.resources || "",
+      successCriteria: plan.successCriteria || "",
+      essentialQuestions: plan.essentialQuestions || "",
+      otherWeekTopics: (plan.weeklyBreakdown || [])
+        .filter((w: any) => w.week !== week.week && w.topic?.trim())
+        .map((w: any) => `Week ${w.week}: ${w.topic.trim()}`),
+    };
+
+    // What the class actually saw on the board, but only if the deck that is
+    // loaded belongs to THIS week. A pack from another week would have the
+    // worksheet checking a lesson these children never sat through.
+    const pack =
+      content?.lessonPack?.week === week.week ? content.lessonPack : null;
+    const taughtContext = pack
+      ? [
+          pack.bigIdea?.title && `WHAT IT MEANS — ${pack.bigIdea.title}: ${pack.bigIdea.explain || ""}`,
+          pack.keyIdeas?.length &&
+            `THE THINGS NAMED: ${pack.keyIdeas.map((t: any) => t.label).join(", ")}`,
+          ...(pack.teach || []).map(
+            (t: any, i: number) =>
+              `TAUGHT ${i + 1} — ${t.title}: ${(t.lines || []).join(" ")}${
+                t.ask ? ` (asked the class: ${t.ask})` : ""
+              }`,
+          ),
+          pack.sequence?.steps?.length &&
+            `THE ORDER SHOWN — ${pack.sequence.title || ""}: ${pack.sequence.steps
+              .map((x: any) => x.label)
+              .join(" → ")}${pack.sequence.line ? `. ${pack.sequence.line}` : ""}`,
+          pack.story?.questions?.length &&
+            `FROM THE STORY: ${pack.story.questions
+              .map((q: any) => `${q.q} (${q.a})`)
+              .join("; ")}`,
+          pack.strategies?.items?.length &&
+            `WHAT THEY CAN DO: ${pack.strategies.items.map((t: any) => t.label).join(", ")}`,
+          pack.matching?.pairs?.length &&
+            `MATCHED IN THE GAME: ${pack.matching.pairs.map((t: any) => t.label).join(", ")}`,
+          pack.review?.length && `REVIEWED AT THE END: ${pack.review.join(" | ")}`,
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : "";
+
+    return taughtContext ? { lessonPlanContext, taughtContext } : { lessonPlanContext };
+  };
+
   const generateWorksheetForWeek = async (weekIdx: number) => {
     const week = content?.lessonPlan?.weeklyBreakdown[weekIdx];
     if (!week) return;
@@ -10262,6 +10327,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         includeStory,
         readingPassageOnly,
         targetWordCount,
+        // The questions check THIS week's lesson, not the topic at large.
+        ...lessonContextFor(week),
         }),
       );
 
@@ -12858,6 +12925,17 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         fileContext: fileData,
         targetWordCount,
         language: assessmentLanguage,
+        /* Tie the questions to the lesson this class actually had — but only
+           when there IS one to tie them to. A teacher who uploaded a file
+           wants questions on that file, and one working from a bare topic has
+           taught nothing yet for a worksheet to check. */
+        ...(!fileContext && content?.lessonPack
+          ? lessonContextFor(
+              (content?.lessonPlan?.weeklyBreakdown || []).find(
+                (w: any) => w.week === content?.lessonPack?.week,
+              ),
+            )
+          : {}),
       },
       basedOnSlides ? content?.slides : undefined,
       // PHASED RENDERING: paint the worksheet as each phase lands so it feels

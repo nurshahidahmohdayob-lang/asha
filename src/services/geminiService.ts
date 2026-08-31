@@ -266,6 +266,15 @@ export interface EduOptions {
     /** The other weeks' topics, so this deck doesn't wander into them. */
     otherWeekTopics?: string[];
   };
+  /** What the projected lesson ACTUALLY taught, written out from the pack the
+   *  deck was built from — the definition given, the points made, the story,
+   *  the words used.
+   *
+   *  A worksheet written from the topic string alone asks about the topic in
+   *  general, so a class that sat through the lesson meets questions on things
+   *  it never covered and never meets the things it did. This is what they
+   *  were taught, so it is what they can be asked. */
+  taughtContext?: string;
   fileContext?: {
     mimeType: string;
     data: string;
@@ -1328,9 +1337,51 @@ Return ONLY a JSON object in exactly this shape: {"title": "<a short, fitting pa
       ? `Produce EXACTLY this breakdown of question types: ${typeBreakdown} (${options.numQuestions} questions in total). Use ONLY these question types in these amounts — keep writing until every count is met.`
       : `You MUST produce a FULL set of ${options.numQuestions} questions IN TOTAL across all sections — keep writing questions until you reach ${options.numQuestions}; do not stop early. (A few extra is acceptable; we keep the first ${options.numQuestions}.) ${allowedTypesClause(options, lessonInput)}`;
 
+    /* The client puts the slides in `options` when it calls through the
+       proxy, and every streaming handler passes `undefined` for this
+       parameter — so "base it on my slides" quietly did nothing there. Read
+       from either place. */
+    slideContext = slideContext || (options as any).slideContext;
     if (slideContext) {
       contents.push(`CONTEXT FROM SLIDES: ${JSON.stringify(slideContext.map(s => ({ title: s.title, content: s.content })))}`);
       contents.push(`IMPORTANT: The worksheet should directly complement and assess the material presented in these slides.`);
+    }
+
+    /* The worksheet is marking what this class was taught, not what the topic
+       contains. Without these it was written from the topic string alone, so
+       it asked about things the lesson never covered and left out the things
+       it did — and the children were the ones who found out. */
+    const planned = options.lessonPlanContext;
+    if (planned) {
+      contents.push(`THE TEACHER'S PLAN FOR THIS LESSON:
+${[
+  planned.unit && `UNIT: ${planned.unit}`,
+  planned.topic && `TOPIC: ${planned.topic}`,
+  planned.subTopic && `SUB-TOPIC: ${planned.subTopic}`,
+  planned.learningObjective && `LEARNING OBJECTIVE: ${planned.learningObjective}`,
+  planned.successCriteria && `SUCCESS CRITERIA: ${planned.successCriteria}`,
+  planned.introduction && `HOW THE LESSON STARTED: ${planned.introduction}`,
+  planned.activities && `WHAT THE CLASS DID: ${planned.activities}`,
+  planned.assessment && `HOW THE TEACHER PLANNED TO CHECK IT: ${planned.assessment}`,
+].filter(Boolean).join("\n")}`);
+      if (planned.otherWeekTopics?.length) {
+        contents.push(`NOT YET TAUGHT — these are other weeks of the plan, so nothing here may be asked about: ${planned.otherWeekTopics.join("; ")}`);
+      }
+    }
+    if (options.taughtContext?.trim()) {
+      contents.push(`WHAT THE PROJECTED LESSON ACTUALLY TAUGHT — the class has just seen all of this on the board:
+"""
+${options.taughtContext.trim()}
+"""`);
+    }
+    if (planned || options.taughtContext?.trim()) {
+      contents.push(`ASSESS WHAT WAS TAUGHT (MANDATORY):
+- Every question must test something that appears in the material above. A question about the topic in general, which this class was not taught, is a FAILURE however good a question it is.
+- Use the lesson's OWN words for the things it named. If it called them "helpers", ask about "helpers", not about "community service providers" — a child who learned the lesson must recognise what is being asked.
+- Where the lesson gave a definition, an example or a sequence, ask about THAT definition, THAT example, THAT sequence.
+- Do not introduce a fact, term, name or number the lesson never mentioned, even if it is correct and related.
+- Work through the material and cover its different parts, so the worksheet checks the whole lesson rather than the first thing in it.
+- The learning objective above is what the class was meant to come away with: make sure the worksheet actually checks it.`);
     }
 
     let mainPrompt = options.readingPassageOnly
