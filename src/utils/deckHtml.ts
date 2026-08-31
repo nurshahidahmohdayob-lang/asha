@@ -138,7 +138,7 @@ export function buildProjectedDeckHTML(
     if (text === null || btn.hasAttribute('data-zx-shown')) return;
     btn.setAttribute('data-zx-shown', '');
     btn.className = btn.className
-      .replace(/border-dashed|border-silver|bg-white|hover:[^\s]+/g, '')
+      .replace(/border-dashed|border-silver|bg-white|hover:[^\\s]+/g, '')
       .trim() + ' border-brand-300 bg-brand-50 shadow-xl';
     var span = document.createElement('span');
     span.className = 'anim-pop block text-2xl font-semibold leading-snug text-brand-900 sm:text-3xl';
@@ -219,7 +219,19 @@ export function buildProjectedDeckHTML(
     });
     paint();
   }
-  [].forEach.call(document.querySelectorAll('[data-zx-timer]'), wireTimer);
+  /* The lesson goes up BEFORE any of this. Every slide is hidden until
+     zxShow marks one, so anything that threw on the way to it left a blank
+     file — which is exactly what one stray apostrophe in a string did. The
+     slides no longer depend on the widgets working. */
+  zxShow(0);
+
+  function wireAll(sel, fn){
+    [].forEach.call(document.querySelectorAll(sel), function(el){
+      // One widget that cannot be wired must not take the others with it.
+      try { fn(el); } catch (err) { }
+    });
+  }
+  wireAll('[data-zx-timer]', wireTimer);
 
   /* ── Tap a word, then tap its picture ─────────────────────────────────
      Both columns came across in the markup; which word goes with which
@@ -249,7 +261,7 @@ export function buildProjectedDeckHTML(
         // Only one word is held at a time, the way the deck holds it.
         words.forEach(function(o){
           if (!isDone(o.getAttribute('data-zx-match')))
-            o.className = o.className.replace(/\sborder-sky|\sbg-\[#eaf4f7\]/g, '');
+            o.className = o.className.replace(/\\sborder-sky|\\sbg-\\[#eaf4f7\\]/g, '');
         });
         picked = label;
         w.className += ' border-sky bg-[#eaf4f7]';
@@ -272,7 +284,7 @@ export function buildProjectedDeckHTML(
           picked = null;
           say(matched.length === faces.length
             ? '\uD83C\uDF89 All matched! Well done.'
-            : '\uD83C\uDF89 Yes! That\'s a match.');
+            : "\u{1F389} Yes! That is a match.");
         } else {
           // Wobble, the same class the deck uses, then settle.
           f.classList.add('anim-wiggle');
@@ -282,7 +294,7 @@ export function buildProjectedDeckHTML(
       });
     });
   }
-  [].forEach.call(document.querySelectorAll('[data-zx-match-game]'), wireMatch);
+  wireAll('[data-zx-match-game]', wireMatch);
 
   /* ── The spinner ──────────────────────────────────────────────────────
      One item is ever on screen, so the pool travels with it as data. */
@@ -318,7 +330,7 @@ export function buildProjectedDeckHTML(
       }, 80);
     });
   }
-  [].forEach.call(document.querySelectorAll('[data-zx-spin]'), wireSpinner);
+  wireAll('[data-zx-spin]', wireSpinner);
 
   document.addEventListener('click', function(e){
     if (!e.target || !e.target.closest) return;
@@ -349,8 +361,6 @@ export function buildProjectedDeckHTML(
     // turn — is marked as chosen.
     btn.classList.toggle('zx-ticked');
   });
-
-  zxShow(0);
 })();
 </script>
 </body></html>`;

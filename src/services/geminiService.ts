@@ -3120,13 +3120,20 @@ You are writing the TEACHING slides — the part the teacher actually teaches fr
    - A sentence that does not say what the thing IS has failed. "Global citizens are very important", "Today we are learning about global citizens" and "Global citizenship is an interesting topic" are all FAILURES: none of them tells a child what one is.
    - Where the topic is a phrase built from ordinary words, say what those words mean together — the point is that a child could explain it to someone else afterwards.
 
-3. "teach": THE MOST IMPORTANT SECTION. One entry for EACH thing in keyIdeas — so 3-5 entries, in the same order. Each entry has:
+3. "teach": THE MOST IMPORTANT SECTION, and the one to spend the most words on. One entry for EACH thing in keyIdeas — so 3-5 entries, in the same order. Each entry has:
    - "emoji": the big picture for that concept.
    - "title": what the slide is called, in the child's own voice where it suits — "I Feel Happy!", "This Is A Triangle", "Water Turns To Ice".
-   - "lines": 1-3 short sentences that TEACH the point with a concrete example from a child's life — "I may feel happy when I play with my friends." Not a definition of the word; a real example a 6-year-old recognises.
+   - "lines": the EXPLANATION itself, and the part most often left too thin. Use as many lines as the age rules above allow on one slide, and no more. They must build understanding IN THIS ORDER:
+       (a) what this thing is, in words the class already has;
+       (b) a concrete example from their own life — "I may feel happy when I play with my friends";
+       (c) how it works, or why it happens, or what it is for — the part that turns a name into an understanding;
+       (d) where there is room, a second example that is DIFFERENT from the first, or the mix-up children usually make, said plainly so they avoid it.
+     One line is not enough for any of these unless the age rules cap the slide at three. Naming the thing and stopping is the failure this must avoid: a class that can repeat the word but could not explain it to someone else has not been taught it.
+     Each line stays within the sentence length the age rules give, because it is read off a board — the detail comes from having four short lines that each say something new, never from one long one.
    - "tiles": 0-4 supporting pictures where they help — what to DO about it, or more examples. For a difficult feeling these are the coping strategies; for a shape they are things of that shape.
    - "ask": one question that turns the slide over to the class — "What makes YOU happy?"
    Do not skip this section and do not merge the concepts into one slide. A lesson with five concepts needs five teaching slides.
+   Write these as if the class has never met this idea before and has only this slide to learn it from. A teacher can add more out loud, but a child reading the board should already understand.
 
 4. "sequence": ONLY if this topic has a natural order or change — feelings changing, a life cycle, steps of a method. Give a "title", 3-4 ordered "steps" (emoji + short label) and one "line" explaining it. Omit entirely if the topic has no sequence.
 

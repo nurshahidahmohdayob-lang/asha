@@ -6,10 +6,11 @@
   "scripts": {
     "dev": "PORT=3004 tsx watch server.ts",
     "build:api": "node scripts/build-api.mjs",
-    "build": "npm run build:api && vite build",
+    "build": "npm run build:api && vite build && node scripts/check-deck-html.mjs",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "check:deck": "node scripts/check-deck-html.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
