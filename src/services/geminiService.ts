@@ -2395,7 +2395,6 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
       - "successCriteria": array of 2-4 short strings phrased as "I can..." statements (child-friendly)
       - "essentialQuestions": array of 4-6 short big-picture questions that frame the unit
       - "keyCompetencies": array of 6-10 short competency words/phrases developed across the unit (e.g. Self-awareness, Communication, Collaboration)
-      - "zeraValue": string — the ONE school value this unit lives out, chosen from exactly these six and spelled exactly as written: ${ZERAOS_VALUES.join(", ")}. Pick the one the unit's own work genuinely builds; do not offer a second, and never write a value outside this list.
       - "portfolioEvidence": array of 6-12 short suggested pieces of student evidence for a portfolio
       - "weeklyBreakdown": Array of exactly ${weekCount} objects, each with:
         - "week": number (1-${weekCount})
@@ -2869,12 +2868,14 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
     one.topic = one.topic || overallTopic;
   }
 
-  // Read once, because the term decides the competencies and the value below.
+  // Read once, because the term and the subject together decide the
+  // competencies and the values below.
   const term = str(parsed.term) || str(options.term) || "1";
+  const subjectName = str(parsed.subject) || options.subject || "";
 
   return {
     term,
-    subject: str(parsed.subject) || options.subject || "",
+    subject: subjectName,
     duration: str(parsed.duration) || "60 mins",
     date: str(parsed.date) || new Date().toISOString().split("T")[0],
     academicYear:
@@ -2893,9 +2894,14 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
        than left to the model — which would otherwise write a different
        wording of the same competency into every teacher's plan. What the
        model produced is kept only where the term is not in the table. */
+    /* Set by the scheme of work for the whole term, so they are looked up
+       rather than left to the model — and only for the subject that scheme
+       belongs to. Every other subject keeps what it wrote. */
     keyCompetencies:
-      competenciesForTerm(term).join("\n") || str(parsed.keyCompetencies),
-    zeraValue: zeraValue(parsed.zeraValue),
+      competenciesForTerm(term, subjectName).join("\n") ||
+      str(parsed.keyCompetencies),
+    zeraValue:
+      valuesForTerm(term, subjectName).join(", ") || zeraValue(parsed.zeraValue),
     portfolioEvidence: str(parsed.portfolioEvidence),
     reflection: str(parsed.reflection),
     weeklyBreakdown: mapped,
@@ -3209,6 +3215,15 @@ async function generateLessonActivitiesDirect(
     week.learningObjective?.trim() ||
     plan.overallTopic ||
     plan.subject;
+  /* The term's values, taken from the plan where it carries them and from the
+     term otherwise — an older plan saved before these were stamped on still
+     gets the right ones. Both, because the term works on both. */
+  const planValues = (plan.zeraValue || "")
+    .split(",")
+    .map((v) => zeraValue(v))
+    .filter(Boolean);
+  if (!planValues.length) planValues.push(...valuesForTerm(plan.term, plan.subject));
+
   const source = [
     week.unit && `UNIT: ${week.unit}`,
     `TOPIC: ${focus}`,
@@ -3217,9 +3232,8 @@ async function generateLessonActivitiesDirect(
       `KEY COMPETENCIES FOR THIS PLAN: ${plan.keyCompetencies.trim()}`,
     // The term's own value, not a menu to choose from. It is the same for
     // every lesson this term — that is the point of it.
-    zeraValue(plan.zeraValue)
-      ? `THIS LESSON'S ZERAOS VALUE: ${zeraValue(plan.zeraValue)}`
-      : `THE SCHOOL'S ZERAOS VALUES, one of which this lesson lives out: ${ZERAOS_VALUES.join(", ")}`,
+    planValues.length &&
+      `THIS TERM'S ZERAOS VALUES: ${planValues.join(", ")}`,
     week.learningObjective && `LEARNING OBJECTIVE: ${week.learningObjective}`,
     week.introduction && `INTRODUCTION / DO NOW: ${week.introduction}`,
     week.activities && `ACTIVITIES: ${week.activities}`,
@@ -3299,7 +3313,7 @@ BE SPECIFIC TO THIS LESSON — this is what most often goes wrong:
 
 9. "growing": what this lesson builds in a child BEYOND its subject content.
    - "competencies": 2-3 entries. Take them from the KEY COMPETENCIES listed in the teacher's plan above where it names any; where it does not, choose from the Cambridge Life Competencies areas — Creative Thinking, Critical Thinking, Learning to Learn and Metacognition, Communication, Collaboration, Social Responsibilities.
-   - "values": exactly ONE entry, and it must be THIS TERM'S ZERAOS VALUE named above, spelled exactly as it is given. If no value is named above, return an empty array — never invent a school's value. Its "how" says what the class does in this lesson that lives out that value.
+   - "values": one entry for EACH of the term's ZeraOS values named above, spelled exactly as given — the term works on all of them, so all of them appear. If none are named above, return an empty array; never invent a school's value. Each "how" says what the class does in this lesson that lives out that value.
    - Each entry is an "emoji", a "label" (the competency or value, named exactly as it is given), and a "how": ONE sentence saying what the class DOES in this very lesson to build it — "We listen to our partner's answer before we speak, so everyone in the pair gets heard."
    - A "how" that would suit any lesson has failed. "This lesson develops communication" and "Children work together" are FAILURES: they name no moment from this lesson. Point at the actual activity — the partner talk, the matching game, the acting out.
 
@@ -3576,14 +3590,12 @@ LABEL RULES: a label names the thing itself — "Happy", not "Happy Face". Do no
             label: g.label.trim(),
             how: g.how.trim(),
           }));
-      // Named on the plan, the deck must use that one. Otherwise it may pick,
-      // but only from the six.
-      const named = zeraValue(plan.zeraValue);
+      // The term decides these, so the deck may only name the term's own —
+      // anything else is dropped rather than projected.
       const competencies = rows(parsed.growing?.competencies);
-      const values = rows(
-        parsed.growing?.values,
-        named ? [named] : [...ZERAOS_VALUES],
-      ).slice(0, 1);
+      const values = planValues.length
+        ? rows(parsed.growing?.values, planValues)
+        : [];
       return competencies.length || values.length ? { competencies, values } : undefined;
     })(),
     bigIdea: parsed.bigIdea?.explain?.trim()
@@ -4181,53 +4193,67 @@ async function groqGenerate(
  *  seconds for one of them, twice, across three models, is how a lesson plan
  *  took three minutes to read while every other model sat idle. Anything
  *  longer than a breath, move on: something else will answer sooner. */
-/** The Key Competencies each term develops, from the Life Competencies
- *  scheme of work for 2026/2027.
+/** What each term is working on, from the Life Competencies scheme of work
+ *  for 2026/2027 — its Key Competencies and its pair of ZeraOS values.
  *
- *  The same two every term across all six year groups — read off all 18 term
- *  plans in that document, which agree exactly. That is what makes them
- *  worth looking up rather than generating: asked to produce them, a model
- *  gives two teachers planning the same term different words for the same
- *  competency, which is the opposite of a shared framework.
+ *  Read off all eighteen term plans in that document, which agree exactly:
+ *  the same competencies and the same two values in every year group, on
+ *  every one of its 225 lessons. That is what makes them worth looking up
+ *  rather than generating — asked to produce them, a model gives two
+ *  teachers planning the same term different words for the same thing,
+ *  which is the opposite of a shared framework.
  *
- *  Keyed on the term as written on a plan — "1", "Term 1", "TERM 1" all read
- *  the same. Anything else fills nothing rather than guessing. */
-const TERM_COMPETENCIES: Record<string, string[]> = {
-  "1": ["Communication", "Learning to Learn"],
-  "2": ["Collaboration", "Social Responsibility"],
-  "3": ["Critical Thinking", "Creative Thinking"],
+ *  Keyed on the term as written on a plan: "1", "Term 1" and "TERM 1" all
+ *  read the same. Anything else fills nothing rather than guessing. */
+const TERM_FOCUS: Record<string, { competencies: string[]; values: string[] }> = {
+  "1": {
+    competencies: ["Communication", "Learning to Learn"],
+    values: ["Authenticity", "Resilience"],
+  },
+  "2": {
+    competencies: ["Collaboration", "Social Responsibility"],
+    values: ["Open-mindedness", "Sustainability"],
+  },
+  "3": {
+    competencies: ["Critical Thinking", "Creative Thinking"],
+    values: ["Excellence", "Zealous"],
+  },
 };
 
-/** The school's six values. The name is the list: Zealous, Excellence,
- *  Resilience, Authenticity, Open-mindedness, Sustainability.
- *
- *  Unlike the competencies these are NOT fixed per term — the scheme of work
- *  picks whichever one a particular lesson lives out, and all six appear
- *  across every term. So a lesson chooses from this list, and may not name
- *  anything outside it: a value this school does not hold is worse in front
- *  of a class than no value at all. */
-export const ZERAOS_VALUES = [
-  "Zealous",
-  "Excellence",
-  "Resilience",
-  "Authenticity",
-  "Open-mindedness",
-  "Sustainability",
-] as const;
+/** The school's six values — the name is the list. Two belong to each term. */
+export const ZERAOS_VALUES = Object.values(TERM_FOCUS).flatMap((t) => t.values);
 
 /** The term a plan is for, however it is written — "1", "Term 1", "TERM 1". */
 export const termKey = (term?: string | null): string =>
   (/(\d+)/.exec(String(term ?? "")) || [])[1] || "";
 
-/** The competencies this term develops. */
-export const competenciesForTerm = (term?: string | null): string[] =>
-  TERM_COMPETENCIES[termKey(term)] || [];
+/** This scheme of work belongs to one subject. Every other subject keeps
+ *  whatever its own teacher writes — a Maths plan is not working to the Life
+ *  Competencies terms, and stamping them on it would be a lie about what the
+ *  lesson is for. */
+export const isLifeCompetenciesSubject = (subject?: string | null): boolean =>
+  /life\s*competenc/i.test(String(subject ?? ""));
 
-/** Snap a value to the school's own spelling, or reject it.
- *
- *  Returns "" for anything that is not one of the six — including a
- *  competency handed over by mistake, which is what "Collaboration" and
- *  "Critical Thinking" are where they appear in the source document. */
+/** The competencies this term develops, for Life Competencies plans. */
+export const competenciesForTerm = (
+  term?: string | null,
+  subject?: string | null,
+): string[] =>
+  subject !== undefined && !isLifeCompetenciesSubject(subject)
+    ? []
+    : TERM_FOCUS[termKey(term)]?.competencies || [];
+
+/** The ZeraOS values this term works on, for Life Competencies plans. */
+export const valuesForTerm = (
+  term?: string | null,
+  subject?: string | null,
+): string[] =>
+  subject !== undefined && !isLifeCompetenciesSubject(subject)
+    ? []
+    : TERM_FOCUS[termKey(term)]?.values || [];
+
+/** Snap a value to the school's own spelling, or reject it. Returns "" for
+ *  anything outside the six — including a competency handed over by mistake. */
 export const zeraValue = (value?: string | null): string => {
   const want = String(value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "");
   if (!want) return "";
@@ -4237,8 +4263,6 @@ export const zeraValue = (value?: string | null): string => {
     ) || ""
   );
 };
-
-
 
 const RATE_LIMIT_PATIENCE_MS = 3000;
 

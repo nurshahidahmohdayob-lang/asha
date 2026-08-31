@@ -3458,7 +3458,7 @@ import {
   suggestReflection,
   importLessonPlan,
   competenciesForTerm,
-  zeraValue as canonicalZeraValue,
+  valuesForTerm,
   translateContent,
   translationLanguagesFor,
   relevelReadingPassage,
@@ -9173,18 +9173,24 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         weeklyBreakdown: [],
       };
 
-      /* Changing the term changes what the term is working on. The school
-         sets those, so they follow the term rather than being retyped on
-         every plan — and a teacher who has written their own competencies
-         keeps them. */
+      /* Changing the term changes what the term is working on. The scheme of
+         work sets both, so they follow the term rather than being retyped on
+         every plan — and only for the subject that scheme belongs to, since
+         a Maths plan is not working to the Life Competencies terms.
+         A teacher who wrote their own competencies keeps them when the term
+         has none to give. */
+      const forSubject =
+        field === "subject" ? value : lp.subject || base.subject;
+      const forTerm = field === "term" ? value : lp.term;
       const followsTerm =
-        field === "term"
+        field === "term" || field === "subject"
           ? {
               keyCompetencies:
-                competenciesForTerm(value).join("\n") || lp.keyCompetencies || "",
-              // The value is picked per lesson, not fixed by the term, so a
-              // term change leaves it alone — only the competencies follow.
-              zeraValue: canonicalZeraValue(lp.zeraValue),
+                competenciesForTerm(forTerm, forSubject).join("\n") ||
+                lp.keyCompetencies ||
+                "",
+              zeraValue:
+                valuesForTerm(forTerm, forSubject).join(", ") || lp.zeraValue || "",
             }
           : {};
 
@@ -39130,7 +39136,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           the term is the point of it. */}
                       {lp?.zeraValue?.trim() && (
                         <section>
-                          <div className={secLabel}>ZeraOS Value</div>
+                          <div className={secLabel}>ZeraOS Values</div>
                           <div className="border border-[#E5E7EB] rounded-lg p-5 text-[13px] font-semibold">
                             {lp.zeraValue.trim()}
                           </div>
