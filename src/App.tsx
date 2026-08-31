@@ -10329,6 +10329,24 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         targetWordCount,
         // The questions check THIS week's lesson, not the topic at large.
         ...lessonContextFor(week),
+        },
+        undefined,
+        /* Say where it has got to. This was the one worksheet path that asked
+           for no progress at all, so it sat on a spinner reading "Generating
+           Worksheet for Week 1…" for the whole run with nothing changing —
+           which is what made it feel as though it had stopped. */
+        (partial) => {
+          if (partial.phase === "header") {
+            setGeneratingMessage(
+              partial.total > 0
+                ? `Week ${weekIdx + 1} — writing questions (0/${partial.total})…`
+                : `Week ${weekIdx + 1} — writing questions…`,
+            );
+          } else if (partial.phase === "questions") {
+            setGeneratingMessage(
+              `Week ${weekIdx + 1} — writing questions (${partial.done}/${partial.total})…`,
+            );
+          }
         }),
       );
 

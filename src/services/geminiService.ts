@@ -46,6 +46,30 @@ function gemini(): GoogleGenAI {
   return (geminiClient ||= new GoogleGenAI({ apiKey: key }));
 }
 
+/** Turn a failed proxy response into an error that says something.
+ *
+ *  This read `response.statusText`, which is EMPTY over HTTP/2 — so a server
+ *  error reached the teacher as the words "Server error:" and nothing else.
+ *  Whatever the server did say is worth more than that: its JSON error if it
+ *  sent one, its body if it sent plain text, and the status code either way,
+ *  since "500" and "413" call for completely different things. */
+async function serverError(response: Response): Promise<Error> {
+  const body = await response.text().catch(() => "");
+  let said = "";
+  try {
+    const parsed = JSON.parse(body);
+    said = parsed?.error || parsed?.message || "";
+  } catch {
+    said = body.trim().slice(0, 400);
+  }
+  const status = `${response.status}${response.statusText ? ` ${response.statusText}` : ""}`;
+  return new Error(
+    said
+      ? `${said} (${status})`
+      : `The server failed with ${status} and gave no reason. If this is the local server, check its terminal for the error.`,
+  );
+}
+
 // Utility to call the server-side proxy (Fallback if frontend key fails)
 async function callAiProxy(type: string, lessonInput: string, options: any) {
   try {
@@ -55,11 +79,8 @@ async function callAiProxy(type: string, lessonInput: string, options: any) {
       body: JSON.stringify({ type, lessonInput, options })
     });
     
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      throw new Error(errData.error || `Server error: ${response.statusText}`);
-    }
-    
+    if (!response.ok) throw await serverError(response);
+
     return response.json();
   } catch (err: any) {
     console.error("AI Proxy Error:", err);
@@ -1573,12 +1594,25 @@ Only use the types that appear in the "Allowed Types" list above.`;
     void CHUNK;
 
     if (!canChunk) {
+      /* Reserve what an 8-question worksheet needs, not what a 50-question
+         one might. The allowance Groq charges covers the reply as well as the
+         prompt, so an unset cap books the full 7000 against the per-minute
+         budget — which pushes the call onto a slower model, or makes it wait
+         out a rate limit it was never going to hit. Roughly 300 tokens a
+         question, plus the header, plus the passage when one is asked for. */
+      const outputRoom = Math.min(
+        7000,
+        900 +
+          Math.max(total, 4) * 320 +
+          (options.includeStory || options.readingPassageOnly ? 1600 : 0),
+      );
       const response = await generateContentWithRetry({
         contents: { parts: contents.map(c => typeof c === 'string' ? { text: c } : c) },
         config: {
           // Structured generation, not deep reasoning — disable "thinking"
           // entirely to minimise latency.
           thinkingConfig: { thinkingBudget: 0 },
+          maxOutputTokens: outputRoom,
           responseMimeType: "application/json",
           language: options.language,
           responseSchema: fullWsSchema,
@@ -1679,6 +1713,23 @@ Only use the types that appear in the "Allowed Types" list above.`;
       // The model usually stops short on large counts (token cap). Top up the
       // shortfall in SAFE-SIZED batches (each small enough to return complete
       // JSON) until every requested count is met, then cap to the exact numbers.
+      /* What the class was taught, short enough to ride along on every top-up.
+       The first call gets the full picture; without this the top-ups only ever
+       saw the topic string, so a worksheet that started on the lesson wandered
+       off it as it filled up — and the later questions are exactly the ones
+       nobody checks. */
+      const taughtBrief = [
+        options.lessonPlanContext?.learningObjective &&
+          `LEARNING OBJECTIVE: ${options.lessonPlanContext.learningObjective}`,
+        options.taughtContext?.trim() &&
+          `WHAT THE LESSON TAUGHT:\n${options.taughtContext.trim().slice(0, 1500)}`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      const taughtRule = taughtBrief
+        ? `\n\n${taughtBrief}\n\nEvery question must test something in the material above, in the words the lesson used. Do not introduce anything it never mentioned.`
+        : "";
+
       const BATCH = 12; // questions per top-up call — stays well under the token cap
       const maxTopups = want > 0 ? Math.ceil(want / BATCH) + 6 : 0;
       let topups = 0;
@@ -1697,7 +1748,7 @@ Only use the types that appear in the "Allowed Types" list above.`;
             contents: {
               parts: [
                 {
-                  text: `As an expert Cambridge Educator, write EXACTLY these ADDITIONAL distinct, exam-style assessment questions STRICTLY about the topic "${lessonInput}" (Subject: ${options.subject}, Year Group: ${options.yearGroup}): ${breakdownLine}. EVERY question must be directly about "${lessonInput}" — do not drift off-topic. Use ONLY these exact lowercase "type" values. Every question must be factually accurate, logically sound, and aligned with Cambridge textbooks/past papers, with a clearly correct answer. For multiple-choice, EXACTLY ONE option may be correct — the other options must be clearly WRONG (never also-true or partially-correct) so the student can pick a single unambiguous answer; vary the wording (not all "What/Which/When"). For true-false, write a declarative STATEMENT (not an "Is it true…?" question). They MUST be COMPLETELY different from each other and from these existing questions — different sub-topic, different sentence structure, and different answer choices; do NOT reuse the same template/opening: ${JSON.stringify(existing)}.\n${encodingRules}${bahasaMelayuDirective(options.subject)}${bahasaMelayuFormatGuide(options.subject)}${mandarinDualLanguage(options.subject, options.language)}\nReturn ONLY JSON: {"questions": [{"text","type","options"}]}`,
+                  text: `As an expert Cambridge Educator, write EXACTLY these ADDITIONAL distinct, exam-style assessment questions STRICTLY about the topic "${lessonInput}" (Subject: ${options.subject}, Year Group: ${options.yearGroup}): ${breakdownLine}. EVERY question must be directly about "${lessonInput}" — do not drift off-topic. Use ONLY these exact lowercase "type" values. Every question must be factually accurate, logically sound, and aligned with Cambridge textbooks/past papers, with a clearly correct answer. For multiple-choice, EXACTLY ONE option may be correct — the other options must be clearly WRONG (never also-true or partially-correct) so the student can pick a single unambiguous answer; vary the wording (not all "What/Which/When"). For true-false, write a declarative STATEMENT (not an "Is it true…?" question). They MUST be COMPLETELY different from each other and from these existing questions — different sub-topic, different sentence structure, and different answer choices; do NOT reuse the same template/opening: ${JSON.stringify(existing)}.\n${encodingRules}${bahasaMelayuDirective(options.subject)}${bahasaMelayuFormatGuide(options.subject)}${mandarinDualLanguage(options.subject, options.language)}${taughtRule}\nReturn ONLY JSON: {"questions": [{"text","type","options"}]}`,
                 },
               ],
             },
