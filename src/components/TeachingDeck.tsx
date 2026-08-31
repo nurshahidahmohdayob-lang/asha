@@ -1032,7 +1032,10 @@ function MatchGame({
   };
 
   return (
-    <div>
+    /* Named for the downloaded HTML. The words and the pictures come across
+       in the markup, but which one goes with which lived in this handler, so
+       the exported copy could highlight a tap and never match anything. */
+    <div data-zx-match-game="">
       <div className="mt-6 grid grid-cols-2 gap-8">
         <div className="grid gap-3">
           {pairs.map((t) => {
@@ -1045,6 +1048,7 @@ function MatchGame({
                   !isDone &&
                   (setPicked(t.label), setMsg(`Now tap the picture for ${t.label}.`))
                 }
+                data-zx-match={t.label}
                 className={`rounded-[1.6rem] border-4 p-4 text-2xl font-bold transition-all active:scale-[0.98] ${
                   isDone
                     ? "border-brand-600 bg-brand-50 text-brand-800"
@@ -1071,6 +1075,7 @@ function MatchGame({
               <button
                 key={t.label}
                 onClick={() => tapFace(t)}
+                data-zx-face={t.label}
                 className={`relative w-full rounded-[1.6rem] border-4 p-2 transition-all active:scale-[0.98] ${
                   wrong === t.label ? "anim-wiggle" : ""
                 } ${
@@ -1099,7 +1104,12 @@ function MatchGame({
           })}
         </div>
       </div>
-      <p className="mt-5 min-h-[2.5rem] text-center text-2xl font-bold text-brand-700">{msg}</p>
+      <p
+        data-zx-match-msg=""
+        className="mt-5 min-h-[2.5rem] text-center text-2xl font-bold text-brand-700"
+      >
+        {msg}
+      </p>
     </div>
   );
 }
@@ -1134,10 +1144,22 @@ function ActSpinner({
   };
 
   return (
-    <div className="mt-6 text-center">
+    /* The pool goes with it into the downloaded HTML. Only one item is ever
+       on screen, so an exported copy had nothing to spin between. */
+    <div
+      data-zx-spin={JSON.stringify(
+        items.map((t) => ({ emoji: t.emoji, label: t.label })),
+      )}
+      className="mt-6 text-center"
+    >
       <div className="mx-auto w-[24rem] rounded-[2rem] border-[6px] border-leaf bg-brand-50 p-6">
-        <span className="block text-8xl leading-tight">{at ? at.emoji : "🎲"}</span>
-        <span className="mt-2 block text-3xl font-bold text-ink">
+        <span data-zx-spin-face="" className="block text-8xl leading-tight">
+          {at ? at.emoji : "🎲"}
+        </span>
+        <span
+          data-zx-spin-label=""
+          className="mt-2 block text-3xl font-bold text-ink"
+        >
           {at ? at.label : "Tap the button!"}
         </span>
       </div>
@@ -1166,6 +1188,7 @@ function ActSpinner({
       <button
         onClick={spin}
         disabled={spinning}
+        data-zx-spin-go=""
         className="mt-5 rounded-2xl bg-brand-600 px-8 py-4 text-2xl font-bold text-white shadow-lg transition-all hover:bg-brand-700 active:scale-95 disabled:opacity-60"
       >
         🎲 Pick one

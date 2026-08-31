@@ -221,12 +221,113 @@ export function buildProjectedDeckHTML(
   }
   [].forEach.call(document.querySelectorAll('[data-zx-timer]'), wireTimer);
 
+  /* ── Tap a word, then tap its picture ─────────────────────────────────
+     Both columns came across in the markup; which word goes with which
+     picture did not, because the pairing lived in the deck's click handler.
+     The elements now name their pair, so the match can be checked here. */
+  function wireMatch(root){
+    if (root.hasAttribute('data-zx-live')) return;
+    root.setAttribute('data-zx-live', '');
+
+    var words = [].slice.call(root.querySelectorAll('[data-zx-match]'));
+    var faces = [].slice.call(root.querySelectorAll('[data-zx-face]'));
+    var msg = root.querySelector('[data-zx-match-msg]');
+    var picked = null, matched = [];
+    function say(t){ if (msg) msg.textContent = t; }
+    function isDone(label){ return matched.indexOf(label) > -1 };
+
+    function markDone(el){
+      el.className = el.className.replace(/border-dashed|border-silver|bg-white|border-sky/g, '')
+        + ' border-brand-600 bg-brand-50';
+    }
+
+    words.forEach(function(w){
+      w.addEventListener('click', function(e){
+        e.preventDefault(); e.stopPropagation();
+        var label = w.getAttribute('data-zx-match');
+        if (isDone(label)) return;
+        // Only one word is held at a time, the way the deck holds it.
+        words.forEach(function(o){
+          if (!isDone(o.getAttribute('data-zx-match')))
+            o.className = o.className.replace(/\sborder-sky|\sbg-\[#eaf4f7\]/g, '');
+        });
+        picked = label;
+        w.className += ' border-sky bg-[#eaf4f7]';
+        say('Now tap the picture for ' + label + '.');
+      });
+    });
+
+    faces.forEach(function(f){
+      f.addEventListener('click', function(e){
+        e.preventDefault(); e.stopPropagation();
+        var label = f.getAttribute('data-zx-face');
+        if (isDone(label)) return;
+        if (!picked) { say('Tap a word first.'); return; }
+        if (picked === label) {
+          matched.push(label);
+          markDone(f);
+          words.forEach(function(w){
+            if (w.getAttribute('data-zx-match') === label) markDone(w);
+          });
+          picked = null;
+          say(matched.length === faces.length
+            ? '\uD83C\uDF89 All matched! Well done.'
+            : '\uD83C\uDF89 Yes! That\'s a match.');
+        } else {
+          // Wobble, the same class the deck uses, then settle.
+          f.classList.add('anim-wiggle');
+          setTimeout(function(){ f.classList.remove('anim-wiggle'); }, 400);
+          say('Not that one — try again.');
+        }
+      });
+    });
+  }
+  [].forEach.call(document.querySelectorAll('[data-zx-match-game]'), wireMatch);
+
+  /* ── The spinner ──────────────────────────────────────────────────────
+     One item is ever on screen, so the pool travels with it as data. */
+  function wireSpinner(root){
+    if (root.hasAttribute('data-zx-live')) return;
+    root.setAttribute('data-zx-live', '');
+
+    var pool = [];
+    try { pool = JSON.parse(root.getAttribute('data-zx-spin') || '[]'); } catch (err) { pool = []; }
+    var face  = root.querySelector('[data-zx-spin-face]');
+    var label = root.querySelector('[data-zx-spin-label]');
+    var go    = root.querySelector('[data-zx-spin-go]');
+    if (!go || !face || !label || !pool.length) return;
+
+    var spinning = false;
+    go.addEventListener('click', function(e){
+      e.preventDefault(); e.stopPropagation();
+      if (spinning) return;
+      spinning = true;
+      go.style.opacity = '.6';
+      var ticks = 0;
+      // Ten flicks at 80ms, the same as the deck, so it reads as a spin
+      // rather than an answer appearing.
+      var id = setInterval(function(){
+        var pick = pool[Math.floor(Math.random() * pool.length)];
+        face.textContent = pick.emoji;
+        label.textContent = pick.label;
+        if (++ticks >= 10) {
+          clearInterval(id);
+          spinning = false;
+          go.style.opacity = '';
+        }
+      }, 80);
+    });
+  }
+  [].forEach.call(document.querySelectorAll('[data-zx-spin]'), wireSpinner);
+
   document.addEventListener('click', function(e){
     if (!e.target || !e.target.closest) return;
     var btn = e.target.closest('.zx-slide button');
     if (!btn) return;
-    // The timer wires its own buttons and has already handled this.
+    // These wire their own buttons and have already handled the tap.
     if (btn.closest('[data-zx-timer]')) return;
+    if (btn.closest('[data-zx-match-game]')) return;
+    if (btn.closest('[data-zx-spin]')) return;
 
     if (btn.hasAttribute('data-zx-reveal')) { reveal(btn); return; }
 
