@@ -1736,6 +1736,22 @@ function buildSequence(
               }}
             />
           )}
+          {/* The objective, on the slide that says what the topic means.
+              "What we're learning" closes the lesson, which a teacher asked
+              for — but by then it is a recap. A class should be told what
+              they are working towards while they are still learning it, and
+              this is the teacher's own wording from the plan, not a
+              paraphrase of it. */}
+          {w.learningObjective?.trim() && (
+            <div className="mt-5 rounded-[1.5rem] border-l-8 border-teal bg-brand-50 px-7 py-5 text-left">
+              <span className="block text-lg font-bold uppercase tracking-wider text-teal">
+                Our learning today
+              </span>
+              <span className="mt-1 block text-[1.9rem] font-semibold leading-snug text-ink">
+                {w.learningObjective.trim()}
+              </span>
+            </div>
+          )}
           <div className="mt-6 flex justify-center">
             <Picture
               url={pack?.bigIdea?.image}

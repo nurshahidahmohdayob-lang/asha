@@ -3109,7 +3109,11 @@ You are writing the TEACHING slides — the part the teacher actually teaches fr
 
 1. "keyIdeas": 3-5 picture tiles naming the things this lesson teaches — the emotions, the shapes, the materials, whatever ${focus} is made of. Each is one emoji plus a label of 1-3 words.
 
-2. "bigIdea": the whole idea said once, plainly, before any detail — a "title" (e.g. "What Are Feelings?") and one "explain" sentence a child would understand (e.g. "Feelings are how we feel inside.").
+2. "bigIdea": WHAT THE TOPIC MEANS, said once and plainly, before any detail. A class meeting "Global Citizens" needs to be told what a global citizen IS, in words they already know, or nothing that follows lands.
+   - "title": the question this slide answers, naming the topic — "What Is A Global Citizen?", "What Are Feelings?", "What Does Recycling Mean?"
+   - "explain": 1-2 sentences that DEFINE ${focus} for this age, with the thing itself named in the sentence — "A global citizen is someone who cares about people everywhere in the world, not just the people who live near them."
+   - A sentence that does not say what the thing IS has failed. "Global citizens are very important", "Today we are learning about global citizens" and "Global citizenship is an interesting topic" are all FAILURES: none of them tells a child what one is.
+   - Where the topic is a phrase built from ordinary words, say what those words mean together — the point is that a child could explain it to someone else afterwards.
 
 3. "teach": THE MOST IMPORTANT SECTION. One entry for EACH thing in keyIdeas — so 3-5 entries, in the same order. Each entry has:
    - "emoji": the big picture for that concept.
