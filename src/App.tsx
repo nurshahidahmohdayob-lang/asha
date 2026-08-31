@@ -3985,7 +3985,7 @@ const buildLessonPlanEditableHTML = (lp: any, title: string): string => {
       })
       .join("");
 
-    const rows = [["Curriculum Link", w?.strand]];
+    const rows = [["Curriculum Link", weekCurriculumLink(lp, w)]];
     const attachments = (w?.attachments || []).length
       ? `<div class="atts">${(w.attachments || [])
           .map(
@@ -4469,6 +4469,19 @@ const lessonPlanHasContent = (c: any): boolean => {
   );
 };
 
+/** What a week's Curriculum Link says.
+ *
+ *  For Life Competencies it is the term's — the two competencies and the two
+ *  values — whatever happens to be stored on the week. Stamping it at
+ *  generation was not enough: a plan written before that, or by one of the
+ *  other generators, still carried whatever the model had made up, and the
+ *  teacher had no way to tell which. Reading it from the term means every
+ *  plan is right the moment it is opened, old ones included.
+ *
+ *  Every other subject shows what its own teacher wrote. */
+const weekCurriculumLink = (plan: any, week: any): string =>
+  curriculumLinkForTerm(plan?.term, plan?.subject) || week?.strand || "";
+
 /** Is this saved project a lesson plan?
  *
  *  Its content decides, not the category it was filed under: plans saved
@@ -4646,7 +4659,7 @@ const buildLessonPlanShareHTML = (lp: any, title: string): string => {
         <table>
           ${weekRow("Topic", w?.topic)}
           ${weekRow("Learning Objective", w?.learningObjective)}
-          ${weekRow("Strand", w?.strand)}
+          ${weekRow("Strand", weekCurriculumLink(lp, w))}
           ${weekRow("Introduction", w?.introduction)}
           ${weekRow("Activities", w?.activities)}
           ${weekRow("Assessment", w?.assessment)}
@@ -38790,19 +38803,38 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                             {r.label}
                                           </td>
                                           <td className={cellCls}>
-                                            <textarea
-                                              value={
-                                                (week as any)[r.field] || ""
-                                              }
-                                              onChange={(e) =>
-                                                updateWeeklyBreakdown(
-                                                  idx,
-                                                  r.field,
-                                                  e.target.value,
-                                                )
-                                              }
-                                              className={taCls}
-                                            />
+                                            {/* The scheme of work decides this
+                                                for Life Competencies, so it is
+                                                shown rather than typed — the
+                                                whole point is that every week
+                                                of a term says the same thing.
+                                                Other subjects still edit it. */}
+                                            {r.field === "strand" &&
+                                            curriculumLinkForTerm(
+                                              lp?.term,
+                                              lp?.subject,
+                                            ) ? (
+                                              <div
+                                                className="px-2 py-1 text-[13px] font-semibold"
+                                                title="Set by the Life Competencies scheme of work for this term"
+                                              >
+                                                {weekCurriculumLink(lp, week)}
+                                              </div>
+                                            ) : (
+                                              <textarea
+                                                value={
+                                                  (week as any)[r.field] || ""
+                                                }
+                                                onChange={(e) =>
+                                                  updateWeeklyBreakdown(
+                                                    idx,
+                                                    r.field,
+                                                    e.target.value,
+                                                  )
+                                                }
+                                                className={taCls}
+                                              />
+                                            )}
                                           </td>
                                         </tr>
                                       ))}

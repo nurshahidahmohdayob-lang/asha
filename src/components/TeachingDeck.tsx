@@ -32,6 +32,7 @@ import {
 import {
   translateContent,
   translationLanguagesFor,
+  curriculumLinkForTerm,
 } from "../services/geminiService";
 import type {
   LessonActivityPack,
@@ -1637,7 +1638,18 @@ function buildSequence(
           {competencies.map((c) => (
             <TeachBadge key={c} icon={I.star} label={c} />
           ))}
-          {w.strand?.trim() && <TeachBadge icon={I.check} label={w.strand.trim()} />}
+          {/* For Life Competencies this is the term's, not whatever the week
+              happens to hold — the same reading the plan document uses, so a
+              slide and the plan behind it cannot disagree. */}
+          {(curriculumLinkForTerm(plan.term, plan.subject) || w.strand?.trim()) && (
+            <TeachBadge
+              icon={I.check}
+              label={
+                curriculumLinkForTerm(plan.term, plan.subject) ||
+                (w.strand || "").trim()
+              }
+            />
+          )}
         </div>
       </div>
     ),
