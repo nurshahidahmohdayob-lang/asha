@@ -3458,7 +3458,7 @@ import {
   suggestReflection,
   importLessonPlan,
   competenciesForTerm,
-  valueForTerm,
+  zeraValue as canonicalZeraValue,
   translateContent,
   translationLanguagesFor,
   relevelReadingPassage,
@@ -9182,7 +9182,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           ? {
               keyCompetencies:
                 competenciesForTerm(value).join("\n") || lp.keyCompetencies || "",
-              zeraValue: valueForTerm(value) || lp.zeraValue || "",
+              // The value is picked per lesson, not fixed by the term, so a
+              // term change leaves it alone — only the competencies follow.
+              zeraValue: canonicalZeraValue(lp.zeraValue),
             }
           : {};
 

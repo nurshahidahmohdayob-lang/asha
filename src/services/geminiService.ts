@@ -2271,6 +2271,7 @@ async function sessionPlanRange(
             successCriteria: { type: Type.ARRAY, items: { type: Type.STRING } },
             essentialQuestions: { type: Type.ARRAY, items: { type: Type.STRING } },
             keyCompetencies: { type: Type.ARRAY, items: { type: Type.STRING } },
+            zeraValue: { type: Type.STRING },
             portfolioEvidence: { type: Type.ARRAY, items: { type: Type.STRING } },
             weeklyBreakdown: {
               type: Type.ARRAY,
@@ -2394,6 +2395,7 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
       - "successCriteria": array of 2-4 short strings phrased as "I can..." statements (child-friendly)
       - "essentialQuestions": array of 4-6 short big-picture questions that frame the unit
       - "keyCompetencies": array of 6-10 short competency words/phrases developed across the unit (e.g. Self-awareness, Communication, Collaboration)
+      - "zeraValue": string — the ONE school value this unit lives out, chosen from exactly these six and spelled exactly as written: ${ZERAOS_VALUES.join(", ")}. Pick the one the unit's own work genuinely builds; do not offer a second, and never write a value outside this list.
       - "portfolioEvidence": array of 6-12 short suggested pieces of student evidence for a portfolio
       - "weeklyBreakdown": Array of exactly ${weekCount} objects, each with:
         - "week": number (1-${weekCount})
@@ -2431,6 +2433,7 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
             successCriteria: { type: Type.ARRAY, items: { type: Type.STRING } },
             essentialQuestions: { type: Type.ARRAY, items: { type: Type.STRING } },
             keyCompetencies: { type: Type.ARRAY, items: { type: Type.STRING } },
+            zeraValue: { type: Type.STRING },
             portfolioEvidence: { type: Type.ARRAY, items: { type: Type.STRING } },
             weeklyBreakdown: {
               type: Type.ARRAY,
@@ -2892,7 +2895,7 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
        model produced is kept only where the term is not in the table. */
     keyCompetencies:
       competenciesForTerm(term).join("\n") || str(parsed.keyCompetencies),
-    zeraValue: valueForTerm(term),
+    zeraValue: zeraValue(parsed.zeraValue),
     portfolioEvidence: str(parsed.portfolioEvidence),
     reflection: str(parsed.reflection),
     weeklyBreakdown: mapped,
@@ -3214,8 +3217,9 @@ async function generateLessonActivitiesDirect(
       `KEY COMPETENCIES FOR THIS PLAN: ${plan.keyCompetencies.trim()}`,
     // The term's own value, not a menu to choose from. It is the same for
     // every lesson this term — that is the point of it.
-    (plan.zeraValue?.trim() || valueForTerm(plan.term)) &&
-      `THIS TERM'S ZERAOS VALUE: ${plan.zeraValue?.trim() || valueForTerm(plan.term)}`,
+    zeraValue(plan.zeraValue)
+      ? `THIS LESSON'S ZERAOS VALUE: ${zeraValue(plan.zeraValue)}`
+      : `THE SCHOOL'S ZERAOS VALUES, one of which this lesson lives out: ${ZERAOS_VALUES.join(", ")}`,
     week.learningObjective && `LEARNING OBJECTIVE: ${week.learningObjective}`,
     week.introduction && `INTRODUCTION / DO NOW: ${week.introduction}`,
     week.activities && `ACTIVITIES: ${week.activities}`,
@@ -3572,9 +3576,14 @@ LABEL RULES: a label names the thing itself — "Happy", not "Happy Face". Do no
             label: g.label.trim(),
             how: g.how.trim(),
           }));
-      const termValue = plan.zeraValue?.trim() || valueForTerm(plan.term);
+      // Named on the plan, the deck must use that one. Otherwise it may pick,
+      // but only from the six.
+      const named = zeraValue(plan.zeraValue);
       const competencies = rows(parsed.growing?.competencies);
-      const values = termValue ? rows(parsed.growing?.values, [termValue]) : [];
+      const values = rows(
+        parsed.growing?.values,
+        named ? [named] : [...ZERAOS_VALUES],
+      ).slice(0, 1);
       return competencies.length || values.length ? { competencies, values } : undefined;
     })(),
     bigIdea: parsed.bigIdea?.explain?.trim()
@@ -4172,39 +4181,63 @@ async function groqGenerate(
  *  seconds for one of them, twice, across three models, is how a lesson plan
  *  took three minutes to read while every other model sat idle. Anything
  *  longer than a breath, move on: something else will answer sooner. */
-/** What each term is working on — the Key Competencies and the ZeraOS value,
- *  exactly as the Life Competencies app sets them.
+/** The Key Competencies each term develops, from the Life Competencies
+ *  scheme of work for 2026/2027.
  *
- *  A term's competencies and value are decided by the school, not by a lesson,
- *  so they are looked up rather than generated: two teachers writing plans for
- *  the same term must get the same ones, and a model asked to choose would
- *  give them different words for the same thing. This is the one place they
- *  are written down.
+ *  The same two every term across all six year groups — read off all 18 term
+ *  plans in that document, which agree exactly. That is what makes them
+ *  worth looking up rather than generating: asked to produce them, a model
+ *  gives two teachers planning the same term different words for the same
+ *  competency, which is the opposite of a shared framework.
  *
- *  Keyed on the term as it is written on the plan — "1", "2", "3". Anything
- *  else falls through and simply fills nothing.
- *
- *  EMPTY UNTIL THE SCHOOL'S OWN TABLE IS COPIED IN. While it is empty a plan
- *  keeps whatever a teacher types, and the lesson deck shows no value slide,
- *  because a value this school does not hold is worse in front of a class
- *  than no value at all. */
-export const TERM_FOCUS: Record<string, { competencies: string[]; value: string }> = {
-  // "1": { competencies: ["Communication", "Collaboration"], value: "Respect" },
-  // "2": { competencies: ["Critical Thinking"],              value: "Integrity" },
-  // "3": { competencies: ["Social Responsibilities"],        value: "Resilience" },
+ *  Keyed on the term as written on a plan — "1", "Term 1", "TERM 1" all read
+ *  the same. Anything else fills nothing rather than guessing. */
+const TERM_COMPETENCIES: Record<string, string[]> = {
+  "1": ["Communication", "Learning to Learn"],
+  "2": ["Collaboration", "Social Responsibility"],
+  "3": ["Critical Thinking", "Creative Thinking"],
 };
+
+/** The school's six values. The name is the list: Zealous, Excellence,
+ *  Resilience, Authenticity, Open-mindedness, Sustainability.
+ *
+ *  Unlike the competencies these are NOT fixed per term — the scheme of work
+ *  picks whichever one a particular lesson lives out, and all six appear
+ *  across every term. So a lesson chooses from this list, and may not name
+ *  anything outside it: a value this school does not hold is worse in front
+ *  of a class than no value at all. */
+export const ZERAOS_VALUES = [
+  "Zealous",
+  "Excellence",
+  "Resilience",
+  "Authenticity",
+  "Open-mindedness",
+  "Sustainability",
+] as const;
 
 /** The term a plan is for, however it is written — "1", "Term 1", "TERM 1". */
 export const termKey = (term?: string | null): string =>
   (/(\d+)/.exec(String(term ?? "")) || [])[1] || "";
 
-/** The competencies this term develops, or none if the table is not filled in. */
+/** The competencies this term develops. */
 export const competenciesForTerm = (term?: string | null): string[] =>
-  TERM_FOCUS[termKey(term)]?.competencies || [];
+  TERM_COMPETENCIES[termKey(term)] || [];
 
-/** This term's ZeraOS value, or "" if the table is not filled in. */
-export const valueForTerm = (term?: string | null): string =>
-  TERM_FOCUS[termKey(term)]?.value || "";
+/** Snap a value to the school's own spelling, or reject it.
+ *
+ *  Returns "" for anything that is not one of the six — including a
+ *  competency handed over by mistake, which is what "Collaboration" and
+ *  "Critical Thinking" are where they appear in the source document. */
+export const zeraValue = (value?: string | null): string => {
+  const want = String(value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "");
+  if (!want) return "";
+  return (
+    ZERAOS_VALUES.find(
+      (v) => v.toLowerCase().replace(/[\s-]+/g, "") === want,
+    ) || ""
+  );
+};
+
 
 
 const RATE_LIMIT_PATIENCE_MS = 3000;
