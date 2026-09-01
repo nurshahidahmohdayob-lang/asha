@@ -4302,6 +4302,53 @@ const LESSON_DURATIONS = [1, 2, 3, 4, 5, 6].map((n) => ({
   label: `${n} period${n > 1 ? "s" : ""} · ${n * PERIOD_MINUTES} mins`,
 }));
 
+/** The four parts of the school a member of staff belongs to.
+ *
+ *  One list, so the directory's headings, its filter chips and the picker on
+ *  a staff record can never offer three different sets of divisions. Order is
+ *  the order they are shown in. */
+const SCHOOL_DIVISIONS = [
+  "Home School",
+  "Cambridge",
+  "Zera Plus",
+  "Admin",
+] as const;
+
+/** The division on a record from the staff API.
+ *
+ *  Read across the shapes an API of this kind uses — a plain string, a
+ *  snake_case name, or a nested object — because guessing one and getting it
+ *  wrong looks exactly like the field not being sent at all, and silently
+ *  files the whole school under "Not set". Matched to the school's own
+ *  spelling, so "cambridge" and "ZERA PLUS" both land correctly. */
+const divisionFromApi = (staff: any): string => {
+  const raw =
+    staff?.division?.name ??
+    staff?.division ??
+    staff?.division_name ??
+    staff?.divisionName ??
+    staff?.department ??
+    "";
+  const want = String(raw).trim().toLowerCase();
+  if (!want) return "";
+  return SCHOOL_DIVISIONS.find((d) => d.toLowerCase() === want) || String(raw).trim();
+};
+
+/** Staff with no division yet are shown under this rather than dropped — a
+ *  person missing from the directory is worse than an untidy heading, and it
+ *  is the only way anyone would notice one needs setting. */
+const NO_DIVISION = "Not set";
+
+/** Match a stored division to the school's own spelling, so a record synced
+ *  from elsewhere as "cambridge" or "ZERA PLUS" still files correctly. */
+const divisionOf = (teacher: any): string => {
+  const raw = String(teacher?.division ?? "").trim().toLowerCase();
+  if (!raw) return NO_DIVISION;
+  return (
+    SCHOOL_DIVISIONS.find((d) => d.toLowerCase() === raw) || NO_DIVISION
+  );
+};
+
 /** The year groups a lesson plan can be written for.
  *
  *  One list, because the tracker matches a submission's year group against
@@ -14486,6 +14533,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         t.role?.toLowerCase().includes(q) ||
         t.email?.toLowerCase().includes(q) ||
         t.phone?.toLowerCase().includes(q) ||
+        // Typing "cambridge" should find that division's staff.
+        divisionOf(t).toLowerCase().includes(q) ||
         Object.keys(subjectsForTeacher(t)).some((s) =>
           s.toLowerCase().includes(q),
         ),
@@ -14798,6 +14847,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     jobType: string;
     nricName: string;
     preferredName: string;
+    division: string;
     subjects: string[];
   }>({
     name: "",
@@ -14809,6 +14859,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     jobType: "full-time",
     nricName: "",
     preferredName: "",
+    division: "",
     subjects: [],
   });
 
@@ -15793,6 +15844,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           email: s.email || "",
           phone: s.phone || "",
           jobType: s.job_type || "",
+          /* The staff record is the authority on which division someone is
+             in, so a sync takes it. Where the API has not set one, whatever
+             was chosen here is kept rather than blanked — a sync must not
+             quietly undo the directory. */
+          division:
+            divisionFromApi(s) ||
+            (existingIdx !== -1 ? updatedTeachers[existingIdx].division || "" : ""),
           status: s.status || "active",
           subjects:
             existingIdx !== -1
@@ -22081,6 +22139,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         jobType: "full-time",
                         nricName: "",
                         preferredName: "",
+                        division: "",
                         subjects: [],
                       });
                       setAddTeacherModalOpen(true);
@@ -24593,6 +24652,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         jobType: "full-time",
                         nricName: "",
                         preferredName: "",
+                        division: "",
                         subjects: [],
                       });
                       setAddTeacherModalOpen(true);
@@ -24640,7 +24700,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {/* Shelved by division. A flat grid of every member of staff is
+                  a list you read all of to find one person; the divisions are
+                  how the school is actually arranged. */}
+              <div className="space-y-10">
                 {(() => {
                   const activeStaff = getActiveStaffList(teachers);
                   const filtered = activeStaff.filter(matchesTeacherSearch);
@@ -24665,7 +24728,36 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     );
                   }
 
-                  return filtered.map((teacher) => (
+                  /* Divisions in the school's own order, then anyone whose
+                     division is not set — shown, not dropped, because that is
+                     the only way anyone notices one needs setting. */
+                  const groups = [...SCHOOL_DIVISIONS, NO_DIVISION]
+                    .map((division) => ({
+                      division,
+                      staff: filtered.filter((t: any) => divisionOf(t) === division),
+                    }))
+                    .filter((g) => g.staff.length > 0);
+
+                  return groups.map(({ division, staff }) => (
+                   <section key={division} className="space-y-5">
+                    <div className="flex items-center gap-3">
+                      <span
+                        className={cn(
+                          "px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-widest whitespace-nowrap",
+                          division === NO_DIVISION
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-[#064E3B] text-white",
+                        )}
+                      >
+                        {division}
+                      </span>
+                      <span className="text-[10px] font-black uppercase tracking-widest text-[#064E3B]/40 whitespace-nowrap">
+                        {staff.length} {staff.length === 1 ? "person" : "people"}
+                      </span>
+                      <div className="h-px flex-1 bg-[#064E3B]/10" />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {staff.map((teacher: any) => (
                     <div
                       key={teacher.id}
                       className="p-6 rounded-2xl border-2 border-[#FEFCE8] hover:border-[#FACC15]/30 transition-all flex flex-col gap-4"
@@ -24684,6 +24776,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                 <p className="text-[9px] font-black bg-[#F0FDF4] px-1.5 py-0.5 rounded text-[#059669] uppercase tracking-widest">
                                   {teacher.role}
                                 </p>
+                                {divisionOf(teacher) !== NO_DIVISION && (
+                                  <span className="px-2 py-0.5 rounded-full bg-[#F0FDF4] border border-[#D1FAE5] text-[9px] font-black uppercase tracking-wider text-[#064E3B]/70">
+                                    {divisionOf(teacher)}
+                                  </span>
+                                )}
                                 {teacher.jobType && (
                                   <p className="text-[9px] font-black bg-blue-50 px-1.5 py-0.5 rounded text-blue-600 uppercase tracking-widest">
                                     {teacher.jobType}
@@ -24840,6 +24937,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         );
                       })()}
                     </div>
+                    ))}
+                    </div>
+                   </section>
                   ));
                 })()}
               </div>
@@ -42561,6 +42661,28 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   </div>
                   <div>
                     <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">
+                      Division
+                    </label>
+                    <select
+                      value={newTeacherForm.division}
+                      onChange={(e) =>
+                        setNewTeacherForm({
+                          ...newTeacherForm,
+                          division: e.target.value,
+                        })
+                      }
+                      className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-[#FACC15] outline-none font-bold text-sm cursor-pointer"
+                    >
+                      <option value="">Not set</option>
+                      {SCHOOL_DIVISIONS.map((d) => (
+                        <option key={d} value={d}>
+                          {d}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black uppercase text-[#064E3B]/40 block mb-1">
                       Max Periods per Week
                     </label>
                     <input
@@ -42687,6 +42809,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       jobType: newTeacherForm.jobType || "",
                       nricName: cleanVal(newTeacherForm.nricName),
                       preferredName: cleanVal(newTeacherForm.preferredName),
+                      division: newTeacherForm.division || "",
                     },
                   ]);
                   setAddTeacherModalOpen(false);
