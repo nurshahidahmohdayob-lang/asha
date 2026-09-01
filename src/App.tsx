@@ -6655,6 +6655,25 @@ export default function App() {
       }));
   }, [shownSubmissions]);
 
+  /** The term week each of this teacher's plans was submitted for.
+   *
+   *  The card in her folder showed the plan's OWN week numbering, which
+   *  starts at one, while the review queue showed the term week she picked.
+   *  Both were true and they disagreed. This is the submitted week, so a
+   *  plan sent before today reads correctly without being resubmitted. */
+  const submittedWeekByProject = useMemo(() => {
+    const byProject = new Map<string, string>();
+    for (const sub of mySubmittedPlans) {
+      const id =
+        sub?.sourceProjectId ||
+        (typeof sub?.id === "string" && sub.id.startsWith("sub_")
+          ? sub.id.slice(4)
+          : "");
+      if (id && sub?.weekId) byProject.set(String(id), String(sub.weekId));
+    }
+    return byProject;
+  }, [mySubmittedPlans]);
+
   /** The submission this plan was filed as, if it has been sent.
    *
    *  Two of these are certain: the id is keyed to the project, or the record
@@ -10890,6 +10909,32 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
    *  Plans made before the sign-out leak was fixed still carry the previous
    *  teacher's name, and that name is what a Head of Department sees on the
    *  paper. The account is the only trustworthy answer to who submitted it. */
+  /** Number a one-week plan for the term week it is being submitted under.
+   *
+   *  Two different weeks were on screen at once. The submission carries the
+   *  term week the teacher picked — Week 2 — while the plan document numbers
+   *  its own rows from one, so the card in her folder said Week 1. Both were
+   *  "correct" and they disagreed, which is worse than either being wrong.
+   *
+   *  Only a single-week plan is renumbered: a whole-term plan's rows are
+   *  weeks 1..15 of the term itself and renumbering those would be nonsense.
+   *  Returns the original object when there is nothing to change, so a plan
+   *  is not needlessly rewritten. */
+  const alignPlanWeekToSubmission = (c: any, weekId: any) => {
+    const want = Number(weekId);
+    const weeks = c?.lessonPlan?.weeklyBreakdown;
+    if (!Array.isArray(weeks) || weeks.length !== 1) return c;
+    if (!Number.isFinite(want) || want <= 0) return c;
+    if (Number(weeks[0]?.week) === want) return c;
+    return {
+      ...c,
+      lessonPlan: {
+        ...c.lessonPlan,
+        weeklyBreakdown: [{ ...weeks[0], week: want }],
+      },
+    };
+  };
+
   const signPlanForSubmission = (c: any) =>
     c?.lessonPlan
       ? {
@@ -11099,11 +11144,18 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       try {
         const previous =
           submittedProjects.find((p: any) => p.id === revisionTargetId) || {};
+        // The plan is numbered for the week it is going in under, so the card
+        // and the review queue cannot disagree about which week it is.
+        const forWeek = alignPlanWeekToSubmission(
+          content,
+          selectedWeekForSubmission,
+        );
+        if (forWeek !== content) setContent(forWeek);
         await store.patch("submitted_plans", revisionTargetId, {
-          content: signPlanForSubmission(content),
+          content: signPlanForSubmission(forWeek),
           timestamp: Date.now(),
           weekId: selectedWeekForSubmission,
-          title: buildSubmissionTitle(content, selectedWeekForSubmission),
+          title: buildSubmissionTitle(forWeek, selectedWeekForSubmission),
           ...submissionIdentity(),
           reviewStage: "pending_hod",
           reviewNote: "",
@@ -11150,6 +11202,16 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       : () => {};
     try {
       if (content) {
+        // Numbered for the week it is going in under, so the plan document,
+        // the card in the teacher's folder and the review queue all say the
+        // same week. They did not: the submission carried the term week she
+        // picked while the plan numbered its own rows from one.
+        const forWeek = alignPlanWeekToSubmission(
+          content,
+          selectedWeekForSubmission,
+        );
+        if (forWeek !== content) setContent(forWeek);
+
         // Straight into this teacher's own folder in the submissions area.
         const folderId = await ensureTeacherFolder(teacherName);
         // We create a new entry in submitted_plans to avoid being overwritten by teacher saves
@@ -11157,13 +11219,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           userId: user.uid,
           folderId,
           timestamp: Date.now(),
-          content: signPlanForSubmission(content),
+          content: signPlanForSubmission(forWeek),
           weekId: selectedWeekForSubmission,
           // A plan is a lesson plan however the teacher arrived at it. Taking
           // this from workspaceMode filed submissions under whatever mode was
           // last set, and the reviewer's lesson-plan filters then skipped them.
-          category: content?.lessonPlan ? "lesson-plan" : workspaceMode,
-          title: buildSubmissionTitle(content, selectedWeekForSubmission),
+          category: forWeek?.lessonPlan ? "lesson-plan" : workspaceMode,
+          title: buildSubmissionTitle(forWeek, selectedWeekForSubmission),
           status: "submitted",
           ...submissionIdentity(),
           reviewStage: "pending_hod",
@@ -11185,13 +11247,19 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         // path simply never did.
         const sourceId =
           currentProjectId ||
-          (await persistLessonPlanSilently(content, currentProjectId));
+          (await persistLessonPlanSilently(forWeek, currentProjectId));
         if (!sourceId) throw new Error("Could not save the plan before sending it.");
 
         await store.put("submitted_plans", `sub_${sourceId}`, {
           ...submissionData,
           sourceProjectId: sourceId,
         });
+
+        // The saved plan carries the same number, or the card would keep
+        // showing the week it was written as rather than the week it is for.
+        if (forWeek !== content) {
+          await persistLessonPlanSilently(forWeek, sourceId);
+        }
 
         // And file it as submitted, so the card moves out of To Submit and the
         // teacher can see it went. Without this the plan looked unsent however
@@ -36965,6 +37033,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         {lp?.class || p?.content?.gradeLevel || "No year group"}
                       </span>
                       <span className={chip}>Term {lp?.term || "-"}</span>
+                      {submittedWeekByProject.get(p.id) && (
+                        <span className={chip}>
+                          Week {submittedWeekByProject.get(p.id)}
+                        </span>
+                      )}
                       <span className={chip}>
                         {weeks.length} week{weeks.length === 1 ? "" : "s"}
                       </span>
@@ -36986,7 +37059,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             {weeks.slice(0, 3).map((w: any, i: number) => (
                               <tr key={i} className="border-b border-[#E5E7EB]">
                                 <td className="px-2 py-1.5 font-black bg-[#F0FDF4] w-[34%] align-top">
-                                  {w?.unit || `Week ${w?.week ?? i + 1}`}
+                                  {/* A one-week plan is FOR the week it went
+                                      in under, not week one of itself. */}
+                                  {w?.unit ||
+                                    `Week ${
+                                      (weeks.length === 1 &&
+                                        submittedWeekByProject.get(p.id)) ||
+                                      w?.week ||
+                                      i + 1
+                                    }`}
                                 </td>
                                 <td className="px-2 py-1.5 align-top truncate">
                                   {w?.topic || "—"}
