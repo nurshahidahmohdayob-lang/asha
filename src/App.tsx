@@ -5184,6 +5184,19 @@ const TEACHER_ALIASES: { full: string; aliases: string[] }[] = [
     ],
   },
   {
+    // Commun signs her in as "JOREEN KONG" while the app knew her as "Ms Kong
+    // Yoke Lan" — an English name and a Chinese one for one person, which no
+    // amount of letter-matching connects. She had a folder under each.
+    full: "JOREEN KONG",
+    aliases: [
+      "JOREEN",
+      "JOREEN KONG",
+      "KONG YOKE LAN",
+      "MS KONG YOKE LAN",
+      "JOREEN.K",
+    ],
+  },
+  {
     // She is in the directory twice — once under the classroom name "IERA"
     // and once as "NUR HAZIRAH" — and signs in with her full name. Letters
     // alone cannot connect IERA to either of the others, so it is pinned
