@@ -12030,8 +12030,19 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         ).map((n) => ensureTeacherFolder(n as string)),
       );
       await Promise.all(
-        valid.map((p: any) => {
+        valid.map(async (p: any) => {
           const wk = weekForPlan(p.content, filedWeekId(p.id));
+          // Numbered for the week it goes in under. This path did not do it,
+          // which is the one most teachers use — so a plan submitted for
+          // Week 2 still said Week 1 on its card and in its own document.
+          const forWeek = alignPlanWeekToSubmission(p.content, wk);
+          if (forWeek !== p.content) {
+            await store
+              .patch("projects", p.id, { content: forWeek })
+              .catch((err: any) =>
+                console.warn("Could not renumber the saved plan:", err),
+              );
+          }
           // Deterministic id keyed to the source project so re-submitting
           // the same plan updates its record instead of creating duplicates.
           return store.put("submitted_plans", `sub_${p.id}`, {
@@ -12039,10 +12050,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             folderId: teacherFolderId(p.teacherName || teacherName),
             sourceProjectId: p.id,
             timestamp: Date.now(),
-            content: signPlanForSubmission(p.content),
+            content: signPlanForSubmission(forWeek),
             weekId: wk,
             category: p.category || "lesson-plan",
-            title: buildSubmissionTitle(p.content, wk),
+            title: buildSubmissionTitle(forWeek, wk),
             status: "submitted",
             teacherId: findMyTeacherRecord()?.id || "",
             subject:
@@ -12077,17 +12088,25 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const submitPlanToAdmin = async (project: any) => {
     if (!user || !project?.content) return;
     const wk = weekForPlan(project.content, filedWeekId(project.id));
+    const forWeek = alignPlanWeekToSubmission(project.content, wk);
     try {
       await ensureTeacherFolder(project.teacherName || teacherName);
+      if (forWeek !== project.content) {
+        await store
+          .patch("projects", project.id, { content: forWeek })
+          .catch((err: any) =>
+            console.warn("Could not renumber the saved plan:", err),
+          );
+      }
       await store.put("submitted_plans", `sub_${project.id}`, {
         userId: user.uid,
         folderId: teacherFolderId(project.teacherName || teacherName),
         sourceProjectId: project.id,
         timestamp: Date.now(),
-        content: signPlanForSubmission(project.content),
+        content: signPlanForSubmission(forWeek),
         weekId: wk,
         category: project.category || "lesson-plan",
-        title: buildSubmissionTitle(project.content, wk),
+        title: buildSubmissionTitle(forWeek, wk),
         status: "submitted",
         teacherId: findMyTeacherRecord()?.id || "",
         subject:
