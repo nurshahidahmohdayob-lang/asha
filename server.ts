@@ -7,6 +7,8 @@ import http from "http";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { mountDataApi } from "./server/data-api";
+import { mountCommunSso, completeHandoff } from "./server/commun-sso";
+import { createDriver } from "./server/db-driver";
 import nodemailer from "nodemailer";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
@@ -42,6 +44,11 @@ async function startServer() {
   } catch (e) {
     console.warn("[data-api] not mounted:", (e as any)?.message || e);
   }
+
+  // Commun Connected Systems SSO. Registers GET /auth/callback — the URL the
+  // school portal is configured to redirect to — and /api/sso/status. Vercel
+  // serves the identical handler from api/auth/callback.ts in production.
+  mountCommunSso(app);
 
   // API Route for AI Generation (Server-side to protect keys)
   app.post("/api/ai/generate", async (req, res) => {
@@ -919,6 +926,10 @@ async function startServer() {
   // JTI List to prevent ticket replays
   const seenJtis = new Set<string>();
 
+  // The simulator opens its session through the real handoff, which needs the
+  // same database handle that guards single use there.
+  const { driver: ssoDriver } = createDriver();
+
   // In-memory SSO event log
   const ssoLogs: any[] = [];
   function logSso(status: 'success' | 'failed' | 'info', message: string, details?: any) {
@@ -1152,9 +1163,27 @@ async function startServer() {
         matchedOrProvisionedUser
       });
 
-      // Redirect browser back to home with the sso_user details so client React can active the authenticated state!
-      const userPayloadStr = Buffer.from(JSON.stringify(matchedOrProvisionedUser)).toString('base64');
-      res.redirect(`/?sso_user=${userPayloadStr}`);
+      // 6. Open the session through the SAME code the real handoff uses, with
+      // only the signature check swapped for this simulator's own key. The
+      // ticket is already verified above, so `verify` here just hands the
+      // claims on — everything after it (single use, shadow-user matching,
+      // minting the Firebase token) is the production path, which is the only
+      // reason simulating it is worth anything.
+      //
+      // It used to redirect with the profile base64'd into the query string.
+      // The client believed that string, so anyone could type themselves a
+      // session — and it carried no Firebase token, so the session it granted
+      // could not read or write a single row anyway.
+      completeHandoff(ticket, ssoDriver, { verify: async () => payload })
+        .then(({ customToken }) => {
+          res.redirect(`/#sso_token=${encodeURIComponent(customToken)}`);
+        })
+        .catch((err: any) => {
+          const msg = err?.message || String(err);
+          logSso('failed', `SSO session could not be opened: ${msg}`, { error: msg });
+          res.redirect(`/?sso_error=${encodeURIComponent("verification_failed")}`);
+        });
+      return;
 
     } catch (err: any) {
       const errMsg = err.message || "Cryptographic verification failed";

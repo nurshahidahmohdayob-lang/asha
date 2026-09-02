@@ -35,6 +35,14 @@ export interface DbDriver {
   list(args: ListArgs): Promise<any[]>;
   get(table: string, idCol: string, id: string): Promise<any | null>;
   upsert(table: string, idCol: string, record: Record<string, any>): Promise<void>;
+  /** Insert a row only if its primary key is not already taken, in ONE
+   *  statement. Returns false when the key was already there.
+   *
+   *  A read-then-write cannot answer that question honestly: two requests can
+   *  both read "absent" before either writes. The SSO ticket guard is exactly
+   *  that race — the whole point of it is that a replayed ticket must lose —
+   *  so it needs the database to decide, not the server. */
+  insertUnique(table: string, record: Record<string, any>): Promise<boolean>;
   update(
     table: string,
     idCol: string,
@@ -140,6 +148,19 @@ class MysqlDriver implements DbDriver {
     );
   }
 
+  async insertUnique(table: string, record: Record<string, any>): Promise<boolean> {
+    const row = this.encode(record);
+    const cols = Object.keys(row);
+    // "insert ignore" swallows the duplicate-key error and reports zero rows
+    // affected, which is the answer we want without a second round trip.
+    const [result]: any = await this.pool.query(
+      `insert ignore into ${this.id(table)} (${cols.map((c) => this.id(c)).join(",")}) ` +
+        `values (${cols.map(() => "?").join(",")})`,
+      cols.map((c) => row[c]),
+    );
+    return Number(result?.affectedRows) > 0;
+  }
+
   async update(
     table: string,
     idCol: string,
@@ -217,6 +238,15 @@ class SupabaseDriver implements DbDriver {
   async upsert(table: string, _idCol: string, record: Record<string, any>): Promise<void> {
     const { error } = await this.sb.from(table).upsert(record);
     if (error) throw error;
+  }
+
+  async insertUnique(table: string, record: Record<string, any>): Promise<boolean> {
+    const { error } = await this.sb.from(table).insert(record);
+    // 23505 is Postgres' unique_violation: the key was already taken, which is
+    // an answer rather than a failure. Anything else is a real error.
+    if (error && (error as any).code === "23505") return false;
+    if (error) throw error;
+    return true;
   }
 
   async update(

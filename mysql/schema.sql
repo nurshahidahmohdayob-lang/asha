@@ -132,3 +132,15 @@ create table if not exists `professional_development` (
 -- What that DOES mean is that the `sha` MySQL account is the whole boundary.
 -- Anyone holding it can read and write every teacher's work, so it belongs on
 -- the server and nowhere else — never in a browser bundle, never in a repo.
+
+-- ── Commun SSO: the single-use ticket guard ──────────────────────────────
+-- The primary key IS the guard. server/commun-sso.ts uses `insert ignore` and
+-- reads zero affected rows as "this ticket has already been used", so a replay
+-- racing the original cannot slip between a read and a write.
+-- Sweep with: delete from sso_used_tickets where expires_at < now();
+create table if not exists sso_used_tickets (
+  jti        varchar(255) primary key,
+  used_at    datetime not null default current_timestamp,
+  expires_at datetime not null,
+  index sso_used_tickets_expires_idx (expires_at)
+);

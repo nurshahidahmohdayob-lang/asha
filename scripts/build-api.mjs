@@ -42,3 +42,20 @@ await build({
 });
 
 console.log("✓ Bundled api/_lib/data-api.js");
+
+// And the SSO module. api/auth/callback.ts is the URL Commun redirects a
+// teacher's browser to; it drives the very same handler the dev server mounts,
+// so ticket verification and the single-use guard cannot differ between them.
+await build({
+  entryPoints: ["server/commun-sso.ts"],
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "node18",
+  outfile: "api/_lib/commun-sso.js",
+  banner: {
+    js: "import { createRequire as __vcr } from 'module'; const require = __vcr(import.meta.url);",
+  },
+});
+
+console.log("\u2713 Bundled api/_lib/commun-sso.js");

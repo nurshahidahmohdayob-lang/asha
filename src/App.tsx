@@ -3413,6 +3413,8 @@ import {
   getAuth,
   onAuthStateChanged,
   signInWithEmailAndPassword,
+  signInWithCustomToken,
+  getIdTokenResult,
   createUserWithEmailAndPassword,
   signOut,
   updateProfile,
@@ -3530,6 +3532,27 @@ const ADMIN_EMAILS = [
 const isAdminEmail = (email?: string | null): boolean => {
   const e = (email || "").trim().toLowerCase();
   return ADMIN_EMAILS.includes(e);
+};
+
+/** The signed-in teacher's address, whichever way they signed in.
+ *
+ *  Email/password accounts carry it on the Auth profile. An account opened by
+ *  a Commun SSO handoff does not — it was created from a custom token, which
+ *  Firebase does not attach an address to — so it travels as a claim on the ID
+ *  token instead. The server reads it the same way in server/data-api.ts. */
+const ssoAwareEmail = async (
+  fbUser: FirebaseUser | null,
+): Promise<string | null> => {
+  if (!fbUser) return null;
+  if (fbUser.email) return fbUser.email;
+  try {
+    const claims = (await getIdTokenResult(fbUser)).claims as Record<string, any>;
+    return typeof claims.email === "string" ? claims.email : null;
+  } catch {
+    // A network blip here must not be the reason someone cannot sign in; the
+    // stored users row carries the address too.
+    return null;
+  }
 };
 
 // Staff who have left. Removing someone from the roster stops the app naming
@@ -8832,49 +8855,93 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     setCurrentView("home");
   };
 
+  /* ── Arriving from the Commun school portal ────────────────────────────
+     A teacher who clicks this app inside Commun lands on /auth/callback with
+     a single-use ticket. The server verifies it against Commun's published
+     keys and sends them here holding a Firebase sign-in token, in the URL
+     FRAGMENT — a fragment never reaches a server and never lands in an access
+     log, unlike a query string.
+
+     Trading it for a real session is the whole point: every read and write in
+     this app goes out with a Firebase ID token and the server pins ownership
+     to it, so an SSO arrival that only *looked* signed in could not open a
+     single lesson plan. Once this resolves, onAuthStateChanged below runs and
+     the teacher is an ordinary signed-in teacher from there on.
+
+     The token is stripped from the URL before it is spent, so a refresh or a
+     shared link cannot replay it. */
+  const [ssoError, setSsoError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const failure = new URLSearchParams(window.location.search).get("sso_error");
+    if (failure) {
+      setSsoError(
+        {
+          missing_ticket:
+            "That sign-in link arrived without a ticket. Open the app from the Commun portal again.",
+          ticket_expired:
+            "That sign-in link had expired — they are only good for about a minute. Open the app from the Commun portal again.",
+          ticket_already_used:
+            "That sign-in link has already been used. Sign-in links work once — open the app from the Commun portal again.",
+          ticket_invalid:
+            "That sign-in link could not be verified. Open the app from the Commun portal again, and tell your administrator if it keeps happening.",
+          account_disabled:
+            "Commun reports this account as disabled. Please ask your school administrator to re-enable it.",
+          // The two below are this app's fault, not the teacher's, and no
+          // amount of clicking again will fix either — so they say so rather
+          // than sending someone round the loop a third time.
+          guard_unavailable:
+            "Single sign-on is not finished being set up on this site (its sign-in ledger is missing). Please tell your administrator — signing in with your email below still works.",
+          not_configured:
+            "Single sign-on is not configured on this site yet. Please tell your administrator — signing in with your email below still works.",
+          school_unreachable:
+            "The Commun school portal could not be reached to verify your sign-in. Please try again in a moment.",
+        }[failure] ||
+          "Single sign-on could not be completed. Please open the app from the Commun portal again, or sign in with your email below.",
+      );
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
+  const [ssoSigningIn, setSsoSigningIn] = useState(() =>
+    window.location.hash.includes("sso_token="),
+  );
+
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.hash.slice(1)).get("sso_token");
+    if (!token) return;
+
+    // Cleared first, not last. If the exchange throws, the token must already
+    // be out of the address bar rather than sitting there to be re-sent.
+    window.history.replaceState({}, document.title, window.location.pathname);
+
+    signInWithCustomToken(auth, token)
+      .then(() => setSsoError(null))
+      .catch((err) => {
+        console.error("SSO sign-in exchange failed", err);
+        setSsoError(
+          "Single sign-on could not be completed. Please open the app from the Commun portal again, or sign in with your email below.",
+        );
+      })
+      .finally(() => setSsoSigningIn(false));
+  }, []);
+
   // Auth Listener
   useEffect(() => {
-    // Immediate check for incoming SSO redirected user payload override
-    const params = new URLSearchParams(window.location.search);
-    if (params.has("sso_user")) {
-      try {
-        const ssoStr = params.get("sso_user");
-        if (ssoStr) {
-          const rawUser = JSON.parse(atob(ssoStr));
-          const ssoFakeFbUser: any = {
-            uid: rawUser.sub,
-            email: rawUser.email,
-            displayName: `${rawUser.name.first_name} ${rawUser.name.last_name}`,
-            emailVerified: true,
-            isSsoUser: true,
-            ssoProfile: rawUser
-          };
-          setUser(ssoFakeFbUser);
-          setTeacherName(`${rawUser.name.first_name} ${rawUser.name.last_name}`);
-          // SSO users are regular educators in their own private space —
-          // admin (which can see all teachers' submissions) is granted only
-          // to the designated admin emails, same as the normal login path.
-          setUserRoles(
-            isAdminEmail(rawUser.email)
-              ? ["admin", "educator"]
-              : ["educator"],
-          );
-          setAuthLoading(false);
-          
-          window.history.replaceState({}, document.title, window.location.pathname);
-          return;
-        }
-      } catch (err) {
-        console.error("SSO user payload parser error", err);
-      }
-    }
-
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       setUser(fbUser);
       if (fbUser) {
+        // An account created from an SSO handoff has no address of its own —
+        // Commun holds it, and it reaches us as a claim on the sign-in token
+        // rather than on the Auth profile. Everything below decides admin from
+        // the address, so reading only fbUser.email would have demoted an
+        // admin the moment they arrived through the portal, and then WRITTEN
+        // that demotion back to the database a few lines down.
+        const emailOf = await ssoAwareEmail(fbUser);
+
         // Immediate fallback from Auth profile
         const fallbackName =
-          fbUser.displayName || fbUser.email?.split("@")[0] || "Educator";
+          fbUser.displayName || emailOf?.split("@")[0] || "Educator";
         setTeacherName(fallbackName);
 
         // Fetch teacher name from Firestore profile
@@ -8885,7 +8952,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           // The external schools API is deliberately NOT consulted for admin:
           // it can return role "admin" for accounts outside the allowlist,
           // which would defeat the restriction to ADMIN_EMAILS.
-          const isAuthorizedObj = isAdminEmail(fbUser.email);
+          const isAuthorizedObj = isAdminEmail(emailOf || userDoc?.email);
 
           if (userDoc) {
             const data = userDoc;
@@ -8947,7 +9014,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             console.error("Error fetching user profile:", err);
           }
 
-          if (isAdminEmail(fbUser.email)) {
+          if (isAdminEmail(emailOf)) {
             setUserRoles(["admin", "educator"]);
           } else {
             setUserRoles(["educator"]);
@@ -9785,6 +9852,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       subject: content?.lessonPlan?.subject || subject,
       class: content?.lessonPlan?.class || yearGroup,
       overallTopic: content?.lessonPlan?.overallTopic || week.topic || "",
+      // The deck names the term's competencies and values, so it has to be
+      // told them. Left out, the slide had nothing to name and never
+      // appeared — which the type checker was pointing at all along.
+      term: content?.lessonPlan?.term || "",
+      keyCompetencies: content?.lessonPlan?.keyCompetencies || "",
+      zeraValue: content?.lessonPlan?.zeraValue || "",
     };
     const aiCtx = {
       yearGroup: content?.lessonPlan?.class || yearGroup,
@@ -10274,6 +10347,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             </p>
           )}
 
+          {/* A handoff from the Commun portal that did not complete. Separate
+              from authError so it survives the teacher then typing their
+              address here, which is exactly what they are being told to do. */}
+          {ssoError && (
+            <p className="text-amber-800 text-sm font-bold text-center px-4 bg-amber-50 py-2 rounded-xl border border-amber-200">
+              {ssoError}
+            </p>
+          )}
+
           <button
             type="submit"
             disabled={isVerifyingOtp}
@@ -10314,6 +10396,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               what "access roles" means, or that Admin is restricted. The
               walkthrough answers both before they get stuck. */}
           <RegisterGuideLink onOpen={() => setShowRegisterGuide(true)} />
+
+          {/* Someone who signed in through Commun has no password here to type
+              — their account was opened by the handoff, not by registering.
+              Once they sign out, this form is a dead end unless it says where
+              the way back in actually is. */}
+          <p className="mt-5 pt-5 border-t border-[#D1FAE5] text-xs font-bold text-[#059669]/70 leading-relaxed">
+            Signed in through Commun? Open Zera Education Suite from your
+            Commun portal and you will arrive here already signed in.
+          </p>
         </div>
       </motion.div>
 
@@ -41721,6 +41812,20 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           window.location.reload();
         }}
       />
+    );
+  }
+
+  // The handoff from Commun holds its own screen. Without it the login form
+  // flashes up for the moment the token is being exchanged, which reads as
+  // "sign in again" to a teacher who just signed in over there.
+  if (ssoSigningIn) {
+    return (
+      <div className="w-full h-screen bg-[#059669] flex flex-col items-center justify-center p-6 text-center">
+        <Loader2 className="animate-spin text-white mb-4" size={48} />
+        <h2 className="text-white text-2xl font-black uppercase tracking-tight">
+          Signing you in from Commun...
+        </h2>
+      </div>
     );
   }
 

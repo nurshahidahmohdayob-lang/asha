@@ -2633,7 +2633,12 @@ async function readLink(
  *  to fill in. */
 export async function importLessonPlan(
   documentText: string,
-  options: { subject?: string; yearGroup?: string; teacherName?: string } = {},
+  options: {
+    subject?: string;
+    yearGroup?: string;
+    teacherName?: string;
+    term?: string;
+  } = {},
 ): Promise<LessonPlan> {
   const text = (documentText || "").trim();
   if (!text) throw new Error("That file had no readable text in it.");
@@ -3150,7 +3155,10 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
  *  taught and quizzed on that lesson and nothing else. */
 export async function generateLessonActivities(
   week: WeeklyPlan,
-  plan: Pick<LessonPlan, "subject" | "class" | "overallTopic">,
+  plan: Pick<
+    LessonPlan,
+    "subject" | "class" | "overallTopic" | "term" | "keyCompetencies" | "zeraValue"
+  >,
   options: EduOptions,
   half: "teaching" | "games" | "both" = "both",
 ): Promise<LessonActivityPack> {
@@ -3175,7 +3183,10 @@ export async function generateLessonActivities(
  *  are still being written. */
 export const generateLessonTeaching = (
   week: WeeklyPlan,
-  plan: Pick<LessonPlan, "subject" | "class" | "overallTopic">,
+  plan: Pick<
+    LessonPlan,
+    "subject" | "class" | "overallTopic" | "term" | "keyCompetencies" | "zeraValue"
+  >,
   options: EduOptions,
 ) => generateLessonActivities(week, plan, options, "teaching");
 
@@ -3183,13 +3194,19 @@ export const generateLessonTeaching = (
  *  teaching, fetched while the teacher is still on the early slides. */
 export const generateLessonGames = (
   week: WeeklyPlan,
-  plan: Pick<LessonPlan, "subject" | "class" | "overallTopic">,
+  plan: Pick<
+    LessonPlan,
+    "subject" | "class" | "overallTopic" | "term" | "keyCompetencies" | "zeraValue"
+  >,
   options: EduOptions,
 ) => generateLessonActivities(week, plan, options, "games");
 
 async function generateLessonActivitiesDirect(
   week: WeeklyPlan,
-  plan: Pick<LessonPlan, "subject" | "class" | "overallTopic">,
+  plan: Pick<
+    LessonPlan,
+    "subject" | "class" | "overallTopic" | "term" | "keyCompetencies" | "zeraValue"
+  >,
   options: EduOptions,
   /** Generate only part of the lesson, so the deck can open on the first half
    *  while the second is still being written. */
