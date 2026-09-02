@@ -395,10 +395,23 @@ async function resolveUser(
     const stored = typeof r?.data === "string" ? safeJson(r.data) : r?.data;
     return stored?.commun_sub && String(stored.commun_sub) === sub;
   });
-  const byEmail =
+  /* More than one row can carry the same address — a teacher added twice, or
+   *  an old record left beside a new one. Taking whichever came back first
+   *  meant a coin toss between an account holding a term of work and an empty
+   *  duplicate, and losing it looks exactly like the work being deleted.
+   *
+   *  So the tie is broken deliberately: an account already linked to Commun
+   *  wins, then one that owns saved work, then the first. */
+  const emailMatches =
     !bySub && email
-      ? rows.find((r: any) => String(r?.email || "").trim().toLowerCase() === email)
-      : undefined;
+      ? rows.filter(
+          (r: any) => String(r?.email || "").trim().toLowerCase() === email,
+        )
+      : [];
+  const byEmail =
+    emailMatches.length > 1
+      ? await pickLiveAccount(driver, emailMatches)
+      : emailMatches[0];
 
   /* Last resort: the account that OWNS this teacher's work.
    *
@@ -431,6 +444,31 @@ async function resolveUser(
   if (Array.isArray(stored) && stored.length) roles = stored;
 
   return { uid, roles, isNew: !existing && !byOwnedWork };
+}
+
+/** Of several rows sharing one address, the one that is actually in use.
+ *
+ *  Linked to Commun already, or holding saved work. An empty duplicate is
+ *  the one thing that must not win, because adopting it hands the teacher an
+ *  empty app while their real work sits under the account nobody chose. */
+async function pickLiveAccount(driver: DbDriver, rows: any[]): Promise<any> {
+  const linked = rows.find((r: any) => {
+    const stored = typeof r?.data === "string" ? safeJson(r.data) : r?.data;
+    return Boolean(stored?.commun_sub);
+  });
+  if (linked) return linked;
+
+  try {
+    const projects = await driver.list({ table: "projects", idCol: "id", filters: [] });
+    const owns = new Set(
+      (projects as any[]).map((p) => String(p?.user_id || "")).filter(Boolean),
+    );
+    const working = rows.find((r: any) => owns.has(String(r.uid)));
+    if (working) return working;
+  } catch (err) {
+    console.warn("[sso] could not weigh duplicate accounts:", err);
+  }
+  return rows[0];
 }
 
 /** The uid that already owns saved work stamped with this teacher_name.
