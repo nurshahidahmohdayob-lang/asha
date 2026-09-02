@@ -5166,8 +5166,22 @@ const fullerTeacherName = (a?: string, b?: string): string => {
  *  refresh. `full` is the answer, and nothing is allowed to overrule it. */
 const TEACHER_ALIASES: { full: string; aliases: string[] }[] = [
   {
+    // Commun sends "SHA BINTI MOHD AYOB", the app had her as "NUR SHAHIDAH",
+    // and her submissions carry "shahidah.a" from her address. Letters alone
+    // connect none of those three, so each one opened a folder of its own and
+    // her work split across them. Pinned here, so however she signs in her
+    // plans land in the same place.
     full: "NUR SHAHIDAH",
-    aliases: ["SHA", "SHAHIDAH", "NUR SHAHIDAH", "NURSHAHIDAH", "SHAHIDAH.A"],
+    aliases: [
+      "SHA",
+      "SHAHIDAH",
+      "NUR SHAHIDAH",
+      "NURSHAHIDAH",
+      "SHAHIDAH.A",
+      "SHA BINTI MOHD AYOB",
+      "NUR SHAHIDAH BINTI MOHD AYOB",
+      "NUR SHAHIDAH MOHD AYOB",
+    ],
   },
   {
     // She is in the directory twice — once under the classroom name "IERA"
