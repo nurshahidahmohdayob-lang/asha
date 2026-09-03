@@ -37451,53 +37451,52 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             p?.content?.subject ||
                             "No subject yet"}
                         </p>
-                        <h4 className="text-sm font-black text-[#064E3B] truncate">
-                          {lp?.overallTopic ||
-                            p?.title ||
-                            p?.content?.lessonTitle ||
-                            "Untitled plan"}
-                        </h4>
-                        {/* Topic and subtopic, under the subject, because the
-                            heading is the plan's overall topic and on its own
-                            it does not say what this week is actually about.
-                            Only shown when they say something the heading has
-                            not already said. */}
+                        {/* Topic and subtopic, labelled, in the plan's own
+                            terms: the plan's overall topic IS the topic —
+                            "Global Citizens" — and the week's narrower one is
+                            the subtopic — "What Does It Mean to Be a Global
+                            Citizen?". These were the other way round, so a
+                            card labelled its subtopic as the topic and never
+                            showed the topic at all. */}
                         {(() => {
-                          const said = new Set(
-                            [
-                              lp?.overallTopic,
-                              p?.title,
-                              p?.content?.lessonTitle,
-                            ]
-                              .filter(Boolean)
-                              .map((v: any) => String(v).trim().toLowerCase()),
-                          );
                           const first = weeks[0] || {};
-                          const rows = [
-                            ["Topic", first.topic],
-                            ["Subtopic", first.subTopic || lp?.subTopic],
-                          ].filter(
-                            ([, v]) =>
-                              v &&
-                              String(v).trim() &&
-                              !said.has(String(v).trim().toLowerCase()),
-                          ) as [string, string][];
-                          if (!rows.length) return null;
+                          const topic =
+                            (lp?.overallTopic || "").trim() ||
+                            (first.topic || "").trim() ||
+                            (p?.title || "").trim() ||
+                            (p?.content?.lessonTitle || "").trim();
+                          const same = (v: any) =>
+                            String(v || "").trim().toLowerCase() ===
+                            topic.toLowerCase();
+                          // The week's own topic is the subtopic whenever it
+                          // narrows the plan's, which is what it is for.
+                          const subTopic =
+                            [first.subTopic, lp?.subTopic, first.topic]
+                              .map((v: any) => String(v || "").trim())
+                              .find((v) => v && !same(v)) || "";
                           return (
-                            <div className="mt-1 space-y-0.5">
-                              {rows.map(([label, value]) => (
-                                <p
-                                  key={label}
-                                  className="text-[10px] font-bold text-[#064E3B]/60 truncate"
-                                  title={`${label}: ${value}`}
+                            <>
+                              <h4
+                                className="text-sm font-black text-[#064E3B] truncate"
+                                title={topic}
+                              >
+                                <span className="text-[9px] font-black uppercase tracking-wider text-[#064E3B]/35">
+                                  Topic
+                                </span>{" "}
+                                {topic || "Untitled plan"}
+                              </h4>
+                              {subTopic && (
+                                <h4
+                                  className="text-sm font-black text-[#064E3B]/70 truncate"
+                                  title={subTopic}
                                 >
-                                  <span className="text-[#064E3B]/35 uppercase tracking-wider">
-                                    {label}
+                                  <span className="text-[9px] font-black uppercase tracking-wider text-[#064E3B]/35">
+                                    Subtopic
                                   </span>{" "}
-                                  {value}
-                                </p>
-                              ))}
-                            </div>
+                                  {subTopic}
+                                </h4>
+                              )}
+                            </>
                           );
                         })()}
                       </div>
