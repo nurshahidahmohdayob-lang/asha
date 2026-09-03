@@ -250,6 +250,9 @@ export interface EduOptions {
   sourceDocument?: string;
   /** What the plan already says for the week being suggested for. */
   weekContext?: string;
+  /** What the teacher has already written in the field. Given one, a
+   *  suggestion tidies THEIR words instead of replacing them. */
+  draft?: string;
   numSlides: number;
   numQuestions: number;
   questionTypes: string[];
@@ -2495,8 +2498,47 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
   }
 }
 
-export async function suggestWeeklyInput(type: 'unit' | 'topic' | 'subtopic' | 'activity' | 'objective', options: EduOptions, weekNum: number): Promise<string> {
-  const label = type === 'objective' ? 'LEARNING OBJECTIVE' : type.toUpperCase();
+export async function suggestWeeklyInput(type: 'unit' | 'topic' | 'subtopic' | 'activity' | 'objective' | 'activities', options: EduOptions, weekNum: number): Promise<string> {
+  /* The browser holds no AI key — that was the point of moving it server-side
+     — so this has to go through the app's own server like every other
+     generator. Called directly it threw "GROQ_API_KEY is not configured",
+     which is what every Suggest button on the week cards was doing. */
+  if (typeof window !== "undefined") {
+    return callAiProxy("suggest", type, { ...options, weekNum });
+  }
+
+  const label =
+    type === 'objective' ? 'LEARNING OBJECTIVE'
+    : type === 'activities' ? 'SET OF LESSON ACTIVITIES'
+    : type.toUpperCase();
+
+  /* Tidying what a teacher wrote is a different job from writing it. Their
+     wording is what they will actually do in the room, so it is corrected
+     rather than replaced. */
+  const written = (options.draft ?? '').toString().trim();
+  if (written) {
+    const tidy = `A teacher has written the ${label.toLowerCase()} below for Week ${weekNum} of a ${options.yearGroup} ${options.subject} lesson. Rewrite it so it reads clearly.
+
+KEEP WHAT THEY PLANNED. Every activity they named stays, in their order, doing the same thing. Do not add an activity they did not write, do not drop one they did, and do not change how long anything takes.
+
+- Correct the grammar, spelling and punctuation. British English.
+- One activity per line, numbered, in this shape: "1. Activity Name 15 min" on its own line, then a sentence saying what the class does.
+- Plain classroom language. Keep their own words for anything they named.
+- No heading, no preamble, no quotation marks. Return ONLY the rewritten activities.
+
+${options.weekContext ? `THE WEEK: ${options.weekContext}` : ''}
+
+WHAT THE TEACHER WROTE:
+<<<
+${written.slice(0, 4000)}
+>>>`;
+    const out = await generateContentWithRetry({
+      contents: { parts: [{ text: tidy }] },
+      config: { maxOutputTokens: 900 },
+    });
+    return (out.text || '').trim();
+  }
+
   const prompt = `As an expert Cambridge Educator, suggest a creative and curriculum-aligned ${label} for Week ${weekNum} of a ${options.yearGroup} ${options.subject} class.
     
     CONTEXT:
@@ -2524,6 +2566,7 @@ export async function suggestWeeklyInput(type: 'unit' | 'topic' | 'subtopic' | '
     ${type === 'activity' ? 'Ensure the activity is hands-on or highly engaging for this age group.' : ''}
     ${type === 'objective' ? 'A learning objective says what the class will be able to DO by the end, in one sentence starting with a verb — "Explain how a series circuit differs from a parallel one." Not what the teacher will cover, and not an activity: the objective is the learning, the activity is how they get there.' : ''}
     ${type === 'subtopic' ? 'A subtopic is one focused slice of the week\'s topic — narrower than the topic itself, teachable in a lesson or two (e.g. topic "Electricity" → subtopic "Series and parallel circuits").' : ''}
+    ${type === 'activities' ? `Write 2 to 4 activities for ONE lesson, not a whole week. One per line, numbered, in this shape: "1. Sequence the School Day 15 min" on its own line, then a sentence saying what the class actually does. Give every activity a length in minutes that adds up to a sensible lesson. They must be things the class DOES — sorting, building, acting, discussing — and must be about this week's topic specifically, not the subject in general. No heading, no preamble.` : ''}
   `;
 
   try {
@@ -2534,7 +2577,7 @@ export async function suggestWeeklyInput(type: 'unit' | 'topic' | 'subtopic' | '
       // one-line answer was on its own enough to rule out every model but the
       // largest — and to fail once that one was busy. Asking for what it
       // actually needs puts the whole fallback chain back in play.
-      config: { maxOutputTokens: 300 },
+      config: { maxOutputTokens: type === 'activities' ? 900 : 300 },
     });
 
     return response.text?.trim() || "";

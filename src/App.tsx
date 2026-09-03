@@ -11847,6 +11847,66 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     }
   };
 
+  /** Which day's activities are being written, so only that row spins. */
+  const [lessonFieldBusy, setLessonFieldBusy] = useState<string | null>(null);
+
+  /** Write or tidy one lesson's activities.
+   *
+   *  With nothing in the box it writes a set from the week's own topic and
+   *  objective; with something already there it corrects the writing and
+   *  leaves the plan alone — a teacher who has thought about what their class
+   *  will do should not lose it to a button. */
+  const writeLessonActivities = async (
+    weekIdx: number,
+    lessonIdx: number,
+    mode: "suggest" | "tidy",
+  ) => {
+    const lp = content?.lessonPlan;
+    const week = lp?.weeklyBreakdown?.[weekIdx];
+    const lesson = lessonsOf(week)[lessonIdx];
+    if (!week) return;
+    const written = String(lesson?.activities || "").trim();
+    if (mode === "tidy" && !written) {
+      alert("Write the activities first, then this will tidy them up.");
+      return;
+    }
+    const key = `${weekIdx}-${lessonIdx}`;
+    setLessonFieldBusy(key);
+    try {
+      const suggestion = await suggestWeeklyInput(
+        "activities",
+        {
+          yearGroup: lp?.class || yearGroup,
+          lexileLevel,
+          subject: lp?.subject || subject,
+          overallTopic: lp?.overallTopic || lessonInput,
+          weekContext: [
+            week?.unit,
+            week?.topic,
+            week?.subTopic,
+            week?.learningObjective && `Objective: ${week.learningObjective}`,
+            lesson?.day && `Day: ${lesson.day}`,
+            lesson?.focus && `Focus: ${lesson.focus}`,
+            lesson?.duration && `Length: ${lesson.duration}`,
+          ]
+            .filter(Boolean)
+            .join(" · ") || undefined,
+          draft: mode === "tidy" ? written : undefined,
+          numSlides: 0,
+          numQuestions: 0,
+          questionTypes: [],
+        },
+        Number(week?.week) || weekIdx + 1,
+      );
+      if (suggestion?.trim())
+        updateWeekLesson(weekIdx, lessonIdx, "activities", suggestion.trim());
+    } catch (err: any) {
+      handleEduError(err, "Suggest activities");
+    } finally {
+      setLessonFieldBusy(null);
+    }
+  };
+
   const suggestReflectionText = async () => {
     const lp = content?.lessonPlan;
     if (!lp) return;
@@ -39418,6 +39478,83 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                                           }
                                                         >
                                                           {f.label}
+                                                          {/* Only the
+                                                              activities: the
+                                                              field with real
+                                                              writing in it,
+                                                              and the one a
+                                                              teacher asks for
+                                                              help with. */}
+                                                          {f.field ===
+                                                            "activities" &&
+                                                            !isReviewMode && (
+                                                              <div className="mt-1.5 flex flex-col items-start gap-0.5">
+                                                                <button
+                                                                  type="button"
+                                                                  onClick={() =>
+                                                                    writeLessonActivities(
+                                                                      idx,
+                                                                      li2,
+                                                                      "suggest",
+                                                                    )
+                                                                  }
+                                                                  disabled={
+                                                                    lessonFieldBusy !==
+                                                                    null
+                                                                  }
+                                                                  title="Write activities from this week's topic and objective"
+                                                                  className="inline-flex items-center gap-1 text-[10px] font-black text-[#059669] hover:underline disabled:opacity-50"
+                                                                >
+                                                                  {lessonFieldBusy ===
+                                                                  `${idx}-${li2}` ? (
+                                                                    <Loader2
+                                                                      size={11}
+                                                                      className="animate-spin"
+                                                                    />
+                                                                  ) : (
+                                                                    <Sparkles
+                                                                      size={11}
+                                                                    />
+                                                                  )}
+                                                                  Suggest
+                                                                </button>
+                                                                {String(
+                                                                  lesson[
+                                                                    f.field
+                                                                  ] || "",
+                                                                ).trim() && (
+                                                                  <button
+                                                                    type="button"
+                                                                    onClick={() =>
+                                                                      writeLessonActivities(
+                                                                        idx,
+                                                                        li2,
+                                                                        "tidy",
+                                                                      )
+                                                                    }
+                                                                    disabled={
+                                                                      lessonFieldBusy !==
+                                                                      null
+                                                                    }
+                                                                    title="Rewrite what you have written — same activities, clearer wording"
+                                                                    className="inline-flex items-center gap-1 text-[10px] font-black text-[#059669] hover:underline disabled:opacity-50"
+                                                                  >
+                                                                    {lessonFieldBusy ===
+                                                                    `${idx}-${li2}` ? (
+                                                                      <Loader2
+                                                                        size={11}
+                                                                        className="animate-spin"
+                                                                      />
+                                                                    ) : (
+                                                                      <RefreshCw
+                                                                        size={11}
+                                                                      />
+                                                                    )}
+                                                                    Regenerate
+                                                                  </button>
+                                                                )}
+                                                              </div>
+                                                            )}
                                                         </td>
                                                         <td className={cellCls}>
                                                           <textarea
