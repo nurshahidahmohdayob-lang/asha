@@ -2985,7 +2985,9 @@ KEEP EVERY OBSERVATION AND JUDGEMENT THEY MADE. You are correcting the writing, 
 
 - Correct the grammar, spelling and punctuation. British English.
 - Put it in a sensible order: what the class understood, what they could do, where they struggled, what they need next — but only using what is already there. If they said nothing about one of those, do not invent it.
-- Full sentences, first person, plain and unshowy. Keep it about the same length; 3 to 6 sentences.
+- Full sentences, plain and unshowy. Keep it about the same length; 3 to 6 sentences.
+- START FROM THE STUDENTS. "My students understood…", "They could explain…", "A few still confused…". Never frame it as the teacher noticing: "I observed that…", "I noted that…", "I saw…", "I found that…" and "It was observed that…" are all FAILURES — they put the teacher in front of the learning. The only place "I" belongs is what the teacher will do next: "Next time I will…".
+- Use the teacher's own word for the class — students or pupils, whichever they wrote. Do not swap it.
 - Keep their own words for anything they named — the topic, an activity, a pupil difficulty. Do not swap their wording for grander wording.
 - No heading, no bullet points, no quotation marks, no preamble. Return ONLY the rewritten reflection.
 
@@ -3013,7 +3015,9 @@ THIS REFLECTION IS ABOUT THE PUPILS' LEARNING, NOT ABOUT THE TEACHING.
 
 Write it FOR THEM as a first draft, in the first person, 3 to 5 sentences, British English, plain and unshowy — the way a teacher writes for their own file, not a report to a manager.
 
-It is what the teacher OBSERVED about how this class learned this topic: what they took in, what they found hard, how they responded to the work. "My pupils understood…", "They could explain…", "Most of them managed…, though a few needed…", "They were confident with … but less sure about …".
+It is about how this class learned this topic: what they took in, what they found hard, how they responded to the work.
+
+START EVERY SENTENCE FROM THE STUDENTS. "My students understood…", "They could explain…", "Most of them managed…, though a few needed…", "They were confident with … but less sure about …". Never write it as the teacher noticing — "I observed that…", "I noted that…", "I saw…", "I found that…" are FAILURES, because they put the teacher in front of the learning. The one place "I" belongs is what the teacher will do next: "Next time I will…".
 
 Cover, in this order:
 - how well the class understood the topic, naming what it was they understood
@@ -3021,7 +3025,7 @@ Cover, in this order:
 - where they struggled or needed more support, named specifically
 - what they need next as a result
 
-A sentence about what the TEACHER did is wrong here. "I taught them…", "I began by…", "the activity went as planned", "my pacing was…" are all FAILURES: they describe delivery. Mention an activity only as the place where the learning was visible — "sorting the scenarios showed me they could tell …" — never as a description of what happened.
+A sentence about what the TEACHER did is wrong here too. "I taught them…", "I began by…", "the activity went as planned", "my pacing was…" are all FAILURES: they describe delivery. Mention an activity only as the place where the learning was visible — "sorting the scenarios showed me they could tell …" — never as a description of what happened.
 
 Ground it in this plan: name the topic and the objective, and the activity or assessment where the learning showed. Do NOT invent pupil names, marks, incidents or numbers — you were not in the room. Write the observations as something the teacher will confirm or correct, not as fact you are certain of.
 
