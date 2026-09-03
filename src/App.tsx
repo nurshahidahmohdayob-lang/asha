@@ -38551,7 +38551,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                 next[i] = e.target.value;
                                 setLpActivities(next);
                               }}
-                              placeholder="How they get there — leave blank to let the AI choose (e.g., 'Hands-on experiment with circuits')..."
+                              // Left blank: the label says what the box is
+                              // for, and the example text read as though
+                              // something were already written in it.
+                              placeholder=""
                               className="w-full h-20 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold resize-none outline-none focus:border-[#059669]"
                             />
                           </div>
