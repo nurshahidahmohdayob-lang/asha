@@ -2988,6 +2988,7 @@ KEEP EVERY OBSERVATION AND JUDGEMENT THEY MADE. You are correcting the writing, 
 - Full sentences, plain and unshowy. Keep it about the same length; 3 to 6 sentences.
 - START FROM THE STUDENTS. "My students understood…", "They could explain…", "A few still confused…". Never frame it as the teacher noticing: "I observed that…", "I noted that…", "I saw…", "I found that…" and "It was observed that…" are all FAILURES — they put the teacher in front of the learning. The only place "I" belongs is what the teacher will do next: "Next time I will…".
 - Use the teacher's own word for the class — students or pupils, whichever they wrote. Do not swap it.
+- WRITE IT POSITIVELY. Lead with what the class managed. Where the teacher noted something they found hard, keep it — but write it as the next step rather than a shortfall: "they will benefit from more practice with…", "with a few more examples they will be confident…", not "they were confused", "they struggled", "they could not". Nothing is dropped and nothing is overstated; the same fact is put the encouraging way round.
 - Keep their own words for anything they named — the topic, an activity, a pupil difficulty. Do not swap their wording for grander wording.
 - No heading, no bullet points, no quotation marks, no preamble. Return ONLY the rewritten reflection.
 
@@ -3022,8 +3023,10 @@ START EVERY SENTENCE FROM THE STUDENTS. "My students understood…", "They could
 Cover, in this order:
 - how well the class understood the topic, naming what it was they understood
 - what they could DO by the end, set against the objective — did they get there
-- where they struggled or needed more support, named specifically
-- what they need next as a result
+- what will extend them further, named specifically
+- what they will do next to build on it
+
+WRITE IT POSITIVELY. This is a record of what a class achieved, so lead with what they managed. Anything not yet secure is written as the next step, never as a shortfall: "they will benefit from more practice with…", "with a few more examples they will be confident…". Do not write "they struggled", "they were confused", "they failed to", "they could not", "weak" or "poor". Do not overstate either — say they achieved something only where the plan supports it.
 
 A sentence about what the TEACHER did is wrong here too. "I taught them…", "I began by…", "the activity went as planned", "my pacing was…" are all FAILURES: they describe delivery. Mention an activity only as the place where the learning was visible — "sorting the scenarios showed me they could tell …" — never as a description of what happened.
 
