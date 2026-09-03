@@ -37457,6 +37457,49 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             p?.content?.lessonTitle ||
                             "Untitled plan"}
                         </h4>
+                        {/* Topic and subtopic, under the subject, because the
+                            heading is the plan's overall topic and on its own
+                            it does not say what this week is actually about.
+                            Only shown when they say something the heading has
+                            not already said. */}
+                        {(() => {
+                          const said = new Set(
+                            [
+                              lp?.overallTopic,
+                              p?.title,
+                              p?.content?.lessonTitle,
+                            ]
+                              .filter(Boolean)
+                              .map((v: any) => String(v).trim().toLowerCase()),
+                          );
+                          const first = weeks[0] || {};
+                          const rows = [
+                            ["Topic", first.topic],
+                            ["Subtopic", first.subTopic || lp?.subTopic],
+                          ].filter(
+                            ([, v]) =>
+                              v &&
+                              String(v).trim() &&
+                              !said.has(String(v).trim().toLowerCase()),
+                          ) as [string, string][];
+                          if (!rows.length) return null;
+                          return (
+                            <div className="mt-1 space-y-0.5">
+                              {rows.map(([label, value]) => (
+                                <p
+                                  key={label}
+                                  className="text-[10px] font-bold text-[#064E3B]/60 truncate"
+                                  title={`${label}: ${value}`}
+                                >
+                                  <span className="text-[#064E3B]/35 uppercase tracking-wider">
+                                    {label}
+                                  </span>{" "}
+                                  {value}
+                                </p>
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </div>
                       <Maximize2
                         size={14}
@@ -37480,7 +37523,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       <span className={chip}>
                         {lp?.class || p?.content?.gradeLevel || "No year group"}
                       </span>
-                      <span className={chip}>Term {lp?.term || "-"}</span>
+                      {/* A term written as "Term 1" already says Term, so
+                          prefixing it again read "TERM TERM 1". */}
+                      <span className={chip}>
+                        {(() => {
+                          const t = String(lp?.term || "").trim();
+                          if (!t) return "Term -";
+                          return /^term\b/i.test(t) ? t : `Term ${t}`;
+                        })()}
+                      </span>
                       {submittedWeekByProject.get(p.id) && (
                         <span className={chip}>
                           Week {submittedWeekByProject.get(p.id)}
