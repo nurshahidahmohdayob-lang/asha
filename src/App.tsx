@@ -37655,9 +37655,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const renderLessonPlanView = () => {
     if (lpBoardOpen && !isReviewMode) return renderLessonPlanBoard();
 
-    // Whole Term only. Week By Week has a per-week "Activities & Lesson Focus"
-    // box on every card, so showing this plan-wide one beside it put two
-    // focus fields back to back saying the same thing.
+    // Whole Term only. Week By Week has its own Lesson Objective and Lesson
+    // Activities boxes on every card, so showing this plan-wide one beside
+    // them put three focus fields back to back saying much the same thing.
     const lessonFocusField = (
       <div className="space-y-1">
         <label className="text-[10px] font-black uppercase text-[#064E3B]/40">
