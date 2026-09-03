@@ -2495,8 +2495,9 @@ export async function generateLessonPlan(lessonInput: string, options: EduOption
   }
 }
 
-export async function suggestWeeklyInput(type: 'unit' | 'topic' | 'subtopic' | 'activity', options: EduOptions, weekNum: number): Promise<string> {
-  const prompt = `As an expert Cambridge Educator, suggest a creative and curriculum-aligned ${type.toUpperCase()} for Week ${weekNum} of a ${options.yearGroup} ${options.subject} class.
+export async function suggestWeeklyInput(type: 'unit' | 'topic' | 'subtopic' | 'activity' | 'objective', options: EduOptions, weekNum: number): Promise<string> {
+  const label = type === 'objective' ? 'LEARNING OBJECTIVE' : type.toUpperCase();
+  const prompt = `As an expert Cambridge Educator, suggest a creative and curriculum-aligned ${label} for Week ${weekNum} of a ${options.yearGroup} ${options.subject} class.
     
     CONTEXT:
     - Subject: ${options.subject}
@@ -2519,8 +2520,9 @@ export async function suggestWeeklyInput(type: 'unit' | 'topic' | 'subtopic' | '
     - Use relevant subject codes and official strand-based LO codes (e.g., 3TC.01) from this information: ${CAMBRIDGE_CURRICULUM_INFO}
     
     TASK:
-    Return ONLY a single concise ${type} suggestion. No explanation, no quotes.
+    Return ONLY a single concise ${label.toLowerCase()} suggestion. No explanation, no quotes.
     ${type === 'activity' ? 'Ensure the activity is hands-on or highly engaging for this age group.' : ''}
+    ${type === 'objective' ? 'A learning objective says what the class will be able to DO by the end, in one sentence starting with a verb — "Explain how a series circuit differs from a parallel one." Not what the teacher will cover, and not an activity: the objective is the learning, the activity is how they get there.' : ''}
     ${type === 'subtopic' ? 'A subtopic is one focused slice of the week\'s topic — narrower than the topic itself, teachable in a lesson or two (e.g. topic "Electricity" → subtopic "Series and parallel circuits").' : ''}
   `;
 
@@ -3043,7 +3045,18 @@ function alignLessonsToDays(week: any, chosenDays: string[]): any {
   return { ...week, lessons };
 }
 
-export async function generateWeeklyPlan(activity: string, weekNum: number, options: EduOptions, unit?: string, topic?: string): Promise<WeeklyPlan> {
+export async function generateWeeklyPlan(
+  activity: string,
+  weekNum: number,
+  options: EduOptions,
+  unit?: string,
+  topic?: string,
+  /** What the teacher wants the class to come away able to do. Separate from
+   *  the activity on purpose: the objective is the learning, the activity is
+   *  how they get there, and one box asking for both got a mixture of the
+   *  two — so neither came back reliably. */
+  objective?: string,
+): Promise<WeeklyPlan> {
   try {
     const contents: any[] = [];
     /* One lesson per taught day, as the whole-term generator has always done.
@@ -3074,6 +3087,9 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
       
       ${unit ? `TARGET UNIT: "${unit}"` : ''}
       ${topic ? `TARGET TOPIC: "${topic}"` : ''}
+      ${objective?.trim()
+        ? `THE LEARNING OBJECTIVE THE TEACHER HAS SET — this is what the week must achieve:\n      "${objective.trim()}"\n      Return it as "learningObjective" in the teacher's own words, and make every activity serve it.`
+        : ''}
       ${activity.trim()
         ? `PRIMARY ACTIVITY PROVIDED BY TEACHER:\n      "${activity}"`
         : `The teacher has not described an activity — choose activities yourself that suit ${unit || topic ? 'this unit/topic' : `${options.subject} at ${options.yearGroup}`}.`}
@@ -3089,7 +3105,7 @@ export async function generateWeeklyPlan(activity: string, weekNum: number, opti
       - "topic": string (${topic ? `Return exactly or expand upon: ${topic}` : 'A concise title for the week\'s lesson'})
       - "subTopic": string (ONE narrower slice of the week's topic — teachable in a lesson or two)
       - "strand": string (the curriculum strand)
-      - "learningObjective": string (one clear, numbered learning objective)
+      - "learningObjective": string (${objective?.trim() ? "the teacher's objective above, kept in their own words" : "one clear, numbered learning objective"})
       - "introduction": string (detailed overview of what this topic is about)
       - "activities": string (${activity.trim() ? `incorporate the teacher's activity "${activity}" and expand on it` : 'suitable classroom activities for this week'})
       - "assessment": string (what worksheet, quiz, or exam activity for this topic)

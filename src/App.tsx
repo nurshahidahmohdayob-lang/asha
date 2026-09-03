@@ -8503,6 +8503,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   // A narrower slice of each week's topic, suggestible like unit/topic.
   const [lpSubtopics, setLpSubtopics] = useState<string[]>(Array(1).fill(""));
   const [lpActivities, setLpActivities] = useState<string[]>(Array(1).fill(""));
+  /** What the class should be able to DO by the end of the week.
+   *
+   *  Split out of the activities box. One field asking for the objective and
+   *  the activities together got a mixture of the two, and the generator had
+   *  to guess which half was which — so a teacher who wrote an objective
+   *  often got it back as an activity, or not at all. */
+  const [lpObjectives, setLpObjectives] = useState<string[]>(Array(1).fill(""));
   const [lpWeekLabels, setLpWeekLabels] = useState<string[]>(
     Array.from({ length: 1 }, (_, i) => `Week ${i + 1}`),
   );
@@ -8529,6 +8536,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       return prev.slice(0, sessionWeeks);
     });
     setLpActivities((prev) => {
+      if (prev.length === sessionWeeks) return prev;
+      if (prev.length < sessionWeeks)
+        return [...prev, ...Array(sessionWeeks - prev.length).fill("")];
+      return prev.slice(0, sessionWeeks);
+    });
+    // Kept the same length as the activities beside it, so week 12's
+    // objective cannot end up on week 11 when the term is shortened.
+    setLpObjectives((prev) => {
       if (prev.length === sessionWeeks) return prev;
       if (prev.length < sessionWeeks)
         return [...prev, ...Array(sessionWeeks - prev.length).fill("")];
@@ -10624,6 +10639,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     // a week planned from the subject and year group alone; anything they do
     // type simply steers it.
     const activity = (lpActivities[index] || "").trim();
+    const objective = (lpObjectives[index] || "").trim();
     const unit = lpUnit[index];
     const topic = lpWeeklyTopics[index];
     const weekNum = index + 1;
@@ -10651,6 +10667,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         unit,
         // Steer the week with the narrower subtopic when one is given.
         [topic, lpSubtopics[index]?.trim()].filter(Boolean).join(" — "),
+        objective,
       );
 
       if (weekData) {
@@ -10696,7 +10713,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   };
 
   const handleSuggestInput = async (
-    type: "unit" | "topic" | "subtopic" | "activity",
+    type: "unit" | "topic" | "subtopic" | "activity" | "objective",
     index: number,
   ) => {
     setIsSuggesting(`${type}-${index}` as any);
@@ -10708,7 +10725,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         lpUnit[index]?.trim() || week?.unit,
         lpWeeklyTopics[index]?.trim() || week?.topic,
         lpSubtopics[index]?.trim() || week?.subTopic,
-        week?.learningObjective,
+        lpObjectives[index]?.trim() || week?.learningObjective,
       ]
         .filter(Boolean)
         .join(" · ");
@@ -10747,6 +10764,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         const newActivities = [...lpActivities];
         newActivities[index] = suggestion;
         setLpActivities(newActivities);
+      }
+      if (type === "objective") {
+        const next = [...lpObjectives];
+        next[index] = suggestion;
+        setLpObjectives(next);
       }
     } catch (err: any) {
       handleEduError(err, `Suggest ${type}`);
@@ -38466,10 +38488,46 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             />
                           </div>
 
+                          {/* Two boxes, not one. Asked for the objective and
+                              the activities together, a teacher wrote a
+                              mixture of the two and the generator had to
+                              guess which half was which. */}
                           <div className="space-y-1">
                             <div className="flex items-center justify-between">
                               <label className="text-[9px] font-black uppercase text-[#064E3B]/40">
-                                Activities & Lesson Focus (optional)
+                                Lesson Objective (optional)
+                              </label>
+                              <button
+                                onClick={() =>
+                                  handleSuggestInput("objective", i)
+                                }
+                                className="text-[8px] font-bold text-[#059669] hover:underline flex items-center gap-1"
+                                disabled={isSuggesting !== null}
+                              >
+                                {isSuggesting === `objective-${i}` ? (
+                                  <Loader2 size={10} className="animate-spin" />
+                                ) : (
+                                  <Sparkles size={10} />
+                                )}{" "}
+                                Suggest
+                              </button>
+                            </div>
+                            <textarea
+                              value={lpObjectives[i] || ""}
+                              onChange={(e) => {
+                                const next = [...lpObjectives];
+                                next[i] = e.target.value;
+                                setLpObjectives(next);
+                              }}
+                              placeholder="What the class will be able to do by the end (e.g., 'Explain how a series circuit differs from a parallel one')..."
+                              className="w-full h-20 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold resize-none outline-none focus:border-[#059669]"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[9px] font-black uppercase text-[#064E3B]/40">
+                                Lesson Activities (optional)
                               </label>
                               <button
                                 onClick={() =>
@@ -38493,7 +38551,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                 next[i] = e.target.value;
                                 setLpActivities(next);
                               }}
-                              placeholder="Leave blank to let the AI choose, or describe activities (e.g., 'Hands-on experiment with circuits')..."
+                              placeholder="How they get there — leave blank to let the AI choose (e.g., 'Hands-on experiment with circuits')..."
                               className="w-full h-20 p-3 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-xs font-bold resize-none outline-none focus:border-[#059669]"
                             />
                           </div>
