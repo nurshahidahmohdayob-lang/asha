@@ -2965,17 +2965,23 @@ export async function suggestReflection(
       "There is nothing in the plan to reflect on yet — fill in a week first.",
     );
 
-  const prompt = `A teacher has taught the lessons below and now has to write their reflection on how it went.
+  const prompt = `A teacher has taught the lessons below and now has to write their reflection.
 
-Write that reflection FOR THEM as a first draft, in the first person, 3 to 5 sentences, British English, plain and unshowy — the way a teacher writes for their own file, not a report to a manager.
+THIS REFLECTION IS ABOUT THE PUPILS' LEARNING, NOT ABOUT THE TEACHING.
 
-Ground every sentence in what the plan below actually says: name the topic, the objective, and at least one activity or assessment by name. Do NOT invent events, pupil names, incidents or results — you were not in the room.
+Write it FOR THEM as a first draft, in the first person, 3 to 5 sentences, British English, plain and unshowy — the way a teacher writes for their own file, not a report to a manager.
+
+It is what the teacher OBSERVED about how this class learned this topic: what they took in, what they found hard, how they responded to the work. "My pupils understood…", "They could explain…", "Most of them managed…, though a few needed…", "They were confident with … but less sure about …".
 
 Cover, in this order:
-- what the class worked on and whether the objective was a reasonable fit
-- how the main activity went in practice, written as something to confirm or correct
-- one thing worth doing differently next time, drawn from the plan itself
-- one thing to carry forward
+- how well the class understood the topic, naming what it was they understood
+- what they could DO by the end, set against the objective — did they get there
+- where they struggled or needed more support, named specifically
+- what they need next as a result
+
+A sentence about what the TEACHER did is wrong here. "I taught them…", "I began by…", "the activity went as planned", "my pacing was…" are all FAILURES: they describe delivery. Mention an activity only as the place where the learning was visible — "sorting the scenarios showed me they could tell …" — never as a description of what happened.
+
+Ground it in this plan: name the topic and the objective, and the activity or assessment where the learning showed. Do NOT invent pupil names, marks, incidents or numbers — you were not in the room. Write the observations as something the teacher will confirm or correct, not as fact you are certain of.
 
 End nothing with a flourish. Return ONLY the reflection text — no heading, no bullet points, no quotation marks.
 
