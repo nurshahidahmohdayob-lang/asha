@@ -11820,6 +11820,33 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
    *  buttons fill a field of a few words, where copying is nothing, but a
    *  reflection is a paragraph and the teacher is going to rewrite it in
    *  place anyway. Anything already written is left alone. */
+  /** Tidy what the teacher has written, rather than replace it.
+   *
+   *  Their sentences carry what they saw in the room, which nothing else in
+   *  the plan records — so this corrects the writing and the order, and
+   *  leaves every observation and judgement exactly as they made it. */
+  const tidyReflectionText = async () => {
+    const lp = content?.lessonPlan;
+    const written = (lp?.reflection || "").trim();
+    if (!lp) return;
+    if (!written) {
+      alert("Write your reflection first, then this will tidy it up.");
+      return;
+    }
+    setReflectionBusy(true);
+    try {
+      const tidied = await suggestReflection(lp, {
+        teacherName,
+        draft: written,
+      });
+      if (tidied?.trim()) updateLessonPlanMetadata("reflection", tidied.trim());
+    } catch (err: any) {
+      alert(`Couldn't rewrite that reflection.\n\n${err?.message || err}`);
+    } finally {
+      setReflectionBusy(false);
+    }
+  };
+
   const suggestReflectionText = async () => {
     const lp = content?.lessonPlan;
     if (!lp) return;
@@ -39737,19 +39764,43 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         <div className="flex items-center justify-between">
                           <div className={secLabel}>Reflection</div>
                           {!isReviewMode && (
-                            <button
-                              onClick={suggestReflectionText}
-                              disabled={reflectionBusy}
-                              title="Draft a reflection from the plan you taught"
-                              className="flex items-center gap-1 text-[11px] font-black text-[#059669] hover:underline disabled:opacity-50"
-                            >
-                              {reflectionBusy ? (
-                                <Loader2 size={12} className="animate-spin" />
-                              ) : (
-                                <Sparkles size={12} />
+                            <div className="flex items-center gap-4">
+                              {/* Only offered once there is something to
+                                  tidy — on an empty box it would be the
+                                  same button as Suggest wearing another
+                                  name. */}
+                              {(lp.reflection || "").trim() && (
+                                <button
+                                  onClick={tidyReflectionText}
+                                  disabled={reflectionBusy}
+                                  title="Rewrite what you have written — same observations, better order and grammar"
+                                  className="flex items-center gap-1 text-[11px] font-black text-[#059669] hover:underline disabled:opacity-50"
+                                >
+                                  {reflectionBusy ? (
+                                    <Loader2
+                                      size={12}
+                                      className="animate-spin"
+                                    />
+                                  ) : (
+                                    <RefreshCw size={12} />
+                                  )}
+                                  Regenerate
+                                </button>
                               )}
-                              Suggest
-                            </button>
+                              <button
+                                onClick={suggestReflectionText}
+                                disabled={reflectionBusy}
+                                title="Draft a reflection from the plan you taught"
+                                className="flex items-center gap-1 text-[11px] font-black text-[#059669] hover:underline disabled:opacity-50"
+                              >
+                                {reflectionBusy ? (
+                                  <Loader2 size={12} className="animate-spin" />
+                                ) : (
+                                  <Sparkles size={12} />
+                                )}
+                                Suggest
+                              </button>
+                            </div>
                           )}
                         </div>
                         <div className="border border-[#E5E7EB] rounded-lg p-4">

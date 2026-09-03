@@ -2933,7 +2933,15 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
  */
 export async function suggestReflection(
   plan: LessonPlan,
-  options: { teacherName?: string } = {},
+  options: {
+    teacherName?: string;
+    /** What the teacher has already written. Given one, this tidies THEIR
+     *  reflection rather than writing a new one — their observations, their
+     *  judgements, in better order and correct grammar. Writing a fresh
+     *  draft over the top would throw away the only part nobody else can
+     *  supply: what they actually saw in the room. */
+    draft?: string;
+  } = {},
 ): Promise<string> {
   // The browser holds no AI key, so the work happens server-side. Send the
   // PLAN and let the server build the prompt — one description of what a
@@ -2941,6 +2949,8 @@ export async function suggestReflection(
   if (typeof window !== "undefined") {
     return callAiProxy("reflection", "", { ...options, plan });
   }
+
+  const written = (options.draft ?? "").toString().trim();
 
   const weeks = Array.isArray(plan?.weeklyBreakdown) ? plan.weeklyBreakdown : [];
   const said = (v: any) => (v ?? "").toString().trim();
@@ -2960,10 +2970,42 @@ export async function suggestReflection(
     .filter(Boolean)
     .join("\n\n");
 
-  if (!body.trim())
+  if (!body.trim() && !written)
     throw new Error(
       "There is nothing in the plan to reflect on yet — fill in a week first.",
     );
+
+  /* Tidying what the teacher wrote is a different job from writing one, and
+     the difference matters: their sentences carry what they saw in the room,
+     which nothing else in the plan records. */
+  if (written) {
+    const tidyPrompt = `A teacher has written the reflection below on how their class learned. Rewrite it so it reads well.
+
+KEEP EVERY OBSERVATION AND JUDGEMENT THEY MADE. You are correcting the writing, not the thinking. Do not add an observation they did not make, do not remove one they did, and do not soften or strengthen what they said about how the class did.
+
+- Correct the grammar, spelling and punctuation. British English.
+- Put it in a sensible order: what the class understood, what they could do, where they struggled, what they need next — but only using what is already there. If they said nothing about one of those, do not invent it.
+- Full sentences, first person, plain and unshowy. Keep it about the same length; 3 to 6 sentences.
+- Keep their own words for anything they named — the topic, an activity, a pupil difficulty. Do not swap their wording for grander wording.
+- No heading, no bullet points, no quotation marks, no preamble. Return ONLY the rewritten reflection.
+
+${said(plan?.subject) ? `SUBJECT: ${said(plan.subject)}` : ""}
+${said(plan?.class) ? `CLASS: ${said(plan.class)}` : ""}
+${said(plan?.overallTopic) ? `TOPIC: ${said(plan.overallTopic)}` : ""}
+
+WHAT THE TEACHER WROTE:
+<<<
+${written.slice(0, 6000)}
+>>>`;
+
+    const tidied = await generateContentWithRetry({
+      contents: { parts: [{ text: tidyPrompt }] },
+      config: { maxOutputTokens: 900 },
+    });
+    const out = (tidied.text || "").trim();
+    if (!out) throw new Error("The rewrite came back empty — please try again.");
+    return out;
+  }
 
   const prompt = `A teacher has taught the lessons below and now has to write their reflection.
 
