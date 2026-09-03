@@ -37557,19 +37557,31 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           <tbody>
                             {weeks.slice(0, 3).map((w: any, i: number) => (
                               <tr key={i} className="border-b border-[#E5E7EB]">
-                                <td className="px-2 py-1.5 font-black bg-[#F0FDF4] w-[34%] align-top">
-                                  {/* A one-week plan is FOR the week it went
-                                      in under, not week one of itself. */}
-                                  {w?.unit ||
-                                    `Week ${
-                                      (weeks.length === 1 &&
-                                        submittedWeekByProject.get(p.id)) ||
-                                      w?.week ||
-                                      i + 1
-                                    }`}
+                                {/* Always the week. This showed the unit when
+                                    the plan had one, so a card for Week 2 was
+                                    headed "My Day at School" — the unit name
+                                    where the week should be. A one-week plan
+                                    is FOR the week it went in under, not week
+                                    one of itself. */}
+                                <td className="px-2 py-1.5 font-black bg-[#F0FDF4] w-[34%] align-top whitespace-nowrap">
+                                  Week{" "}
+                                  {(weeks.length === 1 &&
+                                    submittedWeekByProject.get(p.id)) ||
+                                    w?.week ||
+                                    i + 1}
                                 </td>
-                                <td className="px-2 py-1.5 align-top truncate">
-                                  {w?.topic || "—"}
+                                <td className="px-2 py-1.5 align-top">
+                                  <span className="block truncate">
+                                    {w?.topic || "—"}
+                                  </span>
+                                  {/* The subtopic sits under the topic, at the
+                                      same size, because it is the half that
+                                      says what the week actually covers. */}
+                                  {w?.subTopic?.trim() && (
+                                    <span className="block truncate text-[#111827]/60">
+                                      {w.subTopic.trim()}
+                                    </span>
+                                  )}
                                 </td>
                               </tr>
                             ))}
