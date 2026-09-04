@@ -5131,8 +5131,26 @@ const sameTeacherName = (a?: string, b?: string): boolean => {
   return ta.some((t) => tb.includes(t));
 };
 
-const normalizeTeacherName = (name: string): string =>
-  (name || "").toUpperCase().replace(/[^A-Z]/g, "");
+/** Titles a name can arrive wearing. Stripped before anything is compared,
+ *  or "MS.KANI" and "KANIMOZHI" are two people and each gets a folder — which
+ *  is exactly what happened, to Kani, Nanthini and Haziq alike.
+ *
+ *  A dot or a space must follow, so this can only ever take a real title off
+ *  the front and never the first letters of a name that happens to begin
+ *  with them. */
+const TEACHER_TITLES =
+  /^(?:mr|mrs|ms|mdm|madam|miss|dr|sir|cikgu|teacher|pn|en)(?:\.|\s)\s*/i;
+
+const normalizeTeacherName = (name: string): string => {
+  let bare = String(name || "").trim();
+  // Repeated, because a name can wear two — "Ms. Cikgu Nanthini".
+  for (let i = 0; i < 3; i++) {
+    const next = bare.replace(TEACHER_TITLES, "");
+    if (next === bare) break;
+    bare = next;
+  }
+  return bare.toUpperCase().replace(/[^A-Z]/g, "");
+};
 
 /** Of two spellings of the same teacher, the fuller one.
  *
@@ -5225,11 +5243,45 @@ const aliasEntryFor = (name?: string | null) => {
 const preferredTeacherName = (name?: string | null): string =>
   aliasEntryFor(name)?.full || (name || "").trim();
 
+/** Given-name particles that a Malay name may or may not be written with —
+ *  NUR FARAHALYA and FARAHALYA are one person, as are ABDUL WAFI and WAFI.
+ *
+ *  Only ever taken off the FRONT, and only when four letters or more are
+ *  left, so this can shorten a name to another real name but never to a
+ *  fragment. Two genuinely different people whose names differ by nothing
+ *  but one of these would be folded together — that is the price of folding
+ *  the many spellings the same person arrives under, and on this roster the
+ *  duplicates are real and the collisions are not. */
+const NAME_PREFIXES = [
+  "NURUL", "NUR", "MUHAMMAD", "MUHAMAD", "MOHAMMAD", "MOHAMED", "MOHD", "MD",
+  "SITI", "ABDUL", "ABD", "AHMAD",
+];
+
+const coreTeacherName = (name?: string): string => {
+  let n = normalizeTeacherName(name || "");
+  for (let i = 0; i < 2; i++) {
+    const hit = NAME_PREFIXES.find(
+      (p) => n.startsWith(p) && n.length - p.length >= 4,
+    );
+    if (!hit) break;
+    n = n.slice(hit.length);
+  }
+  return n;
+};
+
 const sameTeacherIdentity = (a?: string, b?: string): boolean => {
   const na = normalizeTeacherName(a || "");
   const nb = normalizeTeacherName(b || "");
   if (!na || !nb) return false;
   if (na === nb) return true;
+  // The same name with and without its given-name particle.
+  const ca = coreTeacherName(a);
+  const cb = coreTeacherName(b);
+  if (ca && cb && ca.length >= 4 && cb.length >= 4) {
+    if (ca === cb) return true;
+    const [cs, cl] = ca.length <= cb.length ? [ca, cb] : [cb, ca];
+    if (cl.startsWith(cs)) return true;
+  }
   // Two spellings of a name that letters alone can't connect — SHA and
   // NUR SHAHIDAH share no usable prefix or token.
   const ea = aliasEntryFor(a);
@@ -15519,6 +15571,35 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         });
       }
     });
+
+    /* One more pass, because the first is greedy and order decides what it
+     *  catches. Folders arrive in whatever order the database returns them:
+     *  "KANIMOZHI" opening a group before "Ms.Kani Kani" and "MS.KANI" left
+     *  the full name stranded in a row of its own, while the short spellings
+     *  paired up next to it. Merging groups that match each other makes the
+     *  result the same whatever order they came in. */
+    for (let pass = 0; pass < groups.length; pass++) {
+      let merged = false;
+      for (let i = 0; i < groups.length && !merged; i++) {
+        for (let j = i + 1; j < groups.length && !merged; j++) {
+          const a = groups[i];
+          const b = groups[j];
+          if (!a.teacherFolder || !b.teacherFolder) continue;
+          if (!a.names.some((x) => b.names.some((y) => sameTeacherIdentity(x, y))))
+            continue;
+          // The fuller spelling labels the row, and it keeps every folder id
+          // so no submission is left behind one that stopped being shown.
+          a.names.push(...b.names);
+          a.ids.push(...b.ids);
+          a.name = teacherDisplayName(
+            a.names.reduce((best, n) => fullerTeacherName(best, n), ""),
+          );
+          groups.splice(j, 1);
+          merged = true;
+        }
+      }
+      if (!merged) break;
+    }
     return groups;
   }, [submittedFolders, teacherDisplayName]);
 
