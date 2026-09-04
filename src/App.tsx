@@ -37781,12 +37781,29 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 <p className="text-sm font-bold text-[#064E3B]/40">
                   {tab === "submitted"
                     ? "Nothing submitted yet — tick a plan and press Submit Ticked."
-                    : `Every plan has been submitted${
-                        submittedPlans.length
-                          ? ` (${submittedPlans.length} in Submitted)`
-                          : ""
-                      }. Anything new starts here.`}
+                    : submittedPlans.length
+                      ? `Nothing left to submit — your ${submittedPlans.length} plan${
+                          submittedPlans.length === 1 ? " is" : "s are"
+                        } in Submitted.`
+                      : "Nothing to submit yet. Anything new starts here."}
                 </p>
+                {/* An empty To Submit tab has been read as lost work three
+                    times now. The plans are one tab away, so say it with a
+                    button rather than a line of grey text nobody reads when
+                    they think their term's planning has gone. */}
+                {tab === "todo" && submittedPlans.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setLpBoardTab("submitted");
+                      setLpSelectedPlanIds([]);
+                    }}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-wider bg-[#059669] text-white hover:bg-[#047857] shadow-sm active:scale-95"
+                  >
+                    <CheckCircle size={14} /> See my {submittedPlans.length}{" "}
+                    submitted plan
+                    {submittedPlans.length === 1 ? "" : "s"}
+                  </button>
+                )}
                 {tab === "todo" && (
                   <p className="text-xs font-bold text-[#064E3B]/30">
                     Upload a plan you already wrote, or add one per year group,
