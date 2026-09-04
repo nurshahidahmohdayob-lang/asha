@@ -15548,10 +15548,17 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           id: match?.id || `folder-${g.id}`,
           name: g.name,
           role: match?.role || "Teacher",
+          // From the directory record, so the tracker files people the same
+          // way the Teacher Directory does rather than by a second rule.
+          division: divisionOf(match),
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [submittedFolderGroups, teachers]);
+
+  /** Which division the tracker is showing. Its own, not the directory's —
+   *  narrowing one screen must not silently narrow the other. */
+  const [trackerDivisionFilter, setTrackerDivisionFilter] = useState("");
 
   /** The folder ids the current selection covers, or null for "unfiled". */
   const selectedFolderIds: string[] | null = currentSubmittedFolderId
@@ -23741,6 +23748,57 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   </p>
                 </div>
               ) : lessonPlanView === "tracker" ? (
+                <>
+                {/* Filter the tracker by division. Counted against the whole
+                    roster, not what is left after filtering — a chip that
+                    disappears once you narrow cannot be used to widen. */}
+                {(() => {
+                  const roster = trackerTeachers.filter((t) =>
+                    isVisibleTeacherName(t.name),
+                  );
+                  const groups = [...SCHOOL_DIVISIONS, NO_DIVISION]
+                    .map((d) => ({
+                      label: d,
+                      n: roster.filter((t) => t.division === d).length,
+                    }))
+                    .filter((d) => d.n > 0);
+                  if (groups.length < 2) return null;
+                  return (
+                    <div className="mb-5 flex flex-wrap items-center gap-2">
+                      <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
+                        Division
+                      </span>
+                      {groups.map((d) => {
+                        const on = trackerDivisionFilter === d.label;
+                        return (
+                          <button
+                            key={`tdiv-${d.label}`}
+                            onClick={() =>
+                              setTrackerDivisionFilter(on ? "" : d.label)
+                            }
+                            className={cn(
+                              "px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 transition-all cursor-pointer",
+                              on
+                                ? "bg-[#064E3B] text-white border-[#064E3B]"
+                                : "bg-white text-[#064E3B] border-[#E5E7EB] hover:border-[#059669]",
+                            )}
+                          >
+                            {d.label}
+                            <span className="ml-1.5 opacity-60">{d.n}</span>
+                          </button>
+                        );
+                      })}
+                      {trackerDivisionFilter && (
+                        <button
+                          onClick={() => setTrackerDivisionFilter("")}
+                          className="px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-[#854D0E] hover:bg-[#FFFBEB] cursor-pointer"
+                        >
+                          Everyone
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div className="bg-white rounded-[2.5rem] shadow-2xl border-t-8 border-[#FACC15] overflow-hidden">
                   <div className="overflow-x-auto custom-scrollbar">
                     <table className="w-full border-collapse">
@@ -23779,6 +23837,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             "nothing to submit" apart from "not here at all". */}
                         {trackerTeachers
                           .filter((teacher) => isVisibleTeacherName(teacher.name))
+                          .filter(
+                            (teacher) =>
+                              !trackerDivisionFilter ||
+                              teacher.division === trackerDivisionFilter,
+                          )
                           .filter(
                             (teacher) =>
                               !onlyMyTeachers ||
@@ -24291,6 +24354,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     </div>
                   )}
                 </div>
+                </>
               ) : submittedProjects
                   .filter(isSupervisedSubmission)
                   .filter((p) =>
