@@ -9270,6 +9270,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     // sensible total instead of collapsing to 0 (which would generate nothing).
     setNumQuestions(sum > 0 ? sum : autoQuestionCount);
   }, [typeCounts, autoQuestionCount]);
+  // Which week of the lesson plan the worksheet on screen was generated from.
+  // Kept so a teacher who wants different question types can change them and
+  // press Generate again — the same week's lesson goes back to the generator
+  // instead of the form having to be filled in a second time.
+  const [worksheetPlanWeek, setWorksheetPlanWeek] = useState<number | null>(
+    null,
+  );
   // Differentiated assessment levels — same worksheet reworded per Lexile band
   const [wsLevels, setWsLevels] = useState<string[]>([
     "200-300",
@@ -10624,6 +10631,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         !week.topic || week.topic.toLowerCase().includes("auto-assign")
           ? `${content?.lessonPlan?.overallTopic} - Week ${week.week}: ${week.learningObjective}`
           : week.topic;
+
+      // Fill the worksheet builder in from the plan. Everything the form asks
+      // for is already known here, and leaving it blank is what forced a
+      // teacher who only wanted to change the question types to type the
+      // topic, subject and year group all over again.
+      setWorksheetPlanWeek(week.week);
+      setLessonInput(topic);
+      if (content?.lessonPlan?.subject) setSubject(content.lessonPlan.subject);
+      if (content?.lessonPlan?.class) setYearGroup(content.lessonPlan.class);
 
       const result = withSortCategories(
         await generateWorksheet(topic, {
@@ -12329,6 +12345,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     );
     setIncludeStory(project.settings?.includeStory || false);
     setIsTemplateMode(project.settings?.isTemplateMode || false);
+    // A week number from the last plan means nothing in this one.
+    setWorksheetPlanWeek(null);
 
     // Navigate to the correct view
     if (isLessonPlanProject(project)) setCurrentView("lesson-plan");
@@ -13371,6 +13389,18 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     }
   };
 
+  /** The plan week a worksheet generated from the builder should be checking:
+   *  the projected lesson on screen if there is one, otherwise the week this
+   *  worksheet was first generated from. Undefined means there is no lesson to
+   *  tie the questions to and the topic alone steers them. */
+  const worksheetContextWeek = () => {
+    const num = content?.lessonPack?.week ?? worksheetPlanWeek;
+    if (num == null) return undefined;
+    return (content?.lessonPlan?.weeklyBreakdown || []).find(
+      (w: any) => w.week === num,
+    );
+  };
+
   const generateOnlyWorksheet = async (basedOnSlides: boolean = false) => {
     if (!lessonInput.trim() && !basedOnSlides && !fileContext) return;
     setGeneratingMessage(
@@ -13418,13 +13448,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
            when there IS one to tie them to. A teacher who uploaded a file
            wants questions on that file, and one working from a bare topic has
            taught nothing yet for a worksheet to check. */
-        ...(!fileContext && content?.lessonPack
-          ? lessonContextFor(
-              (content?.lessonPlan?.weeklyBreakdown || []).find(
-                (w: any) => w.week === content?.lessonPack?.week,
-              ),
-            )
-          : {}),
+        ...(!fileContext ? lessonContextFor(worksheetContextWeek()) : {}),
       },
       basedOnSlides ? content?.slides : undefined,
       // PHASED RENDERING: paint the worksheet as each phase lands so it feels
@@ -32931,7 +32955,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     onChange={(e) => setYearGroup(e.target.value)}
                     className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold"
                   >
-                    {["General", ...LESSON_YEAR_GROUPS, "Year 12"].map((y) => (
+                    {Array.from(
+                      new Set(
+                        // yearGroup is in the list so a class carried over from
+                        // a lesson plan still shows in the dropdown.
+                        ["General", ...LESSON_YEAR_GROUPS, "Year 12", yearGroup].filter(
+                          Boolean,
+                        ),
+                      ),
+                    ).map((y) => (
                       <option key={y} value={y}>
                         {y}
                       </option>
@@ -32976,6 +33008,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     className="w-full p-2 bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl text-sm font-bold outline-none focus:border-[#059669]"
                   >
                     <option value="">Select Cambridge Subject...</option>
+                    {/* A subject carried over from a lesson plan is not always
+                        one of the Cambridge names. Without this the dropdown
+                        read "Select Cambridge Subject..." even though a subject
+                        was set, which looks like an empty form. */}
+                    {subject &&
+                      !CAMBRIDGE_SUBJECTS.some((g) =>
+                        g.subjects.includes(subject),
+                      ) && <option value={subject}>{subject}</option>}
                     {CAMBRIDGE_SUBJECTS.map((g) => (
                       <optgroup key={g.group} label={g.group}>
                         {g.subjects.map((s) => (
@@ -33178,6 +33218,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   </p>
                 </div>
                 {/* Selection Styles Removed */}
+
+                {worksheetPlanWeek != null && !fileContext && (
+                  <p className="text-[10px] font-bold text-[#059669] bg-[#F0FDF4] border-2 border-dashed border-[#A7F3D0] rounded-xl px-3 py-2 leading-snug">
+                    Following your lesson plan — Week {worksheetPlanWeek}. Change
+                    anything above and generate again; the questions stay on
+                    what this week teaches.
+                  </p>
+                )}
 
                 <button
                   onClick={() => generateOnlyWorksheet(false)}
