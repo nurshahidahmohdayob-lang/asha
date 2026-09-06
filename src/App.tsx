@@ -24882,6 +24882,26 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                               Changes
                                             </button>
                                           )}
+                                          {/* Spelled out rather than left as a
+                                              click on the green button: nobody
+                                              can tell a finished step is still
+                                              clickable, so a mis-click looked
+                                              permanent. */}
+                                          {(undoCoord || undoHod) && (
+                                            <button
+                                              onClick={() =>
+                                                undoApproval(project)
+                                              }
+                                              title={
+                                                undoCoord
+                                                  ? "Undo the Coordinator approval — back to step 2"
+                                                  : "Undo the Head of Department approval — back to step 1"
+                                              }
+                                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white text-[#7C7A65] border-2 border-[#E7E5D8] text-[9px] font-black uppercase tracking-widest hover:bg-[#F9F8F0] hover:text-[#064E3B] hover:border-[#D1FAE5] transition-all active:scale-95"
+                                            >
+                                              <RotateCcw size={11} /> Undo
+                                            </button>
+                                          )}
                                         </div>
                                       )}
                                     </div>
