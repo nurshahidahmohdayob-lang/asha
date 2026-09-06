@@ -529,8 +529,11 @@ export function createSupabaseStore(getToken: TokenGetter) {
       void tick();
       const timer = setInterval(() => void tick(), POLL_MS);
       // Coming back to the tab refetches at once, so a tab that polled nothing
-      // while hidden is up to date the moment it is looked at again.
-      const wake = () => void tick();
+      // while hidden is up to date the moment it is looked at again. Forced,
+      // because a poll already in flight was started while the tab was hidden
+      // and may have been cut short — dropping the wake behind it is how a
+      // screen sits on stale rows until it is reloaded.
+      const wake = () => void tick(true);
       window.addEventListener("focus", wake);
       document.addEventListener("visibilitychange", wake);
       // And a write in this tab shows without waiting for the next poll.

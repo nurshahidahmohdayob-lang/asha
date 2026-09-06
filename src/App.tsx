@@ -4337,24 +4337,98 @@ const SCHOOL_DIVISIONS = [
   "Admin",
 ] as const;
 
+/** What the school calls a division, against what everywhere else calls it.
+ *
+ *  The staff API names the PROGRAMME, not the division: the home school runs
+ *  on the ACE curriculum and Zera Plus is registered as Plus Education. Left
+ *  unmapped every one of those names failed to match and the whole school
+ *  filed under "Not set". */
+const DIVISION_ALIASES: Record<string, string> = {
+  ace: "Home School",
+  homeschool: "Home School",
+  "home school": "Home School",
+  "zera home school": "Home School",
+  cambridge: "Cambridge",
+  "zera cambridge": "Cambridge",
+  "plus education": "Zera Plus",
+  plus: "Zera Plus",
+  "zera plus": "Zera Plus",
+  "zera plus education": "Zera Plus",
+  admin: "Admin",
+  administration: "Admin",
+  "admin staff": "Admin",
+};
+
+/** One division name, in the school's own spelling, or "" if it is not one of
+ *  the four. Used for anything arriving from outside the app, so "cambridge",
+ *  "ZERA PLUS" and "Plus Education" all land in the right place. */
+const matchDivision = (raw: any): string => {
+  const want = String(raw ?? "").trim().toLowerCase();
+  if (!want) return "";
+  return (
+    SCHOOL_DIVISIONS.find((d) => d.toLowerCase() === want) ||
+    DIVISION_ALIASES[want] ||
+    ""
+  );
+};
+
+/** The division of someone the staff API files under none.
+ *
+ *  There is no "Admin" among the API's divisions — it lists teaching
+ *  programmes — so the office carries nothing at all, and the school's fourth
+ *  division would never appear. A job title settles the clear cases; anything
+ *  else stays "Not set" and waits to be chosen by hand, because a wrong
+ *  division is worse than a blank one. */
+const ADMIN_JOB_TITLES = [
+  "ceo",
+  "accountant",
+  "finance",
+  "admission",
+  "general admin",
+  "administrative",
+  "hr admin",
+  "human resource",
+  "operation",
+  "grocer",
+  "payroll",
+  "receptionist",
+  "secretary",
+];
+
+const divisionFromJobTitle = (title: any): string => {
+  const t = String(title ?? "").trim().toLowerCase();
+  if (!t) return "";
+  // A principal belongs to the division they run, not to the office.
+  if (t.includes("homeschool") || t.includes("home school")) return "Home School";
+  if (t.includes("plus education")) return "Zera Plus";
+  if (t.includes("cambridge")) return "Cambridge";
+  return ADMIN_JOB_TITLES.some((k) => t.includes(k)) ? "Admin" : "";
+};
+
 /** The division on a record from the staff API.
  *
- *  Read across the shapes an API of this kind uses — a plain string, a
- *  snake_case name, or a nested object — because guessing one and getting it
- *  wrong looks exactly like the field not being sent at all, and silently
- *  files the whole school under "Not set". Matched to the school's own
- *  spelling, so "cambridge" and "ZERA PLUS" both land correctly. */
+ *  The API sends `divisions` — an ARRAY of { id, name } — and someone can hold
+ *  more than one. Reading a singular `division` field, as this did, found
+ *  nothing on every record in the school. The other shapes are still read
+ *  after it in case the API changes back. Extra hats ("Extra-Curricular") are
+ *  not divisions, so the first name that IS one of the four wins. */
 const divisionFromApi = (staff: any): string => {
-  const raw =
-    staff?.division?.name ??
-    staff?.division ??
-    staff?.division_name ??
-    staff?.divisionName ??
-    staff?.department ??
-    "";
-  const want = String(raw).trim().toLowerCase();
-  if (!want) return "";
-  return SCHOOL_DIVISIONS.find((d) => d.toLowerCase() === want) || String(raw).trim();
+  const listed = (Array.isArray(staff?.divisions) ? staff.divisions : []).map(
+    (d: any) => (typeof d === "string" ? d : d?.name),
+  );
+  const candidates = [
+    ...listed,
+    staff?.division?.name,
+    staff?.division,
+    staff?.division_name,
+    staff?.divisionName,
+    staff?.department,
+  ];
+  for (const raw of candidates) {
+    const hit = matchDivision(raw);
+    if (hit) return hit;
+  }
+  return divisionFromJobTitle(staff?.job_title);
 };
 
 /** Staff with no division yet are shown under this rather than dropped — a
@@ -4363,14 +4437,10 @@ const divisionFromApi = (staff: any): string => {
 const NO_DIVISION = "Not set";
 
 /** Match a stored division to the school's own spelling, so a record synced
- *  from elsewhere as "cambridge" or "ZERA PLUS" still files correctly. */
-const divisionOf = (teacher: any): string => {
-  const raw = String(teacher?.division ?? "").trim().toLowerCase();
-  if (!raw) return NO_DIVISION;
-  return (
-    SCHOOL_DIVISIONS.find((d) => d.toLowerCase() === raw) || NO_DIVISION
-  );
-};
+ *  from elsewhere as "cambridge", "ZERA PLUS" or "Plus Education" still files
+ *  correctly rather than dropping to "Not set". */
+const divisionOf = (teacher: any): string =>
+  matchDivision(teacher?.division) || NO_DIVISION;
 
 /** The year groups a lesson plan can be written for.
  *
@@ -11269,6 +11339,50 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         approvedBy: teacherName,
         reviewHistory: appendReviewEntry(plan, "Approved by Coordinator", ""),
       });
+    } catch (err) {
+      handleFirestoreError(
+        err,
+        OperationType.WRITE,
+        `submitted_plans/${plan.id}`,
+      );
+    }
+  };
+
+  // Take a sign-off back. A mis-click on Approved had no way back short of
+  // editing the database by hand, and the plan meanwhile reads as cleared for
+  // use. Undoing returns it to the step it was at, keeping the sign-off from
+  // the step before, and says so in the history rather than pretending the
+  // approval never happened.
+  const undoApproval = async (plan: any) => {
+    if (!plan?.id) return;
+    const stage = getReviewStage(plan);
+    if (stage !== "approved" && stage !== "pending_coordinator") return;
+    const undoingCoordinator = stage === "approved";
+    const who = undoingCoordinator ? "Coordinator" : "Head of Department";
+    if (
+      !window.confirm(
+        `Undo the ${who} approval on this plan? It goes back to waiting for the ${who}.`,
+      )
+    )
+      return;
+    try {
+      await store.patch(
+        "submitted_plans",
+        plan.id,
+        undoingCoordinator
+          ? {
+              reviewStage: "pending_coordinator",
+              approvedAt: null,
+              approvedBy: "",
+              reviewHistory: appendReviewEntry(plan, "Approval undone", ""),
+            }
+          : {
+              reviewStage: "pending_hod",
+              hodApprovedAt: null,
+              hodApprovedBy: "",
+              reviewHistory: appendReviewEntry(plan, "HOD approval undone", ""),
+            },
+      );
     } catch (err) {
       handleFirestoreError(
         err,
@@ -24523,6 +24637,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             const coordDone = stage === "approved";
                             const hodTurn = stage === "pending_hod";
                             const coordTurn = stage === "pending_coordinator";
+                            // A sign-off can be taken back one step at a time,
+                            // by whoever is allowed to give it, so a mis-click
+                            // is a click to fix rather than a job for me.
+                            const undoCoord = coordDone && canReviewAsCoordinator;
+                            const undoHod = coordTurn && canReviewAsHod;
                             const folder = submittedFolders.find(
                               (f) => f.id === project.folderId,
                             );
@@ -24661,16 +24780,24 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                         <div className="flex items-center gap-1.5">
                                           <button
                                             onClick={() =>
-                                              hodApprovePlan(project)
+                                              hodDone
+                                                ? undoApproval(project)
+                                                : hodApprovePlan(project)
                                             }
                                             disabled={
-                                              !hodTurn || !canReviewAsHod
+                                              hodDone
+                                                ? !undoHod
+                                                : !hodTurn || !canReviewAsHod
                                             }
                                             title={
                                               hodDone
                                                 ? `Approved by the Head of Department${
                                                     project.hodApprovedBy
                                                       ? ` — ${project.hodApprovedBy}`
+                                                      : ""
+                                                  }${
+                                                    undoHod
+                                                      ? " — click to undo"
                                                       : ""
                                                   }`
                                                 : !canReviewAsHod
@@ -24680,7 +24807,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                             className={cn(
                                               "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
                                               hodDone
-                                                ? "bg-emerald-50 text-emerald-700 border-2 border-emerald-200 cursor-default"
+                                                ? cn(
+                                                    "bg-emerald-50 text-emerald-700 border-2 border-emerald-200",
+                                                    undoHod
+                                                      ? "hover:bg-emerald-100 hover:border-emerald-300 active:scale-95"
+                                                      : "cursor-default",
+                                                  )
                                                 : hodTurn && canReviewAsHod
                                                   ? "bg-[#059669] text-white hover:bg-[#047857] active:scale-95"
                                                   : "bg-gray-100 text-gray-400 cursor-not-allowed",
@@ -24691,17 +24823,25 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                           </button>
                                           <button
                                             onClick={() =>
-                                              coordinatorApprovePlan(project)
+                                              coordDone
+                                                ? undoApproval(project)
+                                                : coordinatorApprovePlan(project)
                                             }
                                             disabled={
-                                              !coordTurn ||
-                                              !canReviewAsCoordinator
+                                              coordDone
+                                                ? !undoCoord
+                                                : !coordTurn ||
+                                                  !canReviewAsCoordinator
                                             }
                                             title={
                                               coordDone
                                                 ? `Approved by the Coordinator${
                                                     project.approvedBy
                                                       ? ` — ${project.approvedBy}`
+                                                      : ""
+                                                  }${
+                                                    undoCoord
+                                                      ? " — click to undo"
                                                       : ""
                                                   }`
                                                 : !hodDone
@@ -24713,7 +24853,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                             className={cn(
                                               "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
                                               coordDone
-                                                ? "bg-emerald-50 text-emerald-700 border-2 border-emerald-200 cursor-default"
+                                                ? cn(
+                                                    "bg-emerald-50 text-emerald-700 border-2 border-emerald-200",
+                                                    undoCoord
+                                                      ? "hover:bg-emerald-100 hover:border-emerald-300 active:scale-95"
+                                                      : "cursor-default",
+                                                  )
                                                 : coordTurn &&
                                                     canReviewAsCoordinator
                                                   ? "bg-[#064E3B] text-white hover:bg-[#0B6B4F] active:scale-95"
