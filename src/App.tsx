@@ -5497,7 +5497,20 @@ const termWeekLabel = (w: { start: string; end: string }): string => {
   return `${dm(w.start)}-${dm(w.end)}`;
 };
 
-const getWeekFromDate = (dateStr: string): number | null => {
+/** The first date out of whatever a plan carries.
+ *
+ *  A plan names the DAYS it is taught — "2026-09-02, 2026-09-03" — and a list
+ *  is not a date: it parsed as invalid, the week could not be read from it,
+ *  and every such plan fell back to being called Week 1. Ranges are written
+ *  with an en dash or "to"; a plain hyphen is left alone because "26-8-2026"
+ *  is one date, not two. */
+const dateTokens = (raw: string): string[] =>
+  String(raw)
+    .split(/[,;]|\s+(?:to|until|till)\s+|[—–]/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+const weekFromOneDate = (dateStr: string): number | null => {
   if (!dateStr) return null;
   const cleaned = dateStr.trim();
   if (!cleaned) return null;
@@ -5548,6 +5561,15 @@ const getWeekFromDate = (dateStr: string): number | null => {
     }
   }
   return closest;
+};
+
+const getWeekFromDate = (dateStr: string): number | null => {
+  if (!dateStr) return null;
+  for (const token of dateTokens(dateStr)) {
+    const week = weekFromOneDate(token);
+    if (week) return week;
+  }
+  return null;
 };
 
 const getDateForWeek = (weekId: number): string =>
@@ -11480,17 +11502,26 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   // selector's week. A plan's own date decides its week; the week it was last
   // filed under comes next, and only then the selector.
   const weekForPlan = (planContent: any, existingWeekId?: number): number => {
-    const fromDate = getWeekFromDate(planContent?.lessonPlan?.date || "");
-    if (fromDate) return fromDate;
-    // A plan that covers exactly one week names it. Without this an undated
-    // plan fell through to whatever the week picker happened to be showing,
-    // so a teacher submitting several plans in one sitting filed them all
-    // under the same week and the tracker showed one tick for all of them.
+    // A plan that covers exactly one week names it, and a number past 1 can
+    // only have been chosen — so it leads, ahead of a date that may be the
+    // day the plan was written rather than the day it is taught.
+    //
+    // A 1 is different: a single-week plan is numbered 1 by default whichever
+    // week it is really for, so it means "not said" rather than "week 1".
+    // Reading it as an answer filed a plan written for Week 2 under Week 1
+    // however the teacher dated it.
     const weeks = planContent?.lessonPlan?.weeklyBreakdown || [];
     if (weeks.length === 1) {
       const only = Number(weeks[0]?.week);
-      if (only > 0) return only;
+      if (only > 1) return only;
     }
+    // Then the days it is taught on. The week picker writes these, so this is
+    // the teacher's own answer.
+    const fromDate = getWeekFromDate(planContent?.lessonPlan?.date || "");
+    if (fromDate) return fromDate;
+    // Failing both, the week it was last filed under, then the picker — never
+    // the picker alone, or a teacher submitting several plans in one sitting
+    // files them all under the same week.
     return existingWeekId || selectedWeekForSubmission;
   };
 
