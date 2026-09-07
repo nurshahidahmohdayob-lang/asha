@@ -16155,6 +16155,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const [lpSearch, setLpSearch] = useState("");
   const [lpYearFilter, setLpYearFilter] = useState("");
   const [lpSubjectFilter, setLpSubjectFilter] = useState("");
+  // Term week, 0 for all of them.
+  const [lpWeekFilter, setLpWeekFilter] = useState(0);
   // Which half of the board is on screen: the plans still to send, or the ones
   // already with the Admin.
   const [lpBoardTab, setLpBoardTab] = useState<"todo" | "submitted">("todo");
@@ -37472,6 +37474,42 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       new Set(inYear.map(planSubject).filter(Boolean)),
     ).sort((a, b) => a.localeCompare(b));
 
+    /** The term weeks a plan covers.
+     *
+     *  The week it was SUBMITTED under comes first, because that is the one
+     *  its card shows and the one the Head of Department sees — a plan's own
+     *  numbering starts at one whichever week it is really for. A plan that
+     *  spans several weeks answers with all of them, so it turns up under
+     *  each rather than under none. */
+    const planWeeks = (p: any): number[] => {
+      const filed = Number(submittedWeekByProject.get(p.id)) || 0;
+      const weeks = p?.content?.lessonPlan?.weeklyBreakdown || [];
+      if (weeks.length === 1) {
+        const one = filed || Number(weeks[0]?.week) || 0;
+        return one ? [one] : [];
+      }
+      const spanned = weeks
+        .map((w: any) => Number(w?.week))
+        .filter((n: number) => n > 0);
+      return spanned.length ? spanned : filed ? [filed] : [];
+    };
+
+    // Weeks are read from the plans left after the year and subject shelves,
+    // so the counts beside them are the counts a teacher would actually get.
+    const inYearSubject = lpSubjectFilter
+      ? inYear.filter((p: any) => sameSubject(planSubject(p), lpSubjectFilter))
+      : inYear;
+    const weeksHere = Array.from(
+      // The week being filtered on stays in the list even when nothing left
+      // matches it, or there would be no chip to press to get back out.
+      new Set([
+        ...inYearSubject.flatMap(planWeeks),
+        ...(lpWeekFilter ? [lpWeekFilter] : []),
+      ]),
+    ).sort((a, b) => a - b);
+    const countForWeek = (n: number) =>
+      inYearSubject.filter((p: any) => planWeeks(p).includes(n)).length;
+
     // How many plans sit behind each shelf, so a teacher can see where their
     // work is without opening every one.
     const countForYear = (y: string) =>
@@ -37486,6 +37524,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       if (lpYearFilter && !sameYearGroup(planYear(p), lpYearFilter)) return false;
       if (lpSubjectFilter && !sameSubject(planSubject(p), lpSubjectFilter))
         return false;
+      if (lpWeekFilter && !planWeeks(p).includes(lpWeekFilter)) return false;
       return matchesSearch(p);
     });
 
@@ -37765,7 +37804,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             {/* Finding a plan again. The shelves are built from what the
                 plans say they are for, so nothing has to be filed and nothing
                 goes stale when a plan's year or subject changes. */}
-            {(inTab.length > 3 || needle || lpYearFilter || lpSubjectFilter) && (
+            {(inTab.length > 3 ||
+              needle ||
+              lpYearFilter ||
+              lpSubjectFilter ||
+              lpWeekFilter) && (
               <div className="space-y-3 pb-1">
                 <div className="flex items-center gap-2">
                   <div className="relative flex-1 max-w-md">
@@ -37874,6 +37917,48 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-[#854D0E] hover:bg-[#FFFBEB]"
                       >
                         All subjects
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* The term week, so a teacher can pull up everything they
+                    are teaching this week across every year and subject —
+                    which is how the week before a week is actually spent. */}
+                {weeksHere.length > 1 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
+                      Week
+                    </span>
+                    {weeksHere.map((n) => {
+                      const on = lpWeekFilter === n;
+                      return (
+                        <button
+                          key={`w-${n}`}
+                          onClick={() => setLpWeekFilter(on ? 0 : n)}
+                          title={`Week ${n} — ${termWeekLabel(
+                            TERM_WEEKS.find((w) => w.id === n) || TERM_WEEKS[0],
+                          )}`}
+                          className={cn(
+                            "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 transition-all",
+                            on
+                              ? "bg-[#FACC15] text-[#064E3B] border-[#FACC15]"
+                              : "bg-white text-[#064E3B] border-[#D1FAE5] hover:border-[#059669]",
+                          )}
+                        >
+                          Week {n}
+                          <span className="ml-1.5 opacity-60">
+                            {countForWeek(n)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {lpWeekFilter > 0 && (
+                      <button
+                        onClick={() => setLpWeekFilter(0)}
+                        className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-[#854D0E] hover:bg-[#FFFBEB]"
+                      >
+                        All weeks
                       </button>
                     )}
                   </div>
