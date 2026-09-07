@@ -153,6 +153,25 @@ export interface PDLog {
   records: PDRecord[];
 }
 
+/** The marking scheme for a worksheet — worked out after the paper is
+ *  written, because the worksheet itself carries no answers. */
+export interface AnswerScheme {
+  title: string;
+  totalMarks: number;
+  sections: {
+    title: string;
+    answers: {
+      /** The question's place in its section, from 1. */
+      number: number;
+      question?: string;
+      answer: string;
+      marks: number;
+      /** What earns the marks, where the answer is not simply right or wrong. */
+      guidance?: string;
+    }[];
+  }[];
+}
+
 export interface WorksheetSection {
   title: string;
   instructions: string;
@@ -399,6 +418,9 @@ export interface EduContent {
     description?: string;
     methodology?: string;
     sections: WorksheetSection[];
+    /** Kept with the worksheet so it is still there when the plan is
+     *  reopened, and so it travels with a submitted plan. */
+    answerScheme?: AnswerScheme;
     interactiveSortingGame?: {
       title: string;
       activityNumber: string;

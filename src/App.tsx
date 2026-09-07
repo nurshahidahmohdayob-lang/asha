@@ -56,6 +56,7 @@ import {
   Minimize2,
   RotateCw,
   RotateCcw,
+  ClipboardCheck,
   PlusCircle,
   Undo,
   Redo,
@@ -3467,6 +3468,7 @@ import {
   translationLanguagesFor,
   relevelReadingPassage,
   relevelWorksheet,
+  generateAnswerScheme,
   generateInteractiveSortingGame,
   generateLeveledQuestions,
   askAI,
@@ -9362,6 +9364,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     // sensible total instead of collapsing to 0 (which would generate nothing).
     setNumQuestions(sum > 0 ? sum : autoQuestionCount);
   }, [typeCounts, autoQuestionCount]);
+  // The marking scheme is generated on request, not with every worksheet — a
+  // teacher writing a paper does not always want one, and it is a second round
+  // trip. `schemeOpen` is only whether the panel is showing.
+  const [isMakingScheme, setIsMakingScheme] = useState(false);
+  const [schemeOpen, setSchemeOpen] = useState(false);
+
   // Which week of the lesson plan the worksheet on screen was generated from.
   // Kept so a teacher who wants different question types can change them and
   // press Generate again — the same week's lesson goes back to the generator
@@ -13531,6 +13539,41 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       );
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  /** Work out the marking scheme for the worksheet on screen.
+   *
+   *  Read from the questions as they stand rather than kept from generation,
+   *  so a teacher who edited a question gets the scheme for the question they
+   *  actually set. */
+  const makeAnswerScheme = async () => {
+    const ws = content?.worksheet;
+    if (!ws?.sections?.length || isMakingScheme) return;
+    setIsMakingScheme(true);
+    try {
+      const scheme = await generateAnswerScheme(
+        {
+          title: ws.title,
+          readingPassage: ws.readingPassage,
+          sections: ws.sections,
+        },
+        {
+          subject: content?.lessonPlan?.subject || subject,
+          yearGroup: content?.lessonPlan?.class || yearGroup,
+          language: assessmentLanguage,
+        },
+      );
+      setContent((prev) =>
+        prev?.worksheet
+          ? { ...prev, worksheet: { ...prev.worksheet, answerScheme: scheme } }
+          : prev,
+      );
+      setSchemeOpen(true);
+    } catch (err: any) {
+      handleEduError(err, "Generate answer scheme");
+    } finally {
+      setIsMakingScheme(false);
     }
   };
 
@@ -33464,6 +33507,38 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     >
                       <Download size={16} /> Download DOCX
                     </button>
+                    {/* The paper the children get carries no answers, so the
+                        scheme is worked out from the questions on request. */}
+                    <button
+                      onClick={() =>
+                        content?.worksheet?.answerScheme && !isMakingScheme
+                          ? setSchemeOpen((v) => !v)
+                          : makeAnswerScheme()
+                      }
+                      disabled={isMakingScheme || !content?.worksheet?.sections?.length}
+                      className="w-full py-3 bg-[#064E3B] text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-[#0B6B4F] transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {isMakingScheme ? (
+                        <Loader2 className="animate-spin" size={16} />
+                      ) : (
+                        <ClipboardCheck size={16} />
+                      )}{" "}
+                      {isMakingScheme
+                        ? "Writing the scheme…"
+                        : content?.worksheet?.answerScheme
+                          ? schemeOpen
+                            ? "Hide Answer Scheme"
+                            : "Show Answer Scheme"
+                          : "Generate Answer Scheme"}
+                    </button>
+                    {content?.worksheet?.answerScheme && !isMakingScheme && (
+                      <button
+                        onClick={() => makeAnswerScheme()}
+                        className="w-full py-2 text-[10px] font-black uppercase tracking-widest text-[#064E3B]/50 hover:text-[#064E3B] transition-colors flex items-center justify-center gap-1.5"
+                      >
+                        <RotateCcw size={12} /> Redo the scheme
+                      </button>
+                    )}
                     <button
                       onClick={() => openAssessmentHTML()}
                       className="w-full py-3 bg-gradient-to-r from-[#2563eb] to-[#7c3aed] text-white rounded-xl text-xs font-black uppercase tracking-widest hover:opacity-90 transition-all shadow-md flex items-center justify-center gap-2"
@@ -33490,6 +33565,93 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             </aside>
           )}
           <main className="flex-1 p-8 overflow-y-auto bg-[#F0FDF4]/50 custom-scrollbar">
+            {/* The marking scheme, above the paper it marks. Its own printable
+                sheet — a teacher marks from this, not from the worksheet. */}
+            {schemeOpen && content?.worksheet?.answerScheme && (
+              <div
+                id="answerSchemePanel"
+                className="mb-6 rounded-2xl overflow-hidden border-2 border-[#064E3B] shadow-lg bg-white"
+              >
+                <div className="bg-[#064E3B] text-white px-4 py-2.5 flex items-center justify-between gap-3 print:hidden">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <ClipboardCheck size={16} className="text-[#FACC15] shrink-0" />
+                    <span className="font-black uppercase tracking-wide text-xs truncate">
+                      Answer Scheme
+                    </span>
+                    <span className="text-[10px] font-bold opacity-70 shrink-0">
+                      {content.worksheet.answerScheme.totalMarks} marks
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => downloadAnswerSchemeDOCX()}
+                      className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-[11px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-colors"
+                    >
+                      <Download size={13} /> DOCX
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSchemeOpen(false)}
+                      className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-[11px] font-black uppercase tracking-wider transition-colors"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+                <div className="p-6 space-y-6">
+                  <div>
+                    <h3 className="text-lg font-black text-[#064E3B]">
+                      {content.worksheet.answerScheme.title}
+                    </h3>
+                    <p className="text-[11px] font-bold uppercase tracking-widest text-[#064E3B]/40">
+                      {[
+                        content?.lessonPlan?.class || yearGroup,
+                        content?.lessonPlan?.subject || subject,
+                        `${content.worksheet.answerScheme.totalMarks} marks`,
+                      ]
+                        .filter(Boolean)
+                        .join(" • ")}
+                    </p>
+                  </div>
+                  {content.worksheet.answerScheme.sections.map((sec, si) => (
+                    <div key={si} className="space-y-2">
+                      <h4 className="text-xs font-black uppercase tracking-widest text-[#064E3B] bg-[#F0FDF4] border-2 border-[#D1FAE5] rounded-xl px-3 py-2">
+                        {sec.title}
+                      </h4>
+                      <div className="divide-y divide-[#E5E7EB]">
+                        {(sec.answers || []).map((a, ai) => (
+                          <div key={ai} className="py-2.5 flex gap-3">
+                            <span className="w-8 shrink-0 text-sm font-black text-[#059669]">
+                              Q{a.number ?? ai + 1}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              {a.question && (
+                                <p className="text-[11px] font-bold text-[#064E3B]/45 truncate">
+                                  {a.question}
+                                </p>
+                              )}
+                              <p className="text-sm font-bold text-[#111827] whitespace-pre-line">
+                                {a.answer}
+                              </p>
+                              {a.guidance && (
+                                <p className="text-xs font-medium text-[#7C7A65] italic mt-0.5">
+                                  {a.guidance}
+                                </p>
+                              )}
+                            </div>
+                            <span className="shrink-0 self-start px-2 py-0.5 rounded-full bg-[#F0FDF4] border border-[#D1FAE5] text-[10px] font-black text-[#064E3B]">
+                              {a.marks} {a.marks === 1 ? "mark" : "marks"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* INLINE interactive worksheet — renders right here in the
                 worksheet view instead of opening a separate full-screen tab. */}
             {interactiveDoc && (
@@ -42110,6 +42272,100 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     a.download = `${safeBase.replace(/\s+/g, "_")}${
       levelLabel ? "_" + levelLabel + "L" : ""
     }_Worksheet.docx`;
+    a.click();
+  };
+
+  /** The marking scheme as its own document — a teacher marks from a printed
+   *  sheet beside the papers, not from a screen. */
+  const downloadAnswerSchemeDOCX = async () => {
+    const scheme = content?.worksheet?.answerScheme;
+    if (!scheme) return;
+
+    const children: any[] = [
+      new Paragraph({
+        text: scheme.title,
+        heading: HeadingLevel.HEADING_1,
+        alignment: AlignmentType.CENTER,
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 200 },
+        children: [
+          new TextRun({
+            text: "ANSWER SCHEME",
+            bold: true,
+            size: 26,
+            color: "059669",
+          }),
+        ],
+      }),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 300 },
+        children: [
+          new TextRun({
+            text: [
+              content?.lessonPlan?.class || yearGroup,
+              content?.lessonPlan?.subject || subject,
+              `Total: ${scheme.totalMarks} marks`,
+            ]
+              .filter(Boolean)
+              .join("  •  "),
+            size: 20,
+            color: "666666",
+          }),
+        ],
+      }),
+    ];
+
+    for (const sec of scheme.sections || []) {
+      children.push(
+        new Paragraph({
+          text: sec.title,
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 240, after: 120 },
+        }),
+      );
+      for (const [i, a] of (sec.answers || []).entries()) {
+        children.push(
+          new Paragraph({
+            spacing: { after: a.guidance ? 40 : 120 },
+            children: [
+              new TextRun({ text: `Q${a.number ?? i + 1}. `, bold: true }),
+              new TextRun({ text: String(a.answer || "") }),
+              new TextRun({
+                text: `   [${a.marks} ${a.marks === 1 ? "mark" : "marks"}]`,
+                bold: true,
+                color: "059669",
+              }),
+            ],
+          }),
+        );
+        if (a.guidance) {
+          children.push(
+            new Paragraph({
+              spacing: { after: 120 },
+              children: [
+                new TextRun({ text: a.guidance, italics: true, color: "666666" }),
+              ],
+            }),
+          );
+        }
+      }
+    }
+
+    const doc = new Document({
+      sections: [{ properties: { type: SectionType.CONTINUOUS }, children }],
+    });
+    const blob = await Packer.toBlob(doc);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const safeBase = (content?.worksheet?.title || "Worksheet").replace(
+      /[\\/:*?"<>|]+/g,
+      "",
+    );
+    a.download = `${safeBase.replace(/\s+/g, "_")}_Answer_Scheme.docx`;
     a.click();
   };
 

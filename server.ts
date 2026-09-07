@@ -81,7 +81,7 @@ async function startServer() {
       const gsPath = "./src/services/geminiService.ts";
       const gsSpecifier =
         process.env.NODE_ENV === "production" ? gsPath : `${gsPath}?t=${Date.now()}`;
-      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateLessonActivities, generateEduContent, suggestWeeklyInput, importLessonPlan, suggestReflection, translateContent, generateEduNotes, relevelReadingPassage, generateInteractiveSortingGame, askAI, generatePosterImage, generateLeveledQuestions, relevelWorksheet } = await import(gsSpecifier);
+      const { generateSlides, generateWorksheet, generateReadingProgram, generateLessonPlan, generateSessionPlan, generateWeeklyPlan, generateLessonActivities, generateEduContent, suggestWeeklyInput, importLessonPlan, suggestReflection, translateContent, generateEduNotes, relevelReadingPassage, generateInteractiveSortingGame, askAI, generatePosterImage, generateLeveledQuestions, relevelWorksheet, generateAnswerScheme } = await import(gsSpecifier);
       
       let result;
       switch (type) {
@@ -99,6 +99,8 @@ async function startServer() {
         case 'importPlan': result = await importLessonPlan(lessonInput, options); break;
         // A draft reflection, written from the plan as taught.
         case 'reflection': result = await suggestReflection(options.plan, options); break;
+        // The marking scheme for a worksheet that has already been written.
+        case 'answerScheme': result = await generateAnswerScheme(JSON.parse(lessonInput), options); break;
         // A finished worksheet or lesson, in another language, same shape.
         case 'translate': result = await translateContent(JSON.parse(lessonInput), options.targetLanguage); break;
         case 'all': result = await generateEduContent(lessonInput, options); break;
@@ -168,6 +170,7 @@ async function startServer() {
           suggest: () => gs.suggestWeeklyInput(lessonInput, options, options.weekNum),
           importPlan: () => gs.importLessonPlan(lessonInput, options),
           reflection: () => gs.suggestReflection(options.plan, options),
+          answerScheme: () => gs.generateAnswerScheme(JSON.parse(lessonInput), options),
           translate: () => gs.translateContent(JSON.parse(lessonInput), options.targetLanguage),
           all: () => gs.generateEduContent(lessonInput, options),
           relevelPassage: () => gs.relevelReadingPassage(lessonInput, options.targetLexile, options.subject, options.yearGroup),

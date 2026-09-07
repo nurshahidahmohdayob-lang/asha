@@ -5082,6 +5082,141 @@ ${JSON.stringify(worksheet)}`;
   }
 }
 
+/** The marking scheme for a worksheet that has already been written.
+ *
+ *  The worksheet itself carries no answers — deliberately, since it is the
+ *  paper the children get. So the scheme is worked out afterwards from the
+ *  questions as they stand, which also means a teacher who edited a question
+ *  gets a scheme for the question they actually set.
+ */
+export async function generateAnswerScheme(
+  worksheet: {
+    title: string;
+    readingPassage?: string;
+    sections: WorksheetSection[];
+  },
+  options: { subject?: string; yearGroup?: string; language?: string } = {},
+): Promise<{
+  title: string;
+  totalMarks: number;
+  sections: {
+    title: string;
+    answers: {
+      /** The question's place in its section, from 1. */
+      number: number;
+      question: string;
+      answer: string;
+      marks: number;
+      /** What earns the marks — for anything not simply right or wrong. */
+      guidance?: string;
+    }[];
+  }[];
+}> {
+  if (typeof window !== "undefined") {
+    return callAiProxy("answerScheme", JSON.stringify(worksheet), options);
+  }
+
+  const { subject = "", yearGroup = "", language = "" } = options;
+  const questionCount = (worksheet?.sections || []).reduce(
+    (n, sec: any) => n + (sec?.questions?.length || 0),
+    0,
+  );
+  if (!questionCount)
+    throw new Error("There are no questions to write a scheme for yet.");
+
+  const prompt = `You are an experienced Cambridge teacher writing the MARKING SCHEME for the worksheet below.
+
+${subject ? `SUBJECT: ${subject}` : ""}
+${yearGroup ? `YEAR GROUP: ${yearGroup}` : ""}
+${language ? `The worksheet is written in ${language}. Write the scheme in the SAME language.` : "British English."}
+
+Work through every section in order and every question in order. Miss none, invent none, and keep them in the order they appear — the numbering must match the paper the children have.
+
+HOW TO ANSWER EACH TYPE:
+- multiple-choice: give the letter AND the text, e.g. "B — clothing". Exactly one option is correct; choose it from the options given.
+- true-false: "True" or "False", then a short clause saying why.
+- fill-in-the-blanks: the word or words that go in each blank, in order.
+- short-answer: a model answer in one or two sentences — what a pupil of this year group would be expected to write, not the fullest possible answer.
+- matching: every pair, written "left → right", one per line.
+- sorting / cut-and-paste: each category followed by the items that belong in it.
+- scenario: the answer expected, plus the reasoning that earns it.
+- drawing or creative task: what the drawing must show for full marks. There is no single right answer, so describe what to look for.
+
+MARKS: give each question a whole number of marks. One mark for a recall or single-choice question; two or three where the pupil must explain, justify or produce several parts. Marks must add up to the total you report.
+
+GUIDANCE: for anything not simply right or wrong — short answer, scenario, drawing, explanation — add a one-line note on what earns the marks, and where sensible say what an acceptable alternative looks like. Leave it out for questions with one exact answer.
+
+Do not restate the whole question; the "question" field is a short label so the teacher can find their place — the first few words are enough.
+
+WORKSHEET (JSON):
+${JSON.stringify(worksheet).slice(0, 60000)}`;
+
+  const schema = {
+    type: Type.OBJECT,
+    properties: {
+      title: { type: Type.STRING },
+      totalMarks: { type: Type.NUMBER },
+      sections: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            answers: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  number: { type: Type.NUMBER },
+                  question: { type: Type.STRING },
+                  answer: { type: Type.STRING },
+                  marks: { type: Type.NUMBER },
+                  guidance: { type: Type.STRING },
+                },
+                required: ["number", "answer", "marks"],
+              },
+            },
+          },
+          required: ["title", "answers"],
+        },
+      },
+    },
+    required: ["title", "sections"],
+  };
+
+  const res = await generateContentWithRetry({
+    contents: { parts: [{ text: prompt }] },
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: schema,
+      // Room for a scheme of this many questions, plus the marking notes.
+      maxOutputTokens: Math.min(8000, 700 + questionCount * 190),
+    },
+  });
+  const text = res.text;
+  if (!text) throw new Error("The answer scheme came back empty.");
+  const parsed = parsePossiblyTruncatedJson(text);
+  if (!parsed?.sections?.length)
+    throw new Error("The answer scheme came back empty.");
+
+  // The model is asked for the total; adding it up here means a scheme whose
+  // total was dropped or misadded still shows the right number.
+  const totalMarks = parsed.sections.reduce(
+    (n: number, sec: any) =>
+      n +
+      (sec?.answers || []).reduce(
+        (m: number, a: any) => m + (Number(a?.marks) || 0),
+        0,
+      ),
+    0,
+  );
+  return {
+    title: parsed.title || `${worksheet.title} — Answer Scheme`,
+    ...parsed,
+    totalMarks: totalMarks || Number(parsed.totalMarks) || 0,
+  };
+}
+
 export async function generateInteractiveSortingGame(
   topic: string,
   subject: string,

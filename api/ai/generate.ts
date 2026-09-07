@@ -68,6 +68,7 @@ export default async function handler(req: any, res: any) {
       generatePosterImage,
       generateLeveledQuestions,
       relevelWorksheet,
+      generateAnswerScheme,
     } = gs as any;
 
     let result;
@@ -130,6 +131,10 @@ export default async function handler(req: any, res: any) {
       // The reflection draft. lessonInput carries the whole prompt.
       case "reflection":
         result = await suggestReflection(options?.plan, options);
+        break;
+      // The marking scheme for a worksheet that has already been written.
+      case "answerScheme":
+        result = await generateAnswerScheme(JSON.parse(lessonInput), options);
         break;
       // A finished worksheet or lesson, in another language, same shape.
       case "translate":
