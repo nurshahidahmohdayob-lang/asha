@@ -33507,6 +33507,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     >
                       <Download size={16} /> Download DOCX
                     </button>
+                    {/* The same page the Open button shows, saved instead —
+                        one file that opens in any browser, with nothing to
+                        install and no internet needed to read it. */}
+                    <button
+                      onClick={() => openAssessmentHTML(undefined, { download: true })}
+                      className="w-full py-3 bg-[#F0FDF4] text-[#064E3B] border-2 border-[#059669] rounded-xl text-xs font-black uppercase tracking-widest hover:bg-[#D1FAE5] transition-all shadow-sm flex items-center justify-center gap-2"
+                    >
+                      <Download size={16} /> Download HTML
+                    </button>
                     {/* The paper the children get carries no answers, so the
                         scheme is worked out from the questions on request. */}
                     <button
@@ -42371,12 +42380,18 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
   // Download the paper assessment AND the playful interactive organizer as a
   // single self-contained, offline-capable, interactive HTML file.
-  const openAssessmentHTML = (override?: {
-    title?: string;
-    description?: string;
-    readingPassage?: string;
-    sections: WorksheetSection[];
-  }) => {
+  const openAssessmentHTML = (
+    override?: {
+      title?: string;
+      description?: string;
+      readingPassage?: string;
+      sections: WorksheetSection[];
+    },
+    /* Saving the file and viewing it inline are the same page — everything
+       above this point is the work of FINDING the worksheet to build it from,
+       which is worth doing once rather than twice. */
+    opts?: { download?: boolean },
+  ) => {
     // Count the real (non-placeholder) questions in any worksheet-shaped object.
     const countQuestions = (w: any) =>
       (w?.sections || []).reduce(
@@ -42541,6 +42556,20 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     // Store `ws` so the design picker can re-render other themes instantly.
     const subjectName = (content?.lessonPlan?.subject || subject || "").trim();
     const html = buildInteractiveHTML(ws, title, interactiveDesign, docKind, subjectName);
+
+    if (opts?.download) {
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${title.replace(/[\\/:*?"<>|]+/g, "").replace(/\s+/g, "_")}_${
+        docKind === "assessment" ? "Assessment" : "Worksheet"
+      }.html`;
+      a.click();
+      // Revoked on the next tick so the click has taken the data first.
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return;
+    }
 
     // Show the interactive assessment inline in the worksheet view. Scroll it
     // into view so it can never look like "nothing happened" when the user is
