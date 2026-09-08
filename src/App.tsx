@@ -1046,8 +1046,8 @@ const ZTHEMES: Record<string, any> = {
   forest: { name: "Forest", icon: "🌳", layout: "stack", bg: "#f0fdf4", border: "#16a34a", tx: "#15803d", ty: "#ca8a04", steps: "#15803d", mascot: "🌳🦉", reflect: "linear-gradient(90deg,#15803d,#65a30d)", pal: ["#15803d", "#16a34a", "#65a30d", "#ca8a04", "#0d9488", "#4d7c0f"] },
   candy: { name: "Candy", icon: "🍭", layout: "grid", bg: "#fdf4ff", border: "#d946ef", tx: "#c026d3", ty: "#db2777", steps: "#d946ef", mascot: "🍭🦄", reflect: "linear-gradient(90deg,#d946ef,#ec4899)", pal: ["#c026d3", "#db2777", "#ec4899", "#a855f7", "#8b5cf6", "#f472b6"] },
   template: { name: "Template", icon: "📊", layout: "table", bg: "#f8fafc", border: "#7c3aed", tx: "#6d28d9", ty: "#0d9488", steps: "#7c3aed", mascot: "📝✅", reflect: "linear-gradient(90deg,#7c3aed,#0d9488)", pal: ["#7c3aed", "#2563eb", "#16a34a", "#f97316", "#ec4899", "#0d9488"] },
-  doodle: { name: "Doodle", icon: "✏️", layout: "doodle", bg: "#ffffff", border: "#111111", tx: "#111111", ty: "#111111", steps: "#111111", mascot: "✏️🐱", reflect: "linear-gradient(90deg,#111,#111)", pal: ["#111111", "#111111", "#111111", "#111111", "#111111", "#111111"], extraCss: 'body{background:#fafafa}.sheet{border:3px dashed #111;box-shadow:6px 6px 0 #e5e5e5}.title{-webkit-text-stroke:0;color:#111}.subtitle{background:#fff;border:2px dashed #111;color:#111}.steps{border:2.5px dashed #111;background:#fff}.steps h3{background:#111}.steps li:before{background:#111}.secins{color:#333}.opt{border:2px solid #111;border-radius:18px 6px 16px 8px/8px 16px 6px 18px;color:#111;background:#fff}.opt .ol{border-color:#111;color:#111}.opt.on{background:#111;color:#fff}.opt.on .ol{background:#fff;color:#111}.tf{border:2.5px solid #111;color:#111}.tf-t.on,.tf-f.on{background:#111;color:#fff;border-color:#111}.lines .ln{border-bottom:2px dotted #111}.reflect{border:2.5px dashed #111}.reflect h3{background:#111}.reflect textarea{border-color:#111}.foot{border:2.5px dashed #111;background:#fff;color:#111}.btn{border:2px solid #111}.meta input{border-color:#111;color:#111}' },
-  dark: { name: "Dark", icon: "🌙", layout: "dark", bg: "#0f172a", border: "#38bdf8", tx: "#38bdf8", ty: "#4ade80", steps: "#1e40af", mascot: "🌙⭐", reflect: "linear-gradient(90deg,#38bdf8,#818cf8)", pal: ["#818cf8", "#38bdf8", "#4ade80", "#fbbf24", "#f472b6", "#2dd4bf"], extraCss: 'body{background:#0f172a}.sheet{background:#1e293b;border-color:#38bdf8;box-shadow:0 20px 50px rgba(0,0,0,.5)}.steps{background:#0f172a;border-color:#334155}.steps li{color:#cbd5e1}.meta label{color:#cbd5e1}.meta input{color:#7dd3fc;border-color:#475569}.passage{background:#0f172a;border-color:#475569;color:#cbd5e1}.secins{color:#94a3b8}.qrow{background:#0f172a;border-color:#334155}.qtext{color:#f1f5f9}.opt{background:#1e293b;border-color:#334155;color:#e2e8f0}.tf{background:#1e293b;border-color:#334155;color:#e2e8f0}.lines .ln{border-color:#64748b}.reflect{border-color:#38bdf8}.reflect p{color:#e2e8f0}.reflect textarea{background:#0f172a;border-color:#475569;color:#e2e8f0}.foot{background:#0f172a;border-color:#475569;color:#cbd5e1}.btn.print,.btn.reset{background:#1e293b;color:#7dd3fc;border-color:#475569}.qtable td{border-color:#334155}.qtable .td-q{color:#f1f5f9}' },
+  doodle: { name: "Doodle", icon: "✏️", layout: "doodle", bg: "#ffffff", border: "#111111", tx: "#111111", ty: "#111111", steps: "#111111", mascot: "✏️🐱", reflect: "linear-gradient(90deg,#111,#111)", pal: ["#111111", "#111111", "#111111", "#111111", "#111111", "#111111"], extraCss: 'body{background:#fafafa}.sheet{border:3px dashed #111;box-shadow:6px 6px 0 #e5e5e5}.title{-webkit-text-stroke:0;color:#111}.subtitle{background:#fff;border:2px dashed #111;color:#111}.steps{border:2.5px dashed #111;background:#fff}.steps h3{background:#111}.steps li:before{background:#111}.secins{color:#333}.opt{border:2px solid #111;border-radius:18px 6px 16px 8px/8px 16px 6px 18px;color:#111;background:#fff}.opt .ol{border-color:#111;color:#111}.opt.on{background:#111;color:#fff}.opt.on .ol{background:#fff;color:#111}.tf{border:2.5px solid #111;color:#111}.tf-t.on,.tf-f.on{background:#111;color:#fff;border-color:#111}.lines .ln{border-bottom:2px dotted #111}.drawbox{border-color:#111}.drawhint{color:#111}.reflect{border:2.5px dashed #111}.reflect h3{background:#111}.reflect textarea{border-color:#111}.foot{border:2.5px dashed #111;background:#fff;color:#111}.btn{border:2px solid #111}.meta input{border-color:#111;color:#111}' },
+  dark: { name: "Dark", icon: "🌙", layout: "dark", bg: "#0f172a", border: "#38bdf8", tx: "#38bdf8", ty: "#4ade80", steps: "#1e40af", mascot: "🌙⭐", reflect: "linear-gradient(90deg,#38bdf8,#818cf8)", pal: ["#818cf8", "#38bdf8", "#4ade80", "#fbbf24", "#f472b6", "#2dd4bf"], extraCss: 'body{background:#0f172a}.sheet{background:#1e293b;border-color:#38bdf8;box-shadow:0 20px 50px rgba(0,0,0,.5)}.steps{background:#0f172a;border-color:#334155}.steps li{color:#cbd5e1}.meta label{color:#cbd5e1}.meta input{color:#7dd3fc;border-color:#475569}.passage{background:#0f172a;border-color:#475569;color:#cbd5e1}.secins{color:#94a3b8}.qrow{background:#0f172a;border-color:#334155}.qtext{color:#f1f5f9}.opt{background:#1e293b;border-color:#334155;color:#e2e8f0}.tf{background:#1e293b;border-color:#334155;color:#e2e8f0}.lines .ln{border-color:#64748b}.drawbox{border-color:#475569;background:#0f172a}.drawhint{color:#64748b}.reflect{border-color:#38bdf8}.reflect p{color:#e2e8f0}.reflect textarea{background:#0f172a;border-color:#475569;color:#e2e8f0}.foot{background:#0f172a;border-color:#475569;color:#cbd5e1}.btn.print,.btn.reset{background:#1e293b;color:#7dd3fc;border-color:#475569}.qtable td{border-color:#334155}.qtable .td-q{color:#f1f5f9}' },
   notebook: { name: "Notebook", icon: "📓", layout: "notebook", bg: "#e7eefb", border: "#f87171", tx: "#1d4ed8", ty: "#dc2626", steps: "#2563eb", mascot: "📓✏️", reflect: "linear-gradient(90deg,#2563eb,#7c3aed)", pal: ["#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0d9488"], extraCss: '.sheet{background:repeating-linear-gradient(#ffffff,#ffffff 31px,#cfe0ff 32px);border:3px solid #cbd5e1;border-left:6px solid #f87171;border-radius:8px;padding-left:48px}.title{font-family:"Comic Sans MS","Comic Sans",cursive}.secpill{font-family:"Comic Sans MS",cursive}.qrow{background:rgba(255,255,255,.8);border-style:dashed}.opt{background:rgba(255,255,255,.88)}' },
   comic: { name: "Comic", icon: "💥", layout: "comic", bg: "#fde68a", border: "#111111", tx: "#dc2626", ty: "#2563eb", steps: "#111111", mascot: "💥🦸", reflect: "linear-gradient(90deg,#dc2626,#2563eb)", pal: ["#dc2626", "#2563eb", "#16a34a", "#f59e0b", "#7c3aed", "#db2777"], extraCss: '.sheet{border:5px solid #111111;border-radius:10px;box-shadow:12px 12px 0 #111111}.title{-webkit-text-stroke:1.5px #111111;letter-spacing:0}.steps{border:3px solid #111111;box-shadow:6px 6px 0 #111111;border-radius:8px}.secpill{border:3px solid #111111;box-shadow:4px 4px 0 #111111}.qrow{border:3px solid #111111;border-left-width:9px;box-shadow:6px 6px 0 #111111;border-radius:8px}.opt{border:2.5px solid #111111;border-radius:7px;box-shadow:3px 3px 0 #111111}.opt.on{box-shadow:none}.tf{border:3px solid #111111;border-radius:7px;box-shadow:4px 4px 0 #111111}.reflect{border:3px solid #111111;box-shadow:8px 8px 0 #111111}.foot{border:3px solid #111111;box-shadow:4px 4px 0 #111111}.btn{border:2.5px solid #111111;box-shadow:3px 3px 0 #111111}' },
   exam: { name: "Exam", icon: "📝", layout: "exam", bg: "#eff6ff", border: "#1d4ed8", tx: "#1e3a8a", ty: "#0891b2", steps: "#1d4ed8", mascot: "📝✅", reflect: "linear-gradient(90deg,#1d4ed8,#16a34a)", pal: ["#2563eb", "#16a34a", "#7c3aed", "#f97316", "#ec4899", "#0d9488"] },
@@ -1444,6 +1444,17 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       h += "</div>";
       return h;
     }
+    // A drawing task needs somewhere to draw. Falling through to writing lines
+    // gave a child three dotted lines to draw a picture on, which is not what
+    // the question asked for. Matched on the type first, then on a question
+    // that plainly says draw and offers nothing to choose between.
+    const isDrawing =
+      t.includes("draw") ||
+      t.includes("creative") ||
+      (!opts.length && /^\s*draw\b/i.test(String(q?.text || "")));
+    if (isDrawing) {
+      return '<div class="drawbox"><span class="drawhint">Draw here</span></div>';
+    }
     if (isTF) {
       // Grouped under a "True or False" heading already, so each question only
       // needs a small box to write T or F (no repeated TRUE/FALSE on every one).
@@ -1702,6 +1713,9 @@ body{font-family:'Baloo 2','Segoe UI',system-ui,sans-serif;background:${T.bg};co
 .tf-f.on{background:#dc2626;color:#fff;border-color:#dc2626}
 .lines{display:flex;flex-direction:column;gap:14px;margin-top:4px}
 .lines .ln{display:block;border-bottom:2.5px dotted #94a3b8;height:4px}
+.drawbox{margin-top:10px;height:230px;border:3px dashed #94a3b8;border-radius:16px;background:#fff;position:relative}
+.drawhint{position:absolute;top:10px;left:14px;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#94a3b8;opacity:.7}
+@media print{.drawbox{height:250px;break-inside:avoid;page-break-inside:avoid}}
 .wbbank{background:#eef2ff;border:1.5px solid #c7d2fe;border-radius:16px;padding:13px 18px 14px;margin:4px 0 10px}
 .wbbank .wblabel{display:block;font-weight:900;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#4338ca;margin-bottom:9px}
 .wbbank .wbwords{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
@@ -42240,29 +42254,71 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 ],
                 spacing: { after: 200 },
               }),
-              ...section.questions.map((q, idx) => {
+              ...section.questions.flatMap((q, idx) => {
                 const baseText = `${idx + 1}. ${q.text}`;
+                const qType = String((q as any)?.type || "").toLowerCase();
 
-                if (q.options) {
-                  return new Paragraph({
-                    children: [
-                      new TextRun({ text: baseText, break: 1 }),
-                      ...q.options.flatMap((opt) => [
-                        new TextRun({ text: `   [ ] ${opt}`, break: 1 }),
-                      ]),
-                    ],
-                  });
+                // A drawing task gets a box to draw in. A writing line is the
+                // wrong shape for it — there is nothing to write.
+                const isDrawing =
+                  qType.includes("draw") ||
+                  qType.includes("creative") ||
+                  (!q.options && /^\s*draw\b/i.test(String(q.text || "")));
+                if (isDrawing) {
+                  const edge = {
+                    style: BorderStyle.DASHED,
+                    size: 8,
+                    color: "94A3B8",
+                  };
+                  return [
+                    new Paragraph({
+                      children: [new TextRun({ text: baseText, break: 1 })],
+                    }),
+                    new Paragraph({
+                      spacing: { before: 80, after: 240 },
+                      border: {
+                        top: edge,
+                        bottom: edge,
+                        left: edge,
+                        right: edge,
+                      },
+                      children: [
+                        // Empty lines give the box its height; Word sizes a
+                        // bordered paragraph to what is inside it.
+                        new TextRun({ text: "" }),
+                        ...Array.from(
+                          { length: 9 },
+                          () => new TextRun({ text: "", break: 1 }),
+                        ),
+                      ],
+                    }),
+                  ];
                 }
 
-                return new Paragraph({
-                  children: [
-                    new TextRun({ text: baseText, break: 1 }),
-                    new TextRun({
-                      text: "______________________________________________________",
-                      break: 1,
+                if (q.options) {
+                  return [
+                    new Paragraph({
+                      children: [
+                        new TextRun({ text: baseText, break: 1 }),
+                        ...q.options.flatMap((opt) => [
+                          new TextRun({ text: `   [ ] ${opt}`, break: 1 }),
+                        ]),
+                      ],
                     }),
-                  ],
-                });
+                  ];
+                }
+
+                return [
+                  new Paragraph({
+                    children: [
+                      new TextRun({ text: baseText, break: 1 }),
+                      new TextRun({
+                        text: "______________________________________________________",
+                        break: 1,
+                      }),
+                    ],
+                  }),
+                ];
               }),
             ]),
           ],
