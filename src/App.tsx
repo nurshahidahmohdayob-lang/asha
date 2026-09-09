@@ -15875,14 +15875,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   const atSelectedWeek = (p: any): boolean =>
     !submissionWeekFilter || Number(p?.weekId) === submissionWeekFilter;
 
-  /** The division a submission belongs to — the one its teacher is in.
+  /** The division a teacher is in, by whatever name they were written under.
    *
-   *  Cached by name: the queue is redrawn on every poll, and matching a name
-   *  against the whole roster for each of 249 submissions is not free. */
-  const submissionDivision = useMemo(() => {
+   *  Cached: the queue is redrawn on every poll, and matching a name against
+   *  the whole roster for each of 249 submissions is not free. */
+  const divisionForTeacherName = useMemo(() => {
     const cache = new Map<string, string>();
-    return (p: any): string => {
-      const name = String(p?.teacherName || "").trim();
+    return (rawName: string): string => {
+      const name = String(rawName || "").trim();
       if (!name) return NO_DIVISION;
       const known = cache.get(name);
       if (known) return known;
@@ -15899,6 +15899,20 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       return division;
     };
   }, [teachers]);
+
+  /** The division a submission belongs to — the one its teacher is in. */
+  const submissionDivision = (p: any): string =>
+    divisionForTeacherName(p?.teacherName);
+
+  /** And of a teacher's folder, which may be filed under several spellings of
+   *  her name. The first that resolves wins; they are all one person. */
+  const folderDivision = (folder: any): string => {
+    for (const n of folder?.names || []) {
+      const d = divisionForTeacherName(n);
+      if (d !== NO_DIVISION) return d;
+    }
+    return divisionForTeacherName(folder?.name);
+  };
 
   const inSelectedDivision = (p: any): boolean =>
     !submissionDivisionFilter ||
@@ -24017,9 +24031,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         return (
                           <button
                             key={`sd-${d.label}`}
-                            onClick={() =>
-                              setSubmissionDivisionFilter(on ? "" : d.label)
-                            }
+                            onClick={() => {
+                              setSubmissionDivisionFilter(on ? "" : d.label);
+                              // The open folder belongs to the division being
+                              // left behind, so it would vanish from the list
+                              // while still deciding what the table shows.
+                              setCurrentSubmittedFolderId(null);
+                            }}
                             className={cn(
                               "px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest border-2 transition-all flex items-center gap-2",
                               on
@@ -24167,6 +24185,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       supervisedTeachers.some((n) =>
                         folder.names.some((fn) => sameTeacherIdentity(fn, n)),
                       ),
+                  )
+                  // Picking a division picks the teachers in it, so their
+                  // folders are the only ones listed. A folder an admin made
+                  // by hand belongs to no teacher and stays put.
+                  .filter(
+                    (folder) =>
+                      !submissionDivisionFilter ||
+                      !folder.teacherFolder ||
+                      folderDivision(folder) === submissionDivisionFilter,
                   )
                   .map((folder) => {
                     // Counts every id folded into this teacher, so a merged
