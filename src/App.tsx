@@ -15865,13 +15865,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         ?.ids || [currentSubmittedFolderId]
     : null;
 
-  /** Whether a submission belongs in the list on screen.
-   *
-   *  A stage chip asks a question about the whole school — "what is with the
-   *  Coordinator?" — so it looks across every folder. Without that it filtered
-   *  the unfiled plans only, and since every plan sits in its teacher's folder
-   *  the answer was always an empty table. Picking a folder is still a
-   *  narrower question and wins. */
+  /** Which term week the list is narrowed to, if any. */
   const atSelectedWeek = (p: any): boolean =>
     !submissionWeekFilter || Number(p?.weekId) === submissionWeekFilter;
 
@@ -15918,10 +15912,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     !submissionDivisionFilter ||
     submissionDivision(p) === submissionDivisionFilter;
 
-  const inCurrentFolderView = (p: any): boolean => {
-    if (selectedFolderIds !== null) return selectedFolderIds.includes(p.folderId);
-    return reviewFilter !== "all" ? true : !p.folderId;
-  };
+  /** Whether a submission belongs in the list on screen.
+   *
+   *  "All Submissions" means all of them. It used to mean the plans belonging
+   *  to no folder at all, and since every plan sits in its teacher's folder
+   *  that was an empty list — which also emptied the stage, division and week
+   *  chips that count from it, so those rows had nothing to show and hid
+   *  themselves. Picking a folder is the narrower question and still wins. */
+  const inCurrentFolderView = (p: any): boolean =>
+    selectedFolderIds === null ? true : selectedFolderIds.includes(p.folderId);
 
   // Remember who this reviewer supervises between sessions.
   useEffect(() => {
