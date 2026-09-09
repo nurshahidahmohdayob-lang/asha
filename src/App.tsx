@@ -15853,6 +15853,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
    *  narrowing one screen must not silently narrow the other. */
   const [trackerDivisionFilter, setTrackerDivisionFilter] = useState("");
 
+  /** Which term week the submissions list is showing, 0 for all of them. */
+  const [submissionWeekFilter, setSubmissionWeekFilter] = useState(0);
+
   /** The folder ids the current selection covers, or null for "unfiled". */
   const selectedFolderIds: string[] | null = currentSubmittedFolderId
     ? submittedFolderGroups.find((g) => g.id === currentSubmittedFolderId)
@@ -15866,6 +15869,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
    *  the unfiled plans only, and since every plan sits in its teacher's folder
    *  the answer was always an empty table. Picking a folder is still a
    *  narrower question and wins. */
+  const atSelectedWeek = (p: any): boolean =>
+    !submissionWeekFilter || Number(p?.weekId) === submissionWeekFilter;
+
   const inCurrentFolderView = (p: any): boolean => {
     if (selectedFolderIds !== null) return selectedFolderIds.includes(p.folderId);
     return reviewFilter !== "all" ? true : !p.folderId;
@@ -23940,6 +23946,78 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     );
                   })}
                 </div>
+                {/* Term week. A Head of Department reviewing on a Monday
+                    wants this week's plans, not all 249 — and the week is the
+                    one thing the table could not be narrowed by. */}
+                {(() => {
+                  const atStage = submittedProjects
+                    .filter(isSupervisedSubmission)
+                    .filter(inCurrentFolderView)
+                    .filter(
+                      (p: any) =>
+                        reviewFilter === "all" ||
+                        getReviewStage(p) === reviewFilter,
+                    );
+                  const weeks = Array.from(
+                    new Set([
+                      ...atStage
+                        .map((p: any) => Number(p?.weekId))
+                        .filter((n: number) => n > 0),
+                      // The week being filtered on stays listed even when
+                      // nothing matches it, or there is no chip to press to
+                      // get back out of it.
+                      ...(submissionWeekFilter ? [submissionWeekFilter] : []),
+                    ]),
+                  ).sort((a, b) => a - b);
+                  if (weeks.length < 2) return null;
+                  return (
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
+                        Week
+                      </span>
+                      {weeks.map((n) => {
+                        const on = submissionWeekFilter === n;
+                        return (
+                          <button
+                            key={`sw-${n}`}
+                            onClick={() => setSubmissionWeekFilter(on ? 0 : n)}
+                            className={cn(
+                              "px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest border-2 transition-all flex items-center gap-2",
+                              on
+                                ? "bg-[#FACC15] text-[#064E3B] border-[#EAB308]"
+                                : "bg-white text-[#064E3B]/60 border-[#D1FAE5] hover:border-[#059669]",
+                            )}
+                          >
+                            Week {n}
+                            <span
+                              className={cn(
+                                "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[9px] font-black",
+                                on
+                                  ? "bg-[#064E3B] text-white"
+                                  : "bg-[#F0FDF4] text-[#064E3B]/60",
+                              )}
+                            >
+                              {
+                                atStage.filter(
+                                  (p: any) => Number(p?.weekId) === n,
+                                ).length
+                              }
+                            </span>
+                          </button>
+                        );
+                      })}
+                      {submissionWeekFilter > 0 && (
+                        <button
+                          onClick={() => setSubmissionWeekFilter(0)}
+                          className="px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-[#854D0E] hover:bg-[#FFFBEB]"
+                        >
+                          All weeks
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {duplicateSubmissions.length > 0 && (
                   <button
                     onClick={removeDuplicateSubmissions}
@@ -24681,7 +24759,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     (p) =>
                       reviewFilter === "all" ||
                       getReviewStage(p) === reviewFilter,
-                  ).length === 0 ? (
+                  )
+                  .filter(atSelectedWeek).length === 0 ? (
                 <div className="p-20 text-center space-y-6 bg-white rounded-[3rem] shadow-xl border-4 border-dashed border-[#D1FAE5]">
                   <div className="w-24 h-24 bg-[#F0FDF4] rounded-full flex items-center justify-center mx-auto shadow-sm">
                     <BookOpen size={40} className="text-[#D1FAE5]" />
@@ -24691,7 +24770,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       No Plans Found
                     </h4>
                     <p className="text-[#064E3B]/60 font-bold">
-                      {reviewFilter !== "all"
+                      {submissionWeekFilter > 0
+                        ? `Nothing has been submitted for Week ${submissionWeekFilter}${
+                            reviewFilter === "all"
+                              ? ""
+                              : ` at this stage`
+                          }.`
+                        : reviewFilter !== "all"
                         ? `Nothing is ${REVIEW_STAGES[
                             reviewFilter as ReviewStage
                           ]?.label.toLowerCase()} right now.`
@@ -24730,6 +24815,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                               reviewFilter === "all" ||
                               getReviewStage(p) === reviewFilter,
                           )
+                          .filter(atSelectedWeek)
                           .map((project) => {
                             const stage = getReviewStage(project);
                             const hodDone =
