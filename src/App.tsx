@@ -15856,6 +15856,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   /** Which term week the submissions list is showing, 0 for all of them. */
   const [submissionWeekFilter, setSubmissionWeekFilter] = useState(0);
 
+  /** Which division the submissions list is showing, "" for all of them. */
+  const [submissionDivisionFilter, setSubmissionDivisionFilter] = useState("");
+
   /** The folder ids the current selection covers, or null for "unfiled". */
   const selectedFolderIds: string[] | null = currentSubmittedFolderId
     ? submittedFolderGroups.find((g) => g.id === currentSubmittedFolderId)
@@ -15871,6 +15874,30 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
    *  narrower question and wins. */
   const atSelectedWeek = (p: any): boolean =>
     !submissionWeekFilter || Number(p?.weekId) === submissionWeekFilter;
+
+  /** The division a submission belongs to — the one its teacher is in.
+   *
+   *  Cached by name: the queue is redrawn on every poll, and matching a name
+   *  against the whole roster for each of 249 submissions is not free. */
+  const submissionDivision = useMemo(() => {
+    const cache = new Map<string, string>();
+    return (p: any): string => {
+      const name = String(p?.teacherName || "").trim();
+      if (!name) return NO_DIVISION;
+      const known = cache.get(name);
+      if (known) return known;
+      const teacher = teachers.find((t: any) =>
+        sameTeacherIdentity(t?.name, name),
+      );
+      const division = teacher ? divisionOf(teacher) : NO_DIVISION;
+      cache.set(name, division);
+      return division;
+    };
+  }, [teachers]);
+
+  const inSelectedDivision = (p: any): boolean =>
+    !submissionDivisionFilter ||
+    submissionDivision(p) === submissionDivisionFilter;
 
   const inCurrentFolderView = (p: any): boolean => {
     if (selectedFolderIds !== null) return selectedFolderIds.includes(p.folderId);
@@ -23946,6 +23973,77 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     );
                   })}
                 </div>
+                {/* Division, so a reviewer can take one school at a time.
+                    Counted against the stage on screen, not the whole queue,
+                    so the numbers say what pressing it would give. */}
+                {(() => {
+                  const atStage = submittedProjects
+                    .filter(isSupervisedSubmission)
+                    .filter(inCurrentFolderView)
+                    .filter(
+                      (p: any) =>
+                        reviewFilter === "all" ||
+                        getReviewStage(p) === reviewFilter,
+                    )
+                    .filter(atSelectedWeek);
+                  const divisions = [...SCHOOL_DIVISIONS, NO_DIVISION]
+                    .map((d) => ({
+                      label: d,
+                      n: atStage.filter((p: any) => submissionDivision(p) === d)
+                        .length,
+                    }))
+                    // The one being filtered on stays listed even when nothing
+                    // matches, or there is no chip to press to get back out.
+                    .filter(
+                      (d) => d.n > 0 || submissionDivisionFilter === d.label,
+                    );
+                  if (divisions.length < 2) return null;
+                  return (
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
+                        Division
+                      </span>
+                      {divisions.map((d) => {
+                        const on = submissionDivisionFilter === d.label;
+                        return (
+                          <button
+                            key={`sd-${d.label}`}
+                            onClick={() =>
+                              setSubmissionDivisionFilter(on ? "" : d.label)
+                            }
+                            className={cn(
+                              "px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest border-2 transition-all flex items-center gap-2",
+                              on
+                                ? "bg-[#059669] text-white border-[#059669]"
+                                : "bg-white text-[#064E3B]/60 border-[#D1FAE5] hover:border-[#059669]",
+                            )}
+                          >
+                            {d.label}
+                            <span
+                              className={cn(
+                                "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[9px] font-black",
+                                on
+                                  ? "bg-white text-[#059669]"
+                                  : "bg-[#F0FDF4] text-[#064E3B]/60",
+                              )}
+                            >
+                              {d.n}
+                            </span>
+                          </button>
+                        );
+                      })}
+                      {submissionDivisionFilter && (
+                        <button
+                          onClick={() => setSubmissionDivisionFilter("")}
+                          className="px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-[#854D0E] hover:bg-[#FFFBEB]"
+                        >
+                          All divisions
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {/* Term week. A Head of Department reviewing on a Monday
                     wants this week's plans, not all 249 — and the week is the
                     one thing the table could not be narrowed by. */}
@@ -23957,7 +24055,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       (p: any) =>
                         reviewFilter === "all" ||
                         getReviewStage(p) === reviewFilter,
-                    );
+                    )
+                    .filter(inSelectedDivision);
                   const weeks = Array.from(
                     new Set([
                       ...atStage
@@ -24760,7 +24859,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       reviewFilter === "all" ||
                       getReviewStage(p) === reviewFilter,
                   )
-                  .filter(atSelectedWeek).length === 0 ? (
+                  .filter(atSelectedWeek)
+                  .filter(inSelectedDivision).length === 0 ? (
                 <div className="p-20 text-center space-y-6 bg-white rounded-[3rem] shadow-xl border-4 border-dashed border-[#D1FAE5]">
                   <div className="w-24 h-24 bg-[#F0FDF4] rounded-full flex items-center justify-center mx-auto shadow-sm">
                     <BookOpen size={40} className="text-[#D1FAE5]" />
@@ -24770,12 +24870,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       No Plans Found
                     </h4>
                     <p className="text-[#064E3B]/60 font-bold">
-                      {submissionWeekFilter > 0
-                        ? `Nothing has been submitted for Week ${submissionWeekFilter}${
-                            reviewFilter === "all"
-                              ? ""
-                              : ` at this stage`
-                          }.`
+                      {submissionDivisionFilter || submissionWeekFilter > 0
+                        ? `Nothing from ${
+                            submissionDivisionFilter || "any division"
+                          }${
+                            submissionWeekFilter > 0
+                              ? ` for Week ${submissionWeekFilter}`
+                              : ""
+                          }${reviewFilter === "all" ? "" : " at this stage"}.`
                         : reviewFilter !== "all"
                         ? `Nothing is ${REVIEW_STAGES[
                             reviewFilter as ReviewStage
@@ -24816,6 +24918,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                               getReviewStage(p) === reviewFilter,
                           )
                           .filter(atSelectedWeek)
+                          .filter(inSelectedDivision)
                           .map((project) => {
                             const stage = getReviewStage(project);
                             const hodDone =
