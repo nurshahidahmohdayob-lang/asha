@@ -24002,7 +24002,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     .filter(
                       (d) => d.n > 0 || submissionDivisionFilter === d.label,
                     );
-                  if (divisions.length < 2) return null;
+                  // Shown even when one division covers everything. Hiding a
+                  // filter the moment it has a single answer makes it look as
+                  // though the feature has gone, and it comes back the day
+                  // another division submits anything.
+                  if (!divisions.length) return null;
                   return (
                     <div className="flex flex-wrap items-center gap-2 pt-1">
                       <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
@@ -24073,7 +24077,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       ...(submissionWeekFilter ? [submissionWeekFilter] : []),
                     ]),
                   ).sort((a, b) => a - b);
-                  if (weeks.length < 2) return null;
+                  if (!weeks.length) return null;
                   return (
                     <div className="flex flex-wrap items-center gap-2 pt-1">
                       <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
