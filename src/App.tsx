@@ -15873,6 +15873,18 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         ?.ids || [currentSubmittedFolderId]
     : null;
 
+  /** Whether a submission belongs in the list on screen.
+   *
+   *  A stage chip asks a question about the whole school — "what is with the
+   *  Coordinator?" — so it looks across every folder. Without that it filtered
+   *  the unfiled plans only, and since every plan sits in its teacher's folder
+   *  the answer was always an empty table. Picking a folder is still a
+   *  narrower question and wins. */
+  const inCurrentFolderView = (p: any): boolean => {
+    if (selectedFolderIds !== null) return selectedFolderIds.includes(p.folderId);
+    return reviewFilter !== "all" ? true : !p.folderId;
+  };
+
   // Remember who this reviewer supervises between sessions.
   useEffect(() => {
     if (!user) return;
@@ -23986,10 +23998,19 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   )
                   .map((folder) => {
                     // Counts every id folded into this teacher, so a merged
-                    // row doesn't undercount by showing only one half.
-                    const folderCount = submittedProjects.filter((p: any) =>
-                      folder.ids.includes(p.folderId),
+                    // row doesn't undercount by showing only one half — and
+                    // counts at the stage being looked at, so the tiles say
+                    // where the work actually is rather than repeating the
+                    // same totals whichever chip is pressed.
+                    const folderCount = submittedProjects.filter(
+                      (p: any) =>
+                        folder.ids.includes(p.folderId) &&
+                        (reviewFilter === "all" ||
+                          getReviewStage(p) === reviewFilter),
                     ).length;
+                    // Nothing at this stage: still shown, so the folder can be
+                    // opened, but plainly empty rather than looking equal.
+                    const dimmed = reviewFilter !== "all" && folderCount === 0;
                     return (
                   <div key={folder.id} className="relative group/folder min-w-0">
                     <button
@@ -24003,6 +24024,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         currentSubmittedFolderId === folder.id
                           ? "bg-[#FACC15] text-[#064E3B] border-[#EAB308] shadow-md"
                           : "bg-white text-[#064E3B] border-[#D1FAE5] hover:border-[#059669]",
+                        dimmed && currentSubmittedFolderId !== folder.id
+                          ? "opacity-40"
+                          : "",
                       )}
                     >
                       {folder.teacherFolder ? (
@@ -24666,10 +24690,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 </>
               ) : submittedProjects
                   .filter(isSupervisedSubmission)
-                  .filter((p) =>
-                    selectedFolderIds === null
-                      ? !p.folderId
-                      : selectedFolderIds.includes(p.folderId),
+                  .filter(inCurrentFolderView)
+                  .filter(
+                    (p) =>
+                      reviewFilter === "all" ||
+                      getReviewStage(p) === reviewFilter,
                   ).length === 0 ? (
                 <div className="p-20 text-center space-y-6 bg-white rounded-[3rem] shadow-xl border-4 border-dashed border-[#D1FAE5]">
                   <div className="w-24 h-24 bg-[#F0FDF4] rounded-full flex items-center justify-center mx-auto shadow-sm">
@@ -24680,9 +24705,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       No Plans Found
                     </h4>
                     <p className="text-[#064E3B]/60 font-bold">
-                      {currentSubmittedFolderId
-                        ? "This folder is empty. Move plans here to organize them."
-                        : "When teachers submit their work, they will appear here instantly."}
+                      {reviewFilter !== "all"
+                        ? `Nothing is ${REVIEW_STAGES[
+                            reviewFilter as ReviewStage
+                          ]?.label.toLowerCase()} right now.`
+                        : currentSubmittedFolderId
+                          ? "This folder is empty. Move plans here to organize them."
+                          : "When teachers submit their work, they will appear here instantly."}
                     </p>
                   </div>
                 </div>
@@ -24709,11 +24738,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       <tbody>
                         {submittedProjects
                           .filter(isSupervisedSubmission)
-                          .filter((p) =>
-                            selectedFolderIds === null
-                              ? !p.folderId
-                              : selectedFolderIds.includes(p.folderId),
-                          )
+                          .filter(inCurrentFolderView)
                           .filter(
                             (p) =>
                               reviewFilter === "all" ||
