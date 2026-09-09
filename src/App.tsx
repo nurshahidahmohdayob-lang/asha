@@ -15886,9 +15886,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       if (!name) return NO_DIVISION;
       const known = cache.get(name);
       if (known) return known;
-      const teacher = teachers.find((t: any) =>
+      // A teacher can hold more than one roster record — a legacy one and the
+      // one the staff sync made — and only the synced one carries a division.
+      // Taking the first match filed most of the school under "Not set".
+      const matches = teachers.filter((t: any) =>
         sameTeacherIdentity(t?.name, name),
       );
+      const teacher =
+        matches.find((t: any) => divisionOf(t) !== NO_DIVISION) || matches[0];
       const division = teacher ? divisionOf(teacher) : NO_DIVISION;
       cache.set(name, division);
       return division;
