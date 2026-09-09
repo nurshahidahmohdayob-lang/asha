@@ -14731,8 +14731,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   /** Narrowing the directory without typing. Declared here, beside the search
    *  they work with, and read by matchesTeacherSearch below. */
   const [teacherDivisionFilter, setTeacherDivisionFilter] = useState("");
-  const [teacherRoleFilter, setTeacherRoleFilter] = useState("");
-  const [teacherSubjectFilter, setTeacherSubjectFilter] = useState("");
   // Merging duplicate directory records: which one survives per group.
   const [mergeDupesOpen, setMergeDupesOpen] = useState(false);
   const [mergeKeepIds, setMergeKeepIds] = useState<Record<number, string>>({});
@@ -15057,18 +15055,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
        the groups, the counts, the empty state — runs through here, so they
        cannot disagree about who is showing. */
     if (teacherDivisionFilter && divisionOf(t) !== teacherDivisionFilter)
-      return false;
-    if (
-      teacherRoleFilter &&
-      String(t?.role || "").toLowerCase() !== teacherRoleFilter.toLowerCase()
-    )
-      return false;
-    if (
-      teacherSubjectFilter &&
-      !Object.keys(subjectsForTeacher(t)).some(
-        (sub) => sub.toLowerCase() === teacherSubjectFilter.toLowerCase(),
-      )
-    )
       return false;
 
     const q = teacherSearchQuery.toLowerCase().trim();
@@ -25438,33 +25424,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   }))
                   .filter((d) => d.n > 0);
 
-                const roles = Array.from(
-                  new Set(
-                    roster.map((t: any) => String(t?.role || "").trim()).filter(Boolean),
-                  ),
-                ).sort((a, b) => a.localeCompare(b));
-
-                // Only the subjects taught inside the division being looked
-                // at — offering the whole curriculum lists subjects nobody in
-                // view teaches.
-                const inDivision = teacherDivisionFilter
-                  ? roster.filter(
-                      (t: any) => divisionOf(t) === teacherDivisionFilter,
-                    )
-                  : roster;
-                const subjectsHere = Array.from(
-                  new Set(
-                    inDivision.flatMap((t: any) =>
-                      Object.keys(subjectsForTeacher(t)),
-                    ),
-                  ),
-                ).sort((a, b) => a.localeCompare(b));
-
-                const anyOn =
-                  teacherDivisionFilter ||
-                  teacherRoleFilter ||
-                  teacherSubjectFilter ||
-                  teacherSearchQuery.trim();
+                // Division is the only shelf here. Role and subject each ran
+                // to two dozen chips — a wall of one-person categories that
+                // was longer than the list of staff it filtered.
+                const anyOn = teacherDivisionFilter || teacherSearchQuery.trim();
 
                 return (
                   <div className="mb-8 space-y-3">
@@ -25477,12 +25440,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         return (
                           <button
                             key={`div-${d.label}`}
-                            onClick={() => {
-                              setTeacherDivisionFilter(on ? "" : d.label);
-                              // The subject chips belong to the division being
-                              // left behind, so they do not come along.
-                              setTeacherSubjectFilter("");
-                            }}
+                            onClick={() =>
+                              setTeacherDivisionFilter(on ? "" : d.label)
+                            }
                             className={chipCls(on)}
                           >
                             {d.label}
@@ -25492,80 +25452,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       })}
                     </div>
 
-                    {roles.length > 1 && (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
-                          Role
-                        </span>
-                        {roles.map((r) => {
-                          const on = teacherRoleFilter === r;
-                          return (
-                            <button
-                              key={`role-${r}`}
-                              onClick={() => setTeacherRoleFilter(on ? "" : r)}
-                              className={chipCls(on)}
-                            >
-                              {r}
-                              <span className="ml-1.5 opacity-60">
-                                {
-                                  roster.filter(
-                                    (t: any) =>
-                                      String(t?.role || "").toLowerCase() ===
-                                      r.toLowerCase(),
-                                  ).length
-                                }
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {subjectsHere.length > 1 && (
-                      <div className="flex flex-wrap items-center gap-2 pl-3 border-l-2 border-[#D1FAE5]">
-                        <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
-                          {teacherDivisionFilter
-                            ? `${teacherDivisionFilter} · subject`
-                            : "Subject"}
-                        </span>
-                        {subjectsHere.map((sub) => {
-                          const on = teacherSubjectFilter === sub;
-                          return (
-                            <button
-                              key={`sub-${sub}`}
-                              onClick={() =>
-                                setTeacherSubjectFilter(on ? "" : sub)
-                              }
-                              title={sub}
-                              className={cn(
-                                chipCls(on),
-                                "max-w-[16rem] truncate",
-                                on && "bg-[#059669] border-[#059669]",
-                              )}
-                            >
-                              {sub}
-                              <span className="ml-1.5 opacity-60">
-                                {
-                                  inDivision.filter((t: any) =>
-                                    Object.keys(subjectsForTeacher(t)).some(
-                                      (x) =>
-                                        x.toLowerCase() === sub.toLowerCase(),
-                                    ),
-                                  ).length
-                                }
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-
                     {anyOn && (
                       <button
                         onClick={() => {
                           setTeacherDivisionFilter("");
-                          setTeacherRoleFilter("");
-                          setTeacherSubjectFilter("");
                           setTeacherSearchQuery("");
                         }}
                         className="px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-[#854D0E] hover:bg-[#FFFBEB] cursor-pointer"
@@ -25601,8 +25491,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             // the button looked broken.
                             setTeacherSearchQuery("");
                             setTeacherDivisionFilter("");
-                            setTeacherRoleFilter("");
-                            setTeacherSubjectFilter("");
                           }}
                           className="px-5 py-2.5 bg-[#064E3B] text-white rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-[#059669] transition-all cursor-pointer shadow-sm"
                         >
