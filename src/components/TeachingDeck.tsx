@@ -173,20 +173,32 @@ function FrameBtn({
    that to an object would mean changing all of them, and every lesson already
    saved. A fragment is ignored when the file is fetched, so the picture still
    loads from the same address. */
-type Framing = { size: number; zoom: number; x: number; y: number };
-const PLAIN_FRAMING: Framing = { size: 1, zoom: 1, x: 50, y: 50 };
+type Framing = {
+  size: number;
+  zoom: number;
+  /** Which part of the picture sits in the middle of its frame. */
+  x: number;
+  y: number;
+  /** Where the picture sits on the slide, in pixels from where it started. */
+  ox: number;
+  oy: number;
+};
+const PLAIN_FRAMING: Framing = { size: 1, zoom: 1, x: 50, y: 50, ox: 0, oy: 0 };
 
 const imageSrc = (url?: string): string => String(url || "").split("#zx=")[0];
 
 const readFraming = (url?: string): Framing => {
   const tail = String(url || "").split("#zx=")[1];
   if (!tail) return PLAIN_FRAMING;
-  const [size, zoom, x, y] = tail.split(",").map(Number);
+  // Older links carry four numbers; the offsets simply read as nothing moved.
+  const [size, zoom, x, y, ox, oy] = tail.split(",").map(Number);
   return {
     size: Number.isFinite(size) ? size : 1,
     zoom: Number.isFinite(zoom) ? zoom : 1,
     x: Number.isFinite(x) ? x : 50,
     y: Number.isFinite(y) ? y : 50,
+    ox: Number.isFinite(ox) ? ox : 0,
+    oy: Number.isFinite(oy) ? oy : 0,
   };
 };
 
@@ -196,8 +208,11 @@ const withFraming = (url: string, f: Framing): string => {
   const src = imageSrc(url);
   // A picture in its plain state carries no fragment, so nothing is written
   // into links that were never adjusted.
-  if (f.size === 1 && f.zoom === 1 && f.x === 50 && f.y === 50) return src;
-  return `${src}#zx=${round(f.size)},${round(f.zoom)},${Math.round(f.x)},${Math.round(f.y)}`;
+  if (f.size === 1 && f.zoom === 1 && f.x === 50 && f.y === 50 && !f.ox && !f.oy)
+    return src;
+  return `${src}#zx=${round(f.size)},${round(f.zoom)},${Math.round(f.x)},${Math.round(
+    f.y,
+  )},${Math.round(f.ox)},${Math.round(f.oy)}`;
 };
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
@@ -205,6 +220,15 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n
 /** How a framed picture fills its frame. Used by the editable slot and by the
  *  plain <img> slides alike, so a picture looks the same wherever it appears —
  *  on the board, in the saved HTML and in the print-out. */
+/** Where a moved picture sits, for the slides that show one without offering
+ *  to edit it. Without this a picture carried across the slide would snap back
+ *  the moment Edit was switched off. */
+const framedPlace = (url?: string): CSSProperties => {
+  const f = readFraming(url);
+  if (!f.ox && !f.oy) return {};
+  return { transform: `translate(${f.ox}px, ${f.oy}px)`, position: "relative", zIndex: 30 };
+};
+
 const framedStyle = (url?: string): CSSProperties => {
   const f = readFraming(url);
   return {
@@ -254,6 +278,7 @@ function Picture({
     }
   };
 
+  const [drag, setDrag] = useState<"move" | "crop">("move");
   const framing = readFraming(url);
   /* The frame's own size is part of the framing, so making a picture bigger
      makes the space it sits in bigger — scaling the picture inside a fixed
@@ -261,9 +286,10 @@ function Picture({
   const box = `calc(${size} * ${framing.size})`;
   const canFrame = Boolean(url && editor?.on);
 
-  /** Dragging the picture moves the part of it that shows. The frame is
-     scrolled under a fixed window, so dragging right reveals what is to the
-     left — which is why the sign is inverted. */
+  /** Dragging either carries the picture across the slide, or moves the part
+     of it that shows inside its frame. Moving is the default because it is
+     what a teacher means by "move the picture"; cropping is the second job,
+     and the ✥ button says which one dragging is doing. */
   const startDrag = (e: React.PointerEvent) => {
     if (!canFrame || !url) return;
     e.preventDefault();
@@ -274,11 +300,21 @@ function Picture({
     const at = readFraming(url);
     const span = Math.max(1, el.getBoundingClientRect().width);
     const move = (ev: PointerEvent) => {
-      const next = {
-        ...at,
-        x: clamp(at.x - ((ev.clientX - from.x) / span) * 100, 0, 100),
-        y: clamp(at.y - ((ev.clientY - from.y) / span) * 100, 0, 100),
-      };
+      const dx = ev.clientX - from.x;
+      const dy = ev.clientY - from.y;
+      const next: Framing =
+        drag === "move"
+          ? // Carried across the slide. The picture is drawn over whatever it
+            // is moved across, so it can sit anywhere rather than only in the
+            // hole the layout left for it.
+            { ...at, ox: at.ox + dx, oy: at.oy + dy }
+          : // Panned inside its frame: the picture slides under a fixed
+            // window, so dragging right reveals what is to the left.
+            {
+              ...at,
+              x: clamp(at.x - (dx / span) * 100, 0, 100),
+              y: clamp(at.y - (dy / span) * 100, 0, 100),
+            };
       editor!.edit((d) => apply(d, withFraming(url, next)));
     };
     const stop = () => {
@@ -302,8 +338,18 @@ function Picture({
 
   if (!showable) return null;
 
+  const moved = Boolean(framing.ox || framing.oy);
   return (
-    <div className="relative shrink-0" style={{ width: box }}>
+    <div
+      className="relative shrink-0"
+      style={{
+        width: box,
+        // Moved out of the space the layout gave it, so it is drawn over what
+        // it is moved across rather than pushing the slide about.
+        transform: moved ? `translate(${framing.ox}px, ${framing.oy}px)` : undefined,
+        zIndex: moved || canFrame ? 30 : undefined,
+      }}
+    >
       {url && !failed ? (
         <div
           onPointerDown={startDrag}
@@ -329,6 +375,15 @@ function Picture({
 
       {canFrame && (
         <div className="mt-2 flex flex-wrap justify-center gap-1">
+          <FrameBtn
+            label={drag === "move" ? "✥" : "⊹"}
+            title={
+              drag === "move"
+                ? "Dragging moves the picture — press to crop inside it instead"
+                : "Dragging crops inside the picture — press to move it again"
+            }
+            onClick={() => setDrag(drag === "move" ? "crop" : "move")}
+          />
           <FrameBtn label="−" title="Smaller" onClick={() => nudge("size", -0.15, 0.5, 2.5)} />
           <FrameBtn label="+" title="Bigger" onClick={() => nudge("size", 0.15, 0.5, 2.5)} />
           <FrameBtn label="⤢" title="Crop in" onClick={() => nudge("zoom", 0.2, 1, 4)} />
@@ -1061,6 +1116,7 @@ function TileRow({
               style={{
                 height: `calc(${big ? "6rem" : "5rem"} * ${readFraming(t.image).size})`,
                 width: `calc(${big ? "6rem" : "5rem"} * ${readFraming(t.image).size})`,
+                ...framedPlace(t.image),
               }}
             >
               <img src={imageSrc(t.image)} alt="" style={framedStyle(t.image)} />
@@ -1596,7 +1652,11 @@ function ActivitySlide({
       {image && (
         <span
           className="mx-auto mt-6 block overflow-hidden rounded-[1.5rem] shadow-lg"
-          style={{ height: `calc(320px * ${readFraming(image).size})`, maxWidth: "100%" }}
+          style={{
+            height: `calc(320px * ${readFraming(image).size})`,
+            maxWidth: "100%",
+            ...framedPlace(image),
+          }}
         >
           <img src={imageSrc(image)} alt="" style={framedStyle(image)} />
         </span>
@@ -1649,6 +1709,7 @@ function TeachSlideCard({
             }`}
             style={{
               height: `calc(${sideBySide ? "430px" : "500px"} * ${readFraming(image).size})`,
+              ...framedPlace(image),
             }}
           >
             <img src={imageSrc(image)} alt="" style={framedStyle(image)} />
