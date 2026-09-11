@@ -101,6 +101,22 @@ export interface LessonActivityPack {
   strategies?: { title: string; items: LessonTile[] };
   /** Three closing recall questions for the review slide. */
   review?: string[];
+  /** Wording a teacher changed on the board, for the slides whose words come
+   *  from the lesson plan or are written by the deck itself rather than being
+   *  part of the pack. Kept here so the plan document still says what was
+   *  submitted while the board says what the teacher actually wants to say. */
+  board?: {
+    title?: string;
+    subtitle?: string;
+    doNow?: string;
+    /** The "Before we go" sentence strips. */
+    closing?: string[];
+    /** By activity number, counting from 1. */
+    activities?: Record<
+      string,
+      { head?: string; body?: string; steps?: string[]; needs?: string }
+    >;
+  };
   /** What this lesson builds in a child beyond its subject content — the
    *  school's competencies, and its values. Each names one and says how THIS
    *  lesson develops it, so the slide is about the lesson rather than a

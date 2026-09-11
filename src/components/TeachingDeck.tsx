@@ -1307,7 +1307,16 @@ function DrawPad({
 
 /** The deck's numbered step spine: chips threaded on a line down the left.
  *  This is how the deck shows any list of things to do or notice. */
-function StepSpine({ steps, accent = "leaf" }: { steps: string[]; accent?: "leaf" | "teal" }) {
+function StepSpine({
+  steps,
+  accent = "leaf",
+  editStep,
+}: {
+  steps: string[];
+  accent?: "leaf" | "teal";
+  /** Supplied where the steps have somewhere to be written back to. */
+  editStep?: (i: number, text: string, d: LessonActivityPack) => void;
+}) {
   // A long list plus anything else is a lot of slide; step down the type
   // scale so the whole thing stays on screen without scrolling.
   const dense = steps.length >= 4;
@@ -1329,13 +1338,25 @@ function StepSpine({ steps, accent = "leaf" }: { steps: string[]; accent?: "leaf
           >
             {i + 1}
           </span>
-          <span
-            className={`flex-1 rounded-2xl bg-brand-50/70 px-5 leading-snug text-zinc-700 ${
-              dense ? "py-3 text-xl" : "py-4 text-2xl"
-            }`}
-          >
-            {st}
-          </span>
+          {editStep ? (
+            <Ed
+              as="span"
+              multiline
+              className={`flex-1 rounded-2xl bg-brand-50/70 px-5 leading-snug text-zinc-700 ${
+                dense ? "py-3 text-xl" : "py-4 text-2xl"
+              }`}
+              value={st}
+              apply={(d, t) => editStep(i, t, d)}
+            />
+          ) : (
+            <span
+              className={`flex-1 rounded-2xl bg-brand-50/70 px-5 leading-snug text-zinc-700 ${
+                dense ? "py-3 text-xl" : "py-4 text-2xl"
+              }`}
+            >
+              {st}
+            </span>
+          )}
         </li>
       ))}
     </ol>
@@ -1361,6 +1382,22 @@ function ActivitySlide({
   needs?: string;
   image?: string;
 }) {
+  /* These words come from the lesson plan, not from the pack, so a change
+     here is kept as a board override — the plan document still says what the
+     teacher submitted. Keyed by activity number so the right slide gets it
+     back. */
+  const key = String(index);
+  const setActivity = (
+    d: LessonActivityPack,
+    part: "head" | "body" | "needs",
+    text: string,
+  ) => {
+    const board = { ...(d.board || {}) };
+    const all = { ...(board.activities || {}) };
+    all[key] = { ...(all[key] || {}), [part]: text };
+    board.activities = all;
+    d.board = board;
+  };
   return (
     <div className="anim-pop rounded-[2.5rem] bg-white p-9 shadow-2xl">
       {/* Header band — name of the task, big and confident */}
@@ -1370,15 +1407,41 @@ function ActivitySlide({
             <Icon d={I.grid} className="h-5 w-5" />
             Activity {index} of {total}
           </span>
-          <h2 className="mt-4 text-[3rem] font-bold leading-[1.02] text-ink">{head}</h2>
-          {body && <p className="mt-2 text-2xl leading-snug text-zinc-500">{body}</p>}
+          <Ed
+            as="h2"
+            className="mt-4 text-[3rem] font-bold leading-[1.02] text-ink"
+            value={head}
+            apply={(d, t) => setActivity(d, "head", t)}
+          />
+          {body && (
+            <Ed
+              as="p"
+              multiline
+              className="mt-2 text-2xl leading-snug text-zinc-500"
+              value={body}
+              apply={(d, t) => setActivity(d, "body", t)}
+            />
+          )}
         </div>
         <div className="shrink-0 rounded-3xl bg-brand-50/60 p-4">
           <TeachTimer minutes={10} compact />
         </div>
       </div>
 
-      {steps.length > 0 && <StepSpine steps={steps} />}
+      {steps.length > 0 && (
+        <StepSpine
+          steps={steps}
+          editStep={(i, text, d) => {
+            const board = { ...(d.board || {}) };
+            const all = { ...(board.activities || {}) };
+            const next = [...(all[key]?.steps || steps)];
+            next[i] = text;
+            all[key] = { ...(all[key] || {}), steps: next };
+            board.activities = all;
+            d.board = board;
+          }}
+        />
+      )}
 
       {image && (
         <img
@@ -1390,7 +1453,11 @@ function ActivitySlide({
 
       {needs && (
         <p className="mt-6 rounded-2xl bg-sun-soft/70 px-6 py-3 text-center text-lg text-zinc-700">
-          <span className="font-bold text-brand-700">You need:</span> {needs}
+          <span className="font-bold text-brand-700">You need:</span>{" "}
+          <Ed
+            value={needs}
+            apply={(d, t) => setActivity(d, "needs", t)}
+          />
         </p>
       )}
     </div>
@@ -1610,6 +1677,10 @@ function buildSequence(
       ? `Today we are learning about ${focus}. Tell your partner one thing you know.`
       : `Think about today's topic — "${focus}". Tell your partner one thing you already know, or one thing you'd like to find out.`);
   const slides: TeachSlide[] = [];
+  /* Declared here rather than beside the slide that first used it: the title
+     and Do Now slides read it too, and a const used above its declaration is
+     a dead app, not a type error at the point of use. */
+  const pack = studio.pack;
 
   // 1 · Title — full-bleed colour, no card, so it feels like a curtain going up
   slides.push({
@@ -1622,7 +1693,14 @@ function buildSequence(
         <span className="inline-flex items-center rounded-full bg-sunny px-7 py-3 text-2xl font-bold text-brand-900 shadow-lg">
           Week {w.week}
         </span>
-        <h2 className="mt-8 text-5xl font-bold leading-[1.05] text-white sm:text-7xl">{focus}</h2>
+        <Ed
+          as="h2"
+          className="mt-8 text-5xl font-bold leading-[1.05] text-white sm:text-7xl"
+          value={pack?.board?.title || focus}
+          apply={(d, t) => {
+            d.board = { ...(d.board || {}), title: t };
+          }}
+        />
         {/* Only show the unit line when it says something the title didn't —
             otherwise the same words appear twice, one above the other. */}
         {(() => {
@@ -1630,8 +1708,16 @@ function buildSequence(
             .filter((x): x is string => Boolean(x) && x !== focus)
             .filter((x, i, a) => a.indexOf(x) === i)
             .join(" · ");
-          return sub ? (
-            <p className="mt-6 text-2xl font-medium text-white/70 sm:text-3xl">{sub}</p>
+          const shown = pack?.board?.subtitle || sub;
+          return shown ? (
+            <Ed
+              as="p"
+              className="mt-6 text-2xl font-medium text-white/70 sm:text-3xl"
+              value={shown}
+              apply={(d, t) => {
+                d.board = { ...(d.board || {}), subtitle: t };
+              }}
+            />
           ) : null;
         })()}
         <div className="mt-9 flex flex-wrap justify-center gap-3">
@@ -1665,7 +1751,15 @@ function buildSequence(
           {/* folded corner */}
           <span className="absolute right-0 top-0 h-14 w-14 rounded-bl-[2rem] rounded-tr-[2rem] bg-sun-soft" />
           <TeachBadge icon={I.clock} label="Do now" />
-          <p className="mt-7 text-[2.6rem] font-semibold leading-[1.2] text-ink">{doNow}</p>
+          <Ed
+            as="p"
+            multiline
+            className="mt-7 text-[2.6rem] font-semibold leading-[1.2] text-ink"
+            value={pack?.board?.doNow || doNow}
+            apply={(d, t) => {
+              d.board = { ...(d.board || {}), doNow: t };
+            }}
+          />
         </div>
         <div className="tilt-b flex flex-col items-center justify-center rounded-[2rem] bg-white/95 p-7 shadow-2xl">
           <p className="mb-5 text-xl font-bold uppercase tracking-wider text-brand-600">
@@ -1719,7 +1813,6 @@ function buildSequence(
   };
 
   // 3a · The idea said once, plainly, with the things it is made of.
-  const pack = studio.pack;
   if (pack?.bigIdea || pack?.keyIdeas?.length) {
     slides.push({
       kicker: pack?.bigIdea?.title || "What we are learning",
@@ -1883,20 +1976,50 @@ function buildSequence(
       tone: "start",
       content: (
         <div className="anim-pop text-center">
-          <h2 className="text-[3.4rem] font-bold leading-none text-white">{pack.sequence.title}</h2>
+          <Ed
+            as="h2"
+            className="text-[3.4rem] font-bold leading-none text-white"
+            value={pack.sequence.title}
+            apply={(d, t) => {
+              if (d.sequence) d.sequence.title = t;
+            }}
+          />
           <div className="mt-8 flex items-center justify-center gap-6">
             {pack.sequence.steps.map((s, i) => (
               <div key={i} className="flex items-center gap-6">
                 {i > 0 && <span className="text-5xl text-white/80">→</span>}
                 <div className="w-[15rem] rounded-[2rem] border-4 border-silver bg-white p-5">
-                  <span className="block text-7xl leading-tight">{s.emoji}</span>
-                  <span className="mt-2 block text-2xl font-bold text-ink">{s.label}</span>
+                  <Ed
+                    as="span"
+                    className="block text-7xl leading-tight"
+                    value={s.emoji}
+                    apply={(d, t) => {
+                      const step = d.sequence?.steps?.[i];
+                      if (step) step.emoji = t;
+                    }}
+                  />
+                  <Ed
+                    as="span"
+                    className="mt-2 block text-2xl font-bold text-ink"
+                    value={s.label}
+                    apply={(d, t) => {
+                      const step = d.sequence?.steps?.[i];
+                      if (step) step.label = t;
+                    }}
+                  />
                 </div>
               </div>
             ))}
           </div>
           {pack.sequence.line && (
-            <p className="mt-8 text-3xl font-medium text-white/85">{pack.sequence.line}</p>
+            <Ed
+              as="p"
+              className="mt-8 text-3xl font-medium text-white/85"
+              value={pack.sequence.line}
+              apply={(d, t) => {
+                if (d.sequence) d.sequence.line = t;
+              }}
+            />
           )}
         </div>
       ),
@@ -2042,10 +2165,16 @@ function buildSequence(
         <ActivitySlide
           index={idx + 1}
           total={total}
-          head={head}
-          body={body}
-          steps={steps}
-          needs={w.resources?.trim()}
+          /* Whatever the teacher changed on the board wins over the plan's
+             own wording — otherwise an edit would be accepted and then
+             appear to vanish on the next render. */
+          head={pack?.board?.activities?.[String(idx + 1)]?.head || head}
+          body={pack?.board?.activities?.[String(idx + 1)]?.body || body}
+          steps={pack?.board?.activities?.[String(idx + 1)]?.steps || steps}
+          needs={
+            pack?.board?.activities?.[String(idx + 1)]?.needs ||
+            w.resources?.trim()
+          }
         />
       ),
     });
@@ -2270,17 +2399,39 @@ function buildSequence(
           <TeachReveal
             tilted
             items={
-              young
-                ? ["Today I learned…", "I liked…", "Next time I want to try…"]
-                : [
-                    "Today I learned…",
-                    "Something I found tricky was… and I kept going by…",
-                    competencies[0]
-                      ? `I showed ${competencies[0]} today when I…`
-                      : `One thing I want to get better at is…`,
-                  ]
+              pack?.board?.closing?.length
+                ? pack.board.closing
+                : young
+                  ? ["Today I learned…", "I liked…", "Next time I want to try…"]
+                  : [
+                      "Today I learned…",
+                      "Something I found tricky was… and I kept going by…",
+                      competencies[0]
+                        ? `I showed ${competencies[0]} today when I…`
+                        : `One thing I want to get better at is…`,
+                    ]
             }
             label="sentence"
+            editItem={(i, t, d) => {
+              // Written by the deck rather than held in the pack, so the whole
+              // set is captured the first time one of them is changed.
+              const board = { ...(d.board || {}) };
+              const current = [
+                ...(board.closing ||
+                  (young
+                    ? ["Today I learned…", "I liked…", "Next time I want to try…"]
+                    : [
+                        "Today I learned…",
+                        "Something I found tricky was… and I kept going by…",
+                        competencies[0]
+                          ? `I showed ${competencies[0]} today when I…`
+                          : `One thing I want to get better at is…`,
+                      ])),
+              ];
+              current[i] = t;
+              board.closing = current;
+              d.board = board;
+            }}
           />
         </div>
       </div>
@@ -2467,7 +2618,12 @@ export default function TeachingDeck({
   // so it is offered in that language only. Editing a translation would either
   // be lost on the next translate or, worse, change the original behind the
   // teacher's back.
-  const canEdit = Boolean(pack && onPackChange && !lang);
+  /* Editing does not need a pack to exist. A lesson generated without one
+     still has a title, a Do Now and its activities on the board, and refusing
+     to edit any of them was the difference between a slide a teacher could
+     correct and one they could not. The first edit makes the pack that holds
+     the change. */
+  const canEdit = Boolean(onPackChange && !lang);
   const editor = useMemo<DeckEditor | null>(
     () =>
       canEdit
@@ -2477,13 +2633,15 @@ export default function TeachingDeck({
             edit: (mutate) => {
               // Work on a copy so React sees a new object and re-renders; the
               // pack is small and plain, so a structured clone is cheapest.
-              const draft: LessonActivityPack = JSON.parse(JSON.stringify(pack));
+              const draft: LessonActivityPack = pack
+                ? JSON.parse(JSON.stringify(pack))
+                : { week: week?.week ?? 1, discussion: [], questions: [] };
               mutate(draft);
               onPackChange!(draft);
             },
           }
         : null,
-    [canEdit, editing, pack, onPackChange, onUploadImage],
+    [canEdit, editing, pack, week?.week, onPackChange, onUploadImage],
   );
 
   const shown: DeckSource =
