@@ -6803,6 +6803,8 @@ export default function App() {
   const [ssSearch, setSsSearch] = useState("");
   const [ssYearFilter, setSsYearFilter] = useState("");
   const [ssSubjectFilter, setSsSubjectFilter] = useState("");
+  /** Which term week is showing, 0 for all of them. */
+  const [ssWeekFilter, setSsWeekFilter] = useState(0);
 
   /** The signed-in teacher's OWN submissions.
    *
@@ -6841,9 +6843,10 @@ export default function App() {
         return false;
       if (ssSubjectFilter && !sameSubject(planSubjectOf(p), ssSubjectFilter))
         return false;
+      if (ssWeekFilter && Number(p?.weekId) !== ssWeekFilter) return false;
       return matches(p);
     });
-  }, [mySubmittedPlans, ssSearch, ssYearFilter, ssSubjectFilter]);
+  }, [mySubmittedPlans, ssSearch, ssYearFilter, ssSubjectFilter, ssWeekFilter]);
 
   /** The year groups a teacher has submitted for, with a count each, and the
    *  subjects taught inside whichever year is open — a shelf within a shelf,
@@ -6866,16 +6869,29 @@ export default function App() {
     const subjects = Array.from(
       new Set(inYear.map(planSubjectOf).filter(Boolean)),
     ).sort((a, b) => a.localeCompare(b));
+    // Weeks are read from whatever the year and subject shelves have left, so
+    // the count beside a week is the count pressing it would give.
+    const inSubject = ssSubjectFilter
+      ? inYear.filter((p: any) => sameSubject(planSubjectOf(p), ssSubjectFilter))
+      : inYear;
+    const weeks = Array.from(
+      new Set(
+        inSubject.map((p: any) => Number(p?.weekId)).filter((n: number) => n > 0),
+      ),
+    ).sort((a, b) => a - b);
     return {
       years,
       subjects,
+      weeks,
       countForYear: (y: string) =>
         mySubmittedPlans.filter((p: any) => sameYearGroup(planYearOf(p), y))
           .length,
       countForSubject: (sub: string) =>
         inYear.filter((p: any) => sameSubject(planSubjectOf(p), sub)).length,
+      countForWeek: (n: number) =>
+        inSubject.filter((p: any) => Number(p?.weekId) === n).length,
     };
-  }, [mySubmittedPlans, ssYearFilter]);
+  }, [mySubmittedPlans, ssYearFilter, ssSubjectFilter]);
 
   const submissionShelves = useMemo(() => {
     const years = new Map<string, { label: string; subjects: Map<string, { label: string; plans: any[] }> }>();
@@ -30568,6 +30584,44 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-[#854D0E] hover:bg-[#FFFBEB]"
                       >
                         All subjects
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* The term week, so a teacher can check in one glance that
+                    everything for this week has gone in. */}
+                {submissionChips.weeks.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
+                      Week
+                    </span>
+                    {submissionChips.weeks.map((n: number) => {
+                      const on = ssWeekFilter === n;
+                      return (
+                        <button
+                          key={`ssw-${n}`}
+                          onClick={() => setSsWeekFilter(on ? 0 : n)}
+                          className={cn(
+                            "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border-2 transition-all",
+                            on
+                              ? "bg-[#FACC15] text-[#064E3B] border-[#EAB308]"
+                              : "bg-white text-[#064E3B] border-[#D1FAE5] hover:border-[#059669]",
+                          )}
+                        >
+                          Week {n}
+                          <span className="ml-1.5 opacity-60">
+                            {submissionChips.countForWeek(n)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {ssWeekFilter > 0 && (
+                      <button
+                        onClick={() => setSsWeekFilter(0)}
+                        className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider text-[#854D0E] hover:bg-[#FFFBEB]"
+                      >
+                        All weeks
                       </button>
                     )}
                   </div>
