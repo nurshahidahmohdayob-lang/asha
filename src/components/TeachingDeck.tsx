@@ -20,6 +20,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -138,6 +139,83 @@ type DeckEditor = {
 export const EditCtx = createContext<DeckEditor | null>(null);
 const useEditor = () => useContext(EditCtx);
 
+/** One of the small buttons under a picture while it is being framed. */
+function FrameBtn({
+  label,
+  title,
+  onClick,
+}: {
+  label: string;
+  title: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      title={title}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className="grid h-7 w-7 place-items-center rounded-lg bg-white text-base font-bold text-brand-700 shadow ring-2 ring-silver hover:ring-brand-400"
+    >
+      {label}
+    </button>
+  );
+}
+
+/* ── Framing a picture ────────────────────────────────────────────────────
+   How big a picture is, how far into it we are cropped, and which part of it
+   sits in the middle of the frame — carried on the end of the picture's own
+   link as "…/photo.png#zx=1,1.4,30,60".
+
+   In the link because every slot that holds a picture holds a plain string:
+   the big idea, each tile, each teaching point, each story scene. Widening
+   that to an object would mean changing all of them, and every lesson already
+   saved. A fragment is ignored when the file is fetched, so the picture still
+   loads from the same address. */
+type Framing = { size: number; zoom: number; x: number; y: number };
+const PLAIN_FRAMING: Framing = { size: 1, zoom: 1, x: 50, y: 50 };
+
+const imageSrc = (url?: string): string => String(url || "").split("#zx=")[0];
+
+const readFraming = (url?: string): Framing => {
+  const tail = String(url || "").split("#zx=")[1];
+  if (!tail) return PLAIN_FRAMING;
+  const [size, zoom, x, y] = tail.split(",").map(Number);
+  return {
+    size: Number.isFinite(size) ? size : 1,
+    zoom: Number.isFinite(zoom) ? zoom : 1,
+    x: Number.isFinite(x) ? x : 50,
+    y: Number.isFinite(y) ? y : 50,
+  };
+};
+
+const round = (n: number) => Math.round(n * 100) / 100;
+
+const withFraming = (url: string, f: Framing): string => {
+  const src = imageSrc(url);
+  // A picture in its plain state carries no fragment, so nothing is written
+  // into links that were never adjusted.
+  if (f.size === 1 && f.zoom === 1 && f.x === 50 && f.y === 50) return src;
+  return `${src}#zx=${round(f.size)},${round(f.zoom)},${Math.round(f.x)},${Math.round(f.y)}`;
+};
+
+const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+
+/** How a framed picture fills its frame. Used by the editable slot and by the
+ *  plain <img> slides alike, so a picture looks the same wherever it appears —
+ *  on the board, in the saved HTML and in the print-out. */
+const framedStyle = (url?: string): CSSProperties => {
+  const f = readFraming(url);
+  return {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+    objectPosition: `${f.x}% ${f.y}%`,
+    transform: f.zoom === 1 ? undefined : `scale(${f.zoom})`,
+  };
+};
+
 /** A picture slot: shows the picture if there is one, and while editing lets
  *  the teacher put one in, swap it, or take it out again. Falls back to the
  *  slide's emoji so a lesson without pictures still looks finished. */
@@ -176,22 +254,91 @@ function Picture({
     }
   };
 
+  const framing = readFraming(url);
+  /* The frame's own size is part of the framing, so making a picture bigger
+     makes the space it sits in bigger — scaling the picture inside a fixed
+     box would only crop it further. */
+  const box = `calc(${size} * ${framing.size})`;
+  const canFrame = Boolean(url && editor?.on);
+
+  /** Dragging the picture moves the part of it that shows. The frame is
+     scrolled under a fixed window, so dragging right reveals what is to the
+     left — which is why the sign is inverted. */
+  const startDrag = (e: React.PointerEvent) => {
+    if (!canFrame || !url) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
+    const from = { x: e.clientX, y: e.clientY };
+    const at = readFraming(url);
+    const span = Math.max(1, el.getBoundingClientRect().width);
+    const move = (ev: PointerEvent) => {
+      const next = {
+        ...at,
+        x: clamp(at.x - ((ev.clientX - from.x) / span) * 100, 0, 100),
+        y: clamp(at.y - ((ev.clientY - from.y) / span) * 100, 0, 100),
+      };
+      editor!.edit((d) => apply(d, withFraming(url, next)));
+    };
+    const stop = () => {
+      el.releasePointerCapture(e.pointerId);
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", stop);
+      el.removeEventListener("pointercancel", stop);
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", stop);
+    el.addEventListener("pointercancel", stop);
+  };
+
+  const nudge = (part: keyof Framing, by: number, lo: number, hi: number) => {
+    if (!url) return;
+    const at = readFraming(url);
+    editor!.edit((d) =>
+      apply(d, withFraming(url, { ...at, [part]: clamp(at[part] + by, lo, hi) })),
+    );
+  };
+
   if (!showable) return null;
 
   return (
-    <div className="relative shrink-0" style={{ width: size }}>
+    <div className="relative shrink-0" style={{ width: box }}>
       {url && !failed ? (
-        <img
-          src={url}
-          alt=""
-          onError={() => setFailed(true)}
-          className="w-full rounded-[1.5rem] object-cover shadow-lg"
-          style={{ height: size }}
-        />
+        <div
+          onPointerDown={startDrag}
+          onClick={(e) => canFrame && e.stopPropagation()}
+          className={`relative overflow-hidden rounded-[1.5rem] shadow-lg ${
+            canFrame ? "cursor-move ring-2 ring-dashed ring-sunny/70" : ""
+          }`}
+          style={{ width: "100%", height: box }}
+        >
+          <img
+            src={imageSrc(url)}
+            alt=""
+            draggable={false}
+            onError={() => setFailed(true)}
+            style={framedStyle(url)}
+          />
+        </div>
       ) : (
-        <span className="grid place-items-center leading-none" style={{ height: size, fontSize: `calc(${size} * 0.8)` }}>
+        <span className="grid place-items-center leading-none" style={{ height: box, fontSize: `calc(${box} * 0.8)` }}>
           {emoji}
         </span>
+      )}
+
+      {canFrame && (
+        <div className="mt-2 flex flex-wrap justify-center gap-1">
+          <FrameBtn label="−" title="Smaller" onClick={() => nudge("size", -0.15, 0.5, 2.5)} />
+          <FrameBtn label="+" title="Bigger" onClick={() => nudge("size", 0.15, 0.5, 2.5)} />
+          <FrameBtn label="⤢" title="Crop in" onClick={() => nudge("zoom", 0.2, 1, 4)} />
+          <FrameBtn label="⤡" title="Crop out" onClick={() => nudge("zoom", -0.2, 1, 4)} />
+          <FrameBtn
+            label="↺"
+            title="Back to the whole picture"
+            onClick={() => editor!.edit((d) => apply(d, imageSrc(url)))}
+          />
+        </div>
       )}
 
       {editor?.on && editor.upload && (
@@ -909,12 +1056,15 @@ function TileRow({
               apply={(d, next) => editTile(i, next, d)}
             />
           ) : t.image ? (
-            <img
-              src={t.image}
-              alt=""
-              className="mx-auto rounded-[1.2rem] object-cover"
-              style={{ height: big ? "6rem" : "5rem", width: big ? "6rem" : "5rem" }}
-            />
+            <span
+              className="mx-auto block overflow-hidden rounded-[1.2rem]"
+              style={{
+                height: `calc(${big ? "6rem" : "5rem"} * ${readFraming(t.image).size})`,
+                width: `calc(${big ? "6rem" : "5rem"} * ${readFraming(t.image).size})`,
+              }}
+            >
+              <img src={imageSrc(t.image)} alt="" style={framedStyle(t.image)} />
+            </span>
           ) : (
             <span className={big ? "block text-8xl leading-tight" : "block text-7xl leading-tight"}>
               {t.emoji}
@@ -1444,11 +1594,12 @@ function ActivitySlide({
       )}
 
       {image && (
-        <img
-          src={image}
-          alt=""
-          className="mx-auto mt-6 max-h-[320px] rounded-[1.5rem] object-cover shadow-lg"
-        />
+        <span
+          className="mx-auto mt-6 block overflow-hidden rounded-[1.5rem] shadow-lg"
+          style={{ height: `calc(320px * ${readFraming(image).size})`, maxWidth: "100%" }}
+        >
+          <img src={imageSrc(image)} alt="" style={framedStyle(image)} />
+        </span>
       )}
 
       {needs && (
@@ -1492,13 +1643,16 @@ function TeachSlideCard({
       <div className={sideBySide ? "grid grid-cols-[1.35fr_1fr] items-start gap-7" : ""}>
         {points.length > 0 && <StepSpine steps={points} accent="teal" />}
         {image && (
-          <img
-            src={image}
-            alt=""
-            className={`w-full rounded-[1.5rem] object-cover shadow-lg ${
-              sideBySide ? "mt-7 max-h-[430px]" : "mx-auto mt-7 max-h-[500px] max-w-3xl"
+          <span
+            className={`block w-full overflow-hidden rounded-[1.5rem] shadow-lg ${
+              sideBySide ? "mt-7" : "mx-auto mt-7 max-w-3xl"
             }`}
-          />
+            style={{
+              height: `calc(${sideBySide ? "430px" : "500px"} * ${readFraming(image).size})`,
+            }}
+          >
+            <img src={imageSrc(image)} alt="" style={framedStyle(image)} />
+          </span>
         )}
       </div>
     </div>
