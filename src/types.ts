@@ -208,6 +208,10 @@ export interface WorksheetSection {
     options?: string[];
     // Sorting questions: the category/column names items are sorted into.
     categories?: string[];
+    /** Matching questions: the two columns, already paired correctly. What the
+     *  student sees is the right-hand column shuffled, so the pairing is the
+     *  answer rather than the order they are printed in. */
+    pairs?: { left: string; right: string }[];
   }[];
 }
 

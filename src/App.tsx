@@ -1083,6 +1083,16 @@ function bankWord(raw: any, maxWords = 2): string {
 function zQText(s: any): string {
   return zEsc(s).replace(/_{3,}/g, '<span class="zblank"></span>');
 }
+/** A question's wording as it should be READ.
+ *
+ *  For a matching task the items used to be crammed into the sentence, and
+ *  they are now printed as the two columns underneath — so the sentence keeps
+ *  only its instruction and the items are not shown twice. */
+function zQuestionText(q: any): string {
+  if (isMatchingQuestion(q) && matchingPairsOf(q).length >= 2)
+    return zQText(matchingLead(q?.text || ""));
+  return zQuestionText(q);
+}
 // Map a sort/cut-out item label to a representative emoji icon (for the
 // "File or Not a File?" style cut-out cards). Falls back to 🧩.
 const ZICON_MAP: [RegExp, string][] = [
@@ -1373,6 +1383,90 @@ body.d-neon .docbody th{background:#1e2750;border-color:#3a4690}body.d-neon .doc
 </body></html>`;
 }
 
+/* ── Matching questions ───────────────────────────────────────────────────
+   A matching task is two columns joined by a ruled line. Written as one
+   paragraph — "Terms: A, B, C  Definitions: 1. … 2. …" — it is a wall of
+   text with nothing to rule between, which is what was being printed.
+
+   Generation now returns the columns in `pairs`. Everything already written
+   is read out of the sentence instead, so worksheets made before this still
+   print as two columns. */
+type MatchPair = { left: string; right: string };
+
+/** What heads each of the two lists — "Terms:", "Definitions:", "Greetings:".
+ *
+ *  ONE word. Allowing spaces let it start at the item before the label —
+ *  "Communication Definitions:" — and that item was then eaten along with the
+ *  heading, which is how a four-pair question came out with three. */
+const LIST_LABEL = /\b([A-Z][A-Za-z]{2,20}):\s*/;
+
+/** The instruction, without the items that used to be crammed after it. */
+const matchingLead = (text: string): string => {
+  const cut = String(text || "").search(LIST_LABEL);
+  const lead = cut > 0 ? text.slice(0, cut) : text;
+  return lead.trim().replace(/[.;:]\s*$/, "") + ".";
+};
+
+/** Two columns out of a question that only ever had one paragraph.
+ *
+ *  Looks for the two labelled lists — "Terms: …" and "Definitions: …" — and
+ *  splits each into its items: commas on the left, numbered markers on the
+ *  right, since that is how they are written. Returns nothing when the shape
+ *  is not there, so a question that cannot be read stays as it was rather
+ *  than being printed wrong. */
+const matchingFromText = (text: string): MatchPair[] => {
+  const raw = String(text || "");
+  const labels = [...raw.matchAll(new RegExp(LIST_LABEL.source, "g"))];
+  if (labels.length < 2) return [];
+  const at = (i: number) => labels[i].index! + labels[i][0].length;
+  const leftPart = raw.slice(at(0), labels[1].index!);
+  const rightPart = raw.slice(at(1));
+
+  const splitLeft = leftPart
+    .split(/,|;/)
+    .map((x) => x.trim().replace(/^\d+[.)]\s*/, "").replace(/[.]$/, ""))
+    .filter(Boolean);
+  // Numbered on the right where they are numbered; commas otherwise.
+  const numbered = rightPart.split(/\s*\d+[.)]\s*/).map((x) => x.trim()).filter(Boolean);
+  const splitRight = (numbered.length > 1 ? numbered : rightPart.split(/,|;/))
+    .map((x) => x.trim().replace(/[.]$/, ""))
+    .filter(Boolean);
+
+  const n = Math.min(splitLeft.length, splitRight.length);
+  if (n < 2) return [];
+  return Array.from({ length: n }, (_, i) => ({
+    left: splitLeft[i],
+    right: splitRight[i],
+  }));
+};
+
+const matchingPairsOf = (q: any): MatchPair[] => {
+  const given = Array.isArray(q?.pairs) ? q.pairs : [];
+  const clean = given
+    .map((p: any) => ({
+      left: String(p?.left || "").trim(),
+      right: String(p?.right || "").trim(),
+    }))
+    .filter((p: MatchPair) => p.left && p.right);
+  return clean.length >= 2 ? clean : matchingFromText(q?.text || "");
+};
+
+/** The right-hand column in a fixed scrambled order.
+ *
+ *  Printed in pairing order the answer is simply "join line 1 to line 1".
+ *  Shifting by one is enough to break that, and being a shift rather than a
+ *  shuffle it comes out the same every time the sheet is drawn — the copy on
+ *  screen, the download and the print-out cannot disagree. */
+const matchingRightColumn = (pairs: MatchPair[]): string[] => {
+  const rights = pairs.map((p) => p.right);
+  if (rights.length < 2) return rights;
+  const shift = rights.length > 2 ? 1 : 1;
+  return rights.map((_, i) => rights[(i + shift) % rights.length]);
+};
+
+const isMatchingQuestion = (q: any): boolean =>
+  String(q?.type || "").toLowerCase().includes("match");
+
 function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detective", kind: string = "worksheet", subject: string = ""): string {
   const T = ZTHEMES[themeKey] || ZTHEMES.detective;
   const kindWord = kind === "assessment" ? "Assessment" : "Worksheet";
@@ -1455,6 +1549,33 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
     if (isDrawing) {
       return '<div class="drawbox"><span class="drawhint">Draw here</span></div>';
     }
+    if (isMatchingQuestion(q)) {
+      const pairs = matchingPairsOf(q);
+      if (pairs.length >= 2) {
+        const rights = matchingRightColumn(pairs);
+        return (
+          '<div class="matchwrap">' +
+          '<div class="matchcol">' +
+          pairs
+            .map(
+              (p, i) =>
+                `<div class="matchit"><span class="matchdot">${String.fromCharCode(65 + i)}</span><span>${zEsc(p.left)}</span></div>`,
+            )
+            .join("") +
+          "</div>" +
+          '<div class="matchgap"></div>' +
+          '<div class="matchcol matchright">' +
+          rights
+            .map(
+              (r, i) =>
+                `<div class="matchit"><span class="matchdot">${i + 1}</span><span>${zEsc(r)}</span></div>`,
+            )
+            .join("") +
+          "</div>" +
+          "</div>"
+        );
+      }
+    }
     if (isTF) {
       // Grouped under a "True or False" heading already, so each question only
       // needs a small box to write T or F (no repeated TRUE/FALSE on every one).
@@ -1530,7 +1651,7 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       (sec?.questions || []).forEach((q: any) => {
         qn++;
         const c = PAL[(qn - 1) % PAL.length];
-        rows += `<tr class="qtr" style="--qc:${c}"><td class="td-n"><span class="tnum">${qn}</span></td><td class="td-q">${zQText(q?.text)}</td><td class="td-a">${renderAnswer(q)}</td></tr>`;
+        rows += `<tr class="qtr" style="--qc:${c}"><td class="td-n"><span class="tnum">${qn}</span></td><td class="td-q">${zQuestionText(q)}</td><td class="td-a">${renderAnswer(q)}</td></tr>`;
       });
     });
     rows += "</tbody></table>";
@@ -1542,7 +1663,7 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       if (sec?.instructions) rows += `<div class="dins">${zEsc(sec.instructions)}</div>`;
       (sec?.questions || []).forEach((q: any) => {
         qn++;
-        rows += `<div class="dbox"><div class="dq"><span class="dnum">${qn}</span><span>${zQText(q?.text)}</span></div>${renderAnswer(q)}</div>`;
+        rows += `<div class="dbox"><div class="dq"><span class="dnum">${qn}</span><span>${zQuestionText(q)}</span></div>${renderAnswer(q)}</div>`;
       });
     });
   } else if (layout === "exam") {
@@ -1573,7 +1694,7 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       rows += `<div class="part" style="--pc:#2563eb">PART A: MULTIPLE CHOICE (${mcq.length} marks) — Circle the correct answer.</div><div class="examgrid">`;
       mcq.forEach((q) => {
         n++;
-        rows += `<div class="examq"><div class="eqt"><span class="eqn">${n}.</span> ${zQText(q?.text)}</div><div class="eopts">${(q?.options || []).map((o: string, i: number) => `<button class="eopt" onclick="zPick(this)"><span class="eol">${String.fromCharCode(65 + i)}</span><span>${zEsc(o)}</span></button>`).join("")}</div></div>`;
+        rows += `<div class="examq"><div class="eqt"><span class="eqn">${n}.</span> ${zQuestionText(q)}</div><div class="eopts">${(q?.options || []).map((o: string, i: number) => `<button class="eopt" onclick="zPick(this)"><span class="eol">${String.fromCharCode(65 + i)}</span><span>${zEsc(o)}</span></button>`).join("")}</div></div>`;
       });
       rows += `</div>`;
     }
@@ -1581,7 +1702,7 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       rows += `<div class="part" style="--pc:#16a34a">PART B: TRUE OR FALSE (${tf.length} marks) — Write T for True or F for False.</div><div class="tfgrid">`;
       tf.forEach((q) => {
         n++;
-        rows += `<div class="tfq"><span><span class="eqn">${n}.</span> ${zQText(q?.text)}</span><button class="tfbox" onclick="zCycleTF(this)"></button></div>`;
+        rows += `<div class="tfq"><span><span class="eqn">${n}.</span> ${zQuestionText(q)}</span><button class="tfbox" onclick="zCycleTF(this)"></button></div>`;
       });
       rows += `</div>`;
     }
@@ -1590,14 +1711,14 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       rows += fillBank({ questions: fill });
       fill.forEach((q) => {
         n++;
-        rows += `<div class="examw"><div class="eqt"><span class="eqn">${n}.</span> ${zQText(q?.text)}</div></div>`;
+        rows += `<div class="examw"><div class="eqt"><span class="eqn">${n}.</span> ${zQuestionText(q)}</div></div>`;
       });
     }
     if (rest.length) {
       rows += `<div class="part" style="--pc:#7c3aed">PART C: WRITTEN ANSWERS (${rest.length} marks) — Write your answer.</div>`;
       rest.forEach((q) => {
         n++;
-        rows += `<div class="examw"><div class="eqt"><span class="eqn">${n}.</span> ${zQText(q?.text)}</div>${renderAnswer(q)}</div>`;
+        rows += `<div class="examw"><div class="eqt"><span class="eqn">${n}.</span> ${zQuestionText(q)}</div>${renderAnswer(q)}</div>`;
       });
     }
   } else if (layout === "activity") {
@@ -1609,7 +1730,7 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       if (sec?.instructions) rows += `<div class="actins">${zEsc(sec.instructions)}</div>`;
       (sec?.questions || []).forEach((q: any) => {
         qn++;
-        rows += `<div class="actq"><div class="aqt">${zQText(q?.text)}</div>${renderAnswer(q)}</div>`;
+        rows += `<div class="actq"><div class="aqt">${zQuestionText(q)}</div>${renderAnswer(q)}</div>`;
       });
       rows += `</div>`;
     });
@@ -1622,7 +1743,7 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       rows += '<div class="comicgrid">';
       (sec?.questions || []).forEach((q: any) => {
         qn++;
-        rows += `<div class="cpanel"><div class="cburst">${qn}</div><div class="cbubble">${zQText(q?.text)}</div>${renderAnswer(q)}</div>`;
+        rows += `<div class="cpanel"><div class="cburst">${qn}</div><div class="cbubble">${zQuestionText(q)}</div>${renderAnswer(q)}</div>`;
       });
       rows += "</div>";
     });
@@ -1634,7 +1755,7 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       if (sec?.instructions) rows += `<div class="nbins">${zEsc(sec.instructions)}</div>`;
       (sec?.questions || []).forEach((q: any) => {
         qn++;
-        rows += `<div class="nbq"><span class="nbnum">${qn}.</span> ${zQText(q?.text)}</div><div class="nbans">${renderAnswer(q)}</div>`;
+        rows += `<div class="nbq"><span class="nbnum">${qn}.</span> ${zQuestionText(q)}</div><div class="nbans">${renderAnswer(q)}</div>`;
       });
     });
   } else if (layout === "dark") {
@@ -1646,7 +1767,7 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       (sec?.questions || []).forEach((q: any) => {
         qn++;
         const c = PAL[(qn - 1) % PAL.length];
-        rows += `<div class="dkcard" style="--dc:${c}"><div class="dkchip">Q${qn}</div><div class="dkq">${zQText(q?.text)}</div>${renderAnswer(q)}</div>`;
+        rows += `<div class="dkcard" style="--dc:${c}"><div class="dkchip">Q${qn}</div><div class="dkq">${zQuestionText(q)}</div>${renderAnswer(q)}</div>`;
       });
     });
   } else {
@@ -1661,7 +1782,7 @@ function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detect
       (sec?.questions || []).forEach((q: any) => {
         qn++;
         const c = PAL[(qn - 1) % PAL.length];
-        rows += `<div class="qrow" style="--qc:${c}"><div class="qnum">${qn}</div><div class="qbody"><div class="qtext">${zQText(q?.text)}</div>${renderAnswer(q)}</div></div>`;
+        rows += `<div class="qrow" style="--qc:${c}"><div class="qnum">${qn}</div><div class="qbody"><div class="qtext">${zQuestionText(q)}</div>${renderAnswer(q)}</div></div>`;
       });
       if (wrap) rows += "</div>";
     });
@@ -1712,7 +1833,7 @@ body{font-family:'Baloo 2','Segoe UI',system-ui,sans-serif;background:${T.bg};co
 .tf-t.on{background:#16a34a;color:#fff;border-color:#16a34a}
 .tf-f.on{background:#dc2626;color:#fff;border-color:#dc2626}
 .lines{display:flex;flex-direction:column;gap:14px;margin-top:4px}
-.lines .ln{display:block;border-bottom:2.5px dotted #94a3b8;height:4px}
+.lines .ln{display:block;border-bottom:2.5px dotted #94a3b8;height:4px}\n.matchwrap{display:grid;grid-template-columns:1fr 5.5rem 1fr;gap:0;margin-top:14px;align-items:start}\n.matchcol{display:flex;flex-direction:column;gap:10px}\n.matchit{display:flex;align-items:center;gap:10px;border:2.5px solid #cbd5e1;border-radius:14px;padding:10px 12px;background:#fff;font-weight:700;min-height:46px}\n.matchright .matchit{flex-direction:row-reverse;text-align:right}\n.matchdot{flex:none;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:#e2e8f0;font-size:12px;font-weight:800;color:#334155}\n.matchgap{border-left:2px dashed #e2e8f0;border-right:2px dashed #e2e8f0;margin:0 auto;width:1px;align-self:stretch;opacity:0}\n@media print{.matchwrap{break-inside:avoid;page-break-inside:avoid}}
 .drawbox{margin-top:10px;height:230px;border:3px dashed #94a3b8;border-radius:16px;background:#fff;position:relative}
 .drawhint{position:absolute;top:10px;left:14px;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#94a3b8;opacity:.7}
 @media print{.drawbox{height:250px;break-inside:avoid;page-break-inside:avoid}}
@@ -34432,7 +34553,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                       .sort()
                                       .join(",") === "false,true");
                                 const kind =
-                                  /draw|creative/.test(tt)
+                                  /match/.test(tt)
+                                    ? "match"
+                                  : /draw|creative/.test(tt)
                                     ? "draw"
                                     : tt.includes("sort")
                                       ? "sort"
@@ -34462,6 +34585,45 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                         Answer:
                                       </span>
                                       <div className="w-12 h-9 border-2 border-[#E5E2C8] rounded-lg" />
+                                    </div>
+                                  );
+                                }
+                                if (kind === "match") {
+                                  const pairs = matchingPairsOf(q);
+                                  if (pairs.length < 2) return null;
+                                  const rights = matchingRightColumn(pairs);
+                                  return (
+                                    <div className="mt-4 grid grid-cols-[1fr_5rem_1fr] items-start gap-y-2.5">
+                                      <div className="space-y-2.5">
+                                        {pairs.map((pair, pi) => (
+                                          <div
+                                            key={`ml-${pi}`}
+                                            className="flex items-center gap-2 rounded-xl border-2 border-[#E5E2C8] bg-white px-3 py-2 text-sm font-bold text-[#111827]"
+                                          >
+                                            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#F0FDF4] text-[10px] font-black text-[#064E3B]">
+                                              {String.fromCharCode(65 + pi)}
+                                            </span>
+                                            <span>{pair.left}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                      {/* The ruling space. Left empty on
+                                          purpose — this is what the line is
+                                          drawn across. */}
+                                      <div />
+                                      <div className="space-y-2.5">
+                                        {rights.map((r, ri) => (
+                                          <div
+                                            key={`mr-${ri}`}
+                                            className="flex flex-row-reverse items-center gap-2 rounded-xl border-2 border-[#E5E2C8] bg-white px-3 py-2 text-right text-sm font-bold text-[#111827]"
+                                          >
+                                            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#F0FDF4] text-[10px] font-black text-[#064E3B]">
+                                              {ri + 1}
+                                            </span>
+                                            <span>{r}</span>
+                                          </div>
+                                        ))}
+                                      </div>
                                     </div>
                                   );
                                 }
@@ -42484,6 +42646,74 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       ],
                     }),
                   ];
+                }
+
+                // Two columns with a gap to rule a line across. A table
+                // keeps the two sides level in Word, which tabs do not.
+                if (isMatchingQuestion(q)) {
+                  const pairs = matchingPairsOf(q);
+                  if (pairs.length >= 2) {
+                    const rights = matchingRightColumn(pairs);
+                    const bare = {
+                      top: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+                      bottom: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+                      left: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+                      right: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+                    };
+                    return [
+                      new Paragraph({
+                        children: [
+                          new TextRun({
+                            text: `${idx + 1}. ${matchingLead(q.text)}`,
+                            break: 1,
+                          }),
+                        ],
+                      }),
+                      new Table({
+                        width: { size: 100, type: WidthType.PERCENTAGE },
+                        borders: bare,
+                        rows: pairs.map(
+                          (pair, i) =>
+                            new TableRow({
+                              children: [
+                                new TableCell({
+                                  borders: bare,
+                                  width: { size: 42, type: WidthType.PERCENTAGE },
+                                  children: [
+                                    new Paragraph({
+                                      children: [
+                                        new TextRun({
+                                          text: `${String.fromCharCode(65 + i)}.  ${pair.left}`,
+                                        }),
+                                      ],
+                                    }),
+                                  ],
+                                }),
+                                // The ruling space.
+                                new TableCell({
+                                  borders: bare,
+                                  width: { size: 16, type: WidthType.PERCENTAGE },
+                                  children: [new Paragraph({ text: "" })],
+                                }),
+                                new TableCell({
+                                  borders: bare,
+                                  width: { size: 42, type: WidthType.PERCENTAGE },
+                                  children: [
+                                    new Paragraph({
+                                      alignment: AlignmentType.RIGHT,
+                                      children: [
+                                        new TextRun({ text: `${rights[i]}  .${i + 1}` }),
+                                      ],
+                                    }),
+                                  ],
+                                }),
+                              ],
+                            }),
+                        ),
+                      }),
+                      new Paragraph({ text: "", spacing: { after: 160 } }),
+                    ];
+                  }
                 }
 
                 if (q.options) {

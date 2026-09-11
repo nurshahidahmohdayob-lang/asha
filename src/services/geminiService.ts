@@ -1537,13 +1537,13 @@ ${options.taughtContext.trim()}
 - "true-false": write a clear declarative STATEMENT (NOT a question) that is plainly true or false — e.g. "A search engine is used to find information on the internet." Do NOT phrase it as "Is it true that…?" and do NOT put "True or False" inside the text. Put exactly ["True","False"] in "options".
 - "fill-in-the-blanks": a short, concise exam-style sentence (8-14 words) with exactly one "____" blank and a normal space around it. The FIRST option is the correct answer and MUST be a SINGLE WORD (at most two words; use DIGITS for numbers) — NEVER a phrase, clause, or full sentence, because it is displayed in a Word Bank. Add 1-2 short single-word distractors. Each fill-in must have a different answer.
 - "short-answer" / "scenario": an open written response; leave "options" empty.
-- "matching": a left-to-right matching task; leave "options" empty.
+- "matching": a left-to-right matching task the student joins with a ruled line. Put 3-5 correctly paired items in "pairs" — e.g. {"text":"Match each term to its meaning.","type":"matching","pairs":[{"left":"Language","right":"Words we use to share thoughts"},{"left":"Greeting","right":"A friendly way to say hello"}]}. The "text" is ONLY the instruction sentence: never list the items or the meanings inside it, and never number them — the two columns are printed from "pairs", and a text that repeats them prints everything twice and gives the pairing away. Keep each side short enough to sit in a column: a word or short phrase on the left, at most about eight words on the right. Leave "options" empty.
 - "drawing": a creative DRAWING task — the student draws their answer in an empty box. Write a clear drawing instruction in "text" and DO NOT provide "options".
 - "sorting": a sorting task. The "text" MUST be EXACTLY "Sort the following into: <Category 1> and <Category 2>." (name 2-4 categories; do NOT prefix it with "Sorting:" or anything else). ALSO set "categories" to the exact list of those category names (the column headers), e.g. ["Input Devices","Output Devices"] — these are shown as the column titles, so they must be real, descriptive names, never "Group 1"/"Group 2". "options" MUST be a list of 6-8 specific ITEMS to sort into those categories — the items are the words the student places into the groups, and they must NOT be the category names. Example: {"text":"Sort the following into: Input Devices and Output Devices.","type":"sorting","categories":["Input Devices","Output Devices"],"options":["Keyboard","Mouse","Monitor","Printer","Microphone","Speaker"]}. NEVER produce a sorting task with an empty "options" list.
 - "cut-and-paste": a cut-and-paste task, encoded EXACTLY like "sorting". Set "categories" to the column headings (2-4 real, descriptive names such as ["Happy Feelings","Sad Feelings"] — never "Group 1"/"Group 2"), and put the individual items the student cuts out in "options". The "text" MUST NAME THE CATEGORIES, e.g. "Cut out the words and paste them under: Happy Feelings and Sad Feelings." CRITICAL: never list the items themselves in "text" — writing "paste them into the correct box: happy, sad, excited" leaves the child with no categories to sort into, and the same words end up as both the columns and the cut-outs. The items in "options" and the names in "categories" must share nothing.
 Only use the types that appear in the "Allowed Types" list above.`;
     contents.push(mainPrompt);
-    contents.push(`Format: JSON object with "title", "readingPassage" (The main content if readingPassageOnly, or the context story if includeStory), "description" (ONE sentence, max 25 words), "methodology" (ONE to TWO sentences, max 45 words, MUST include the Cambridge Subject Code — do NOT write a paragraph), and "sections" (array of {title, instructions, questions: array of {text, type, options}}). Keep every question concise and direct. If readingPassageOnly is true, sections should contain exactly one placeholder entry if necessary to satisfy the schema, and no questions.`);
+    contents.push(`Format: JSON object with "title", "readingPassage" (The main content if readingPassageOnly, or the context story if includeStory), "description" (ONE sentence, max 25 words), "methodology" (ONE to TWO sentences, max 45 words, MUST include the Cambridge Subject Code — do NOT write a paragraph), and "sections" (array of {title, instructions, questions: array of {text, type, options, pairs}}). Keep every question concise and direct. If readingPassageOnly is true, sections should contain exactly one placeholder entry if necessary to satisfy the schema, and no questions.`);
     contents.push(encodingRules);
 
     const questionItemSchema = {
@@ -1557,6 +1557,19 @@ Only use the types that appear in the "Allowed Types" list above.`;
           items: { type: Type.STRING },
           description:
             "Sorting questions ONLY: the 2-4 category/column names items are sorted into (e.g. [\"Input Devices\",\"Output Devices\"]). Leave empty for other question types.",
+        },
+        pairs: {
+          type: Type.ARRAY,
+          description:
+            "Matching questions ONLY: 3-5 correctly paired items, printed as two columns for the student to join with a ruled line. Leave empty for other question types.",
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              left: { type: Type.STRING },
+              right: { type: Type.STRING },
+            },
+            required: ["left", "right"],
+          },
         },
       },
       required: ["text", "type"],
