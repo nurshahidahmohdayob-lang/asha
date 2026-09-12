@@ -21667,10 +21667,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           </div>
         </header>
 
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
           {/* Admin menu — the old top tab row, now a pane you can hide. */}
           {adminNavOpen ? (
-            <aside className="w-64 shrink-0 bg-white border-r-2 border-[#D1FAE5] flex flex-col overflow-hidden">
+            <aside className="w-full lg:w-64 shrink-0 bg-white border-b-2 lg:border-b-0 lg:border-r-2 border-[#D1FAE5] flex flex-col lg:overflow-hidden">
               <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b-2 border-[#D1FAE5]">
                 <span className="text-[10px] font-black uppercase tracking-widest text-[#064E3B]/50">
                   Menu
@@ -21802,7 +21802,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               })}
             </div>
           )}
-          <main className="flex-1 overflow-y-auto p-12 custom-scrollbar">
+          <main className="flex-1 lg:overflow-y-auto p-4 sm:p-8 lg:p-12 custom-scrollbar">
           {adminTab === "none" && (
             <div className="h-full flex items-center justify-center">
               <div className="text-center space-y-3">
@@ -21817,7 +21817,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             </div>
           )}
           {adminTab === "overview" && (
-            <div className="max-w-6xl mx-auto space-y-8 pb-20">
+            <div className="max-w-6xl mx-auto space-y-6 sm:space-y-8 pb-20">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {[
                   {
@@ -23528,8 +23528,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           )}
 
           {adminTab === "classrooms" && (
-            <div className="max-w-6xl mx-auto space-y-8 pb-20">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-8 rounded-[2.5rem] shadow-xl border-b-8 border-black/5 gap-4">
+            <div className="max-w-6xl mx-auto space-y-6 sm:space-y-8 pb-20">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-5 sm:p-8 rounded-[1.75rem] sm:rounded-[2.5rem] shadow-xl border-b-8 border-black/5 gap-4">
                 <div>
                   <h3 className="text-3xl font-black text-[#064E3B]">
                     Classroom & Space Allocation
@@ -23959,8 +23959,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           )}
 
           {adminTab === "plans" && (
-            <div className="max-w-6xl mx-auto space-y-8 pb-20">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-8 rounded-[2.5rem] shadow-xl border-b-8 border-black/5 gap-4">
+            <div className="max-w-6xl mx-auto space-y-6 sm:space-y-8 pb-20">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-5 sm:p-8 rounded-[1.75rem] sm:rounded-[2.5rem] shadow-xl border-b-8 border-black/5 gap-4">
                 <div>
                   <h3 className="text-3xl font-black text-[#064E3B]">
                     Submitted Lesson Plans
@@ -24019,7 +24019,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               </div>
 
               {/* Review pipeline: teacher → HOD → Coordinator → teacher */}
-              <div className="bg-white rounded-[2rem] p-6 shadow-sm border-2 border-[#D1FAE5] space-y-3">
+              <div className="bg-white rounded-[1.5rem] sm:rounded-[2rem] p-4 sm:p-6 shadow-sm border-2 border-[#D1FAE5] space-y-3">
                 <div className="flex items-center gap-3 flex-wrap">
                   <h4 className="text-xs font-black uppercase tracking-widest text-[#064E3B]">
                     Review Pipeline
@@ -28747,7 +28747,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           )}
 
           {adminTab === "sso" && (
-            <div className="max-w-6xl mx-auto space-y-8 pb-20">
+            <div className="max-w-6xl mx-auto space-y-6 sm:space-y-8 pb-20">
               <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div className="space-y-1">
                   <h3 className="text-2xl font-black text-[#064E3B]">
@@ -29513,7 +29513,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-12 custom-scrollbar">
+      <div className="flex-1 lg:overflow-y-auto p-4 sm:p-8 lg:p-12 custom-scrollbar">
         <div className="max-w-5xl mx-auto space-y-16 pb-20">
           {/* Main App Title / Welcoming */}
           <div className="text-center space-y-6 flex flex-col items-center">
@@ -29986,7 +29986,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
   const renderHtmlHostView = () => (
     <div className="flex-1 flex flex-col bg-[#FDFBF7] overflow-hidden">
-      <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20 shrink-0">
+      <div className="min-h-16 bg-white border-b-2 border-[#D1FAE5] flex flex-wrap items-center justify-between gap-2 px-3 sm:px-6 py-2 z-20 shrink-0">
         <button
           onClick={() => setCurrentView("educator-suite")}
           className="flex items-center gap-2 text-[#064E3B]/60 font-bold hover:text-[#064E3B] transition-colors"
@@ -30001,8 +30001,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         </div>
         <ZeraBrandLogo size="sm" variant="original" />
       </div>
-      <div className="flex-1 flex overflow-hidden">
-        <aside className="w-[26rem] bg-white border-r-2 border-[#D1FAE5] p-6 overflow-y-auto custom-scrollbar space-y-5 shrink-0">
+      <div className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
+        <aside className="w-full lg:w-[26rem] bg-white border-b-2 lg:border-b-0 lg:border-r-2 border-[#D1FAE5] p-4 sm:p-6 lg:overflow-y-auto custom-scrollbar space-y-5 shrink-0">
           <div className="space-y-1.5">
             <h3 className="text-sm font-black text-[#064E3B] uppercase tracking-wide">
               Paste your HTML
@@ -30122,7 +30122,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           </p>
         </aside>
 
-        <main className="flex-1 flex flex-col bg-[#F9F8F0] overflow-hidden">
+        <main className="flex-1 flex flex-col bg-[#F9F8F0] lg:overflow-hidden">
           <div className="h-11 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-5 shrink-0">
             <span className="flex items-center gap-2 text-[10px] font-black uppercase text-[#7C7A65] tracking-widest">
               <Eye size={14} /> Live preview
@@ -30156,7 +30156,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
   const renderPosterView = () => (
     <div className="flex-1 flex flex-col bg-[#FDFBF7] overflow-hidden">
-      <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20 shrink-0">
+      <div className="min-h-16 bg-white border-b-2 border-[#D1FAE5] flex flex-wrap items-center justify-between gap-2 px-3 sm:px-6 py-2 z-20 shrink-0">
         <button
           onClick={() => setCurrentView("educator-suite")}
           className="flex items-center gap-2 text-[#064E3B]/60 font-bold hover:text-[#064E3B] transition-colors"
@@ -30171,8 +30171,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         </div>
         <ZeraBrandLogo size="sm" variant="original" />
       </div>
-      <div className="flex-1 flex overflow-hidden">
-        <aside className="w-96 bg-white border-r-2 border-[#D1FAE5] p-6 overflow-y-auto custom-scrollbar space-y-6 shrink-0">
+      <div className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
+        <aside className="w-full lg:w-96 bg-white border-b-2 lg:border-b-0 lg:border-r-2 border-[#D1FAE5] p-4 sm:p-6 lg:overflow-y-auto custom-scrollbar space-y-6 shrink-0">
           <div className="space-y-2">
             <label className="text-[10px] font-black uppercase text-[#7C7A65] tracking-widest">
               Describe the image you want
@@ -30284,7 +30284,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             </div>
           )}
         </aside>
-        <main className="flex-1 overflow-y-auto p-10 flex items-start justify-center custom-scrollbar">
+        <main className="flex-1 lg:overflow-y-auto p-4 sm:p-8 lg:p-10 flex items-start justify-center custom-scrollbar">
           {posterGallery.length === 0 ? (
             <div className="text-center space-y-4 mt-24">
               <Palette size={48} className="mx-auto text-[#064E3B]/20" />
@@ -31462,7 +31462,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
     return (
       <div className="flex-1 flex flex-col bg-[#F0FDF4] overflow-hidden">
-        <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20">
+        <div className="min-h-16 bg-white border-b-2 border-[#D1FAE5] flex flex-wrap items-center justify-between gap-2 px-3 sm:px-6 py-2 z-20">
           <div className="flex items-center gap-4">
             <button
               onClick={() => {
@@ -31529,9 +31529,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             )}
           </div>
         </div>
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
           {!isReviewMode && (
-            <aside className="w-80 bg-white border-r-2 border-[#D1FAE5] p-6 space-y-8 overflow-y-auto custom-scrollbar">
+            <aside className="w-full lg:w-80 shrink-0 bg-white border-b-2 lg:border-b-0 lg:border-r-2 border-[#D1FAE5] p-4 sm:p-6 space-y-8 lg:overflow-y-auto custom-scrollbar">
               {/* The Actions list moved into the workflow rail, nested under
                   Slide Studio — the sidebar is for editing the slide in front
                   of you, the rail is for moving around. */}
@@ -32377,7 +32377,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
             </aside>
           )}
-          <main className="flex-1 p-8 overflow-y-auto flex flex-col items-center gap-8 bg-[#F9F9F4] custom-scrollbar">
+          <main className="flex-1 p-4 sm:p-8 lg:overflow-y-auto flex flex-col items-center gap-8 bg-[#F9F9F4] custom-scrollbar">
             {content?.slides && content.slides.length > 0 && currentSlide ? (
               <>
                 <div
@@ -33287,7 +33287,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     }
     return (
       <div className="flex-1 flex flex-col bg-[#F0FDF4] overflow-hidden">
-        <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20">
+        <div className="min-h-16 bg-white border-b-2 border-[#D1FAE5] flex flex-wrap items-center justify-between gap-2 px-3 sm:px-6 py-2 z-20">
           <div className="flex items-center gap-4">
             <button
               onClick={() => {
@@ -33319,9 +33319,9 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             </h2>
           </div>
         </div>
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
           {!isReviewMode && (
-            <aside className="w-80 bg-white border-r-2 border-[#D1FAE5] p-6 space-y-6 overflow-y-auto">
+            <aside className="w-full lg:w-80 shrink-0 bg-white border-b-2 lg:border-b-0 lg:border-r-2 border-[#D1FAE5] p-4 sm:p-6 space-y-6 lg:overflow-y-auto">
               {/* The actions live here rather than along the top bar. Ranged
                   across a fixed-height strip they ran out of room — "Submit
                   for week" was already cut off at the right edge — and every
@@ -33941,7 +33941,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               </div>
             </aside>
           )}
-          <main className="flex-1 p-8 overflow-y-auto bg-[#F0FDF4]/50 custom-scrollbar">
+          <main className="flex-1 p-4 sm:p-8 lg:overflow-y-auto bg-[#F0FDF4]/50 custom-scrollbar">
             {/* The marking scheme, above the paper it marks. Its own printable
                 sheet — a teacher marks from this, not from the worksheet. */}
             {schemeOpen && content?.worksheet?.answerScheme && (
@@ -35938,7 +35938,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     return (
       <div className="flex-1 flex flex-col bg-[#F0FDF4] overflow-hidden">
         {/* Header Bar */}
-        <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20">
+        <div className="min-h-16 bg-white border-b-2 border-[#D1FAE5] flex flex-wrap items-center justify-between gap-2 px-3 sm:px-6 py-2 z-20">
           <div className="flex items-center gap-4">
             <button
               onClick={() => {
@@ -36043,10 +36043,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           </div>
         </div>
 
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
           {/* Left Sidebar for inputs / configuration */}
           {!isReviewMode && (
-            <aside className="w-80 bg-white border-r-2 border-[#D1FAE5] p-6 space-y-6 overflow-y-auto">
+            <aside className="w-full lg:w-80 shrink-0 bg-white border-b-2 lg:border-b-0 lg:border-r-2 border-[#D1FAE5] p-4 sm:p-6 space-y-6 lg:overflow-y-auto">
               <div className="space-y-4">
                 <h3 className="text-xs font-black uppercase text-[#064E3B]/60 tracking-widest leading-none">
                   Program Inputs
@@ -37350,7 +37350,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
     return (
       <div className="flex-1 flex flex-col bg-[#FDFBF7] overflow-hidden">
-        <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20">
+        <div className="min-h-16 bg-white border-b-2 border-[#D1FAE5] flex flex-wrap items-center justify-between gap-2 px-3 sm:px-6 py-2 z-20">
           <div className="flex items-center gap-4">
             <button
               onClick={() => {
@@ -38122,7 +38122,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
     return (
       <div className="flex-1 flex flex-col bg-[#F0FDF4] overflow-hidden">
-        <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20">
+        <div className="min-h-16 bg-white border-b-2 border-[#D1FAE5] flex flex-wrap items-center justify-between gap-2 px-3 sm:px-6 py-2 z-20">
           <button
             onClick={() => {
               clearWorkspace();
@@ -38950,7 +38950,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     }
     return (
       <div className="flex-1 flex flex-col bg-[#F0FDF4] overflow-hidden">
-        <div className="h-16 bg-white border-b-2 border-[#D1FAE5] flex items-center justify-between px-6 z-20">
+        <div className="min-h-16 bg-white border-b-2 border-[#D1FAE5] flex flex-wrap items-center justify-between gap-2 px-3 sm:px-6 py-2 z-20">
           <div className="flex items-center gap-4">
             <button
               onClick={() => {
@@ -39003,7 +39003,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             )}
           </div>
         </div>
-        <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
           {!isReviewMode && !lpSettingsOpen && (
             <div className="w-12 shrink-0 bg-white border-r-2 border-[#D1FAE5] flex flex-col items-center gap-2 py-3">
               <button
@@ -39110,7 +39110,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             </div>
           )}
           {!isReviewMode && lpSettingsOpen && (
-            <aside className="w-[500px] shrink-0 bg-white border-r-2 border-[#D1FAE5] flex flex-col overflow-hidden">
+            <aside className="w-full lg:w-[500px] shrink-0 bg-white border-b-2 lg:border-b-0 lg:border-r-2 border-[#D1FAE5] flex flex-col lg:overflow-hidden">
               <div className="shrink-0 flex items-center justify-between px-8 pt-6 pb-4 border-b-2 border-[#D1FAE5]">
                 <div className="flex items-center gap-2">
                   <BookOpen size={16} className="text-[#FACC15]" />
@@ -39969,7 +39969,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   instead of a single lesson for the whole week. */}
             </aside>
           )}
-          <main className="flex-1 p-12 overflow-y-auto bg-[#F0FDF4]/50 custom-scrollbar">
+          <main className="flex-1 p-4 sm:p-8 lg:p-12 lg:overflow-y-auto bg-[#F0FDF4]/50 custom-scrollbar">
             {content?.lessonPlan ? (
               (() => {
                 const lp = content!.lessonPlan!;
@@ -41145,7 +41145,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             )}
           </main>
           {!isReviewMode && lessonPlanSuggestion && (
-            <aside className="w-[380px] shrink-0 bg-[#F0FDF4]/40 border-l-2 border-[#D1FAE5] p-5 overflow-y-auto custom-scrollbar">
+            <aside className="w-full lg:w-[380px] shrink-0 bg-[#F0FDF4]/40 border-t-2 lg:border-t-0 lg:border-l-2 border-[#D1FAE5] p-4 sm:p-5 lg:overflow-y-auto custom-scrollbar">
               <div className="flex items-start justify-between mb-4 gap-2">
                 <div>
                   <h3 className="text-sm font-black uppercase text-[#064E3B] tracking-wider flex items-center gap-2">
