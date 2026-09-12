@@ -30712,9 +30712,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 )}
 
                 {submissionChips.subjects.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1.5 pl-3 border-l-2 border-[#D1FAE5]">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {/* A row of its own, like Year group and Week. Indented
+                        under a green rule and re-titled "Year 3 · subject" it
+                        read as a search refinement rather than a shelf you
+                        press. */}
                     <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
-                      {ssYearFilter ? `${ssYearFilter} · subject` : "Subject"}
+                      Subject
                     </span>
                     {submissionChips.subjects.map((sub: string) => {
                       const on = ssSubjectFilter === sub;
