@@ -12394,6 +12394,40 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     }
   };
 
+  /** Copy a plan on the board, so next week's starts from last week's.
+   *
+   *  The copy is a DRAFT whatever the original was. A duplicate of a submitted
+   *  plan that kept its submitted status would show as already sent, and the
+   *  teacher would never think to submit the thing they had just written. */
+  const duplicatePlan = async (plan: any) => {
+    if (!user || !plan?.content) return;
+    const id = Math.random().toString(36).substring(2, 15);
+    const copy = JSON.parse(JSON.stringify(plan.content));
+    const title = `${plan.title || deriveProjectTitle(copy) || "Lesson Plan"} (copy)`;
+    try {
+      await store.put("projects", id, {
+        id,
+        userId: user.uid,
+        // Filed where the original is, not wherever the board happens to be
+        // open — a copy that lands in another folder looks lost.
+        folderId: plan.folderId ?? null,
+        timestamp: Date.now(),
+        title,
+        category: plan.category || "lesson-plan",
+        status: "draft",
+        teacherName: teacherName || plan.teacherName,
+        content: copy,
+        settings: plan.settings || {
+          includeStory,
+          isTemplateMode,
+          workspaceMode: "lesson-plan",
+        },
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, "projects");
+    }
+  };
+
   const createLessonPlanDrafts = async (subj: string, years: string[]) => {
     if (!user || !subj || years.length === 0) return;
     setLpBoardBusy(true);
@@ -30629,7 +30663,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   </span>
                 </div>
 
-                {submissionChips.years.length > 1 && (
+                {/* All three rows show with a single answer. Hiding a shelf
+                    the moment one chip covers everything is why Subject was
+                    missing for a teacher who teaches one subject — the row
+                    looks like a feature that was never built. */}
+                {submissionChips.years.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
                       Year group
@@ -30673,7 +30711,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   </div>
                 )}
 
-                {submissionChips.subjects.length > 1 && (
+                {submissionChips.subjects.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5 pl-3 border-l-2 border-[#D1FAE5]">
                     <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
                       {ssYearFilter ? `${ssYearFilter} · subject` : "Subject"}
@@ -38714,6 +38752,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           className="p-1.5 rounded-lg text-[#064E3B]/50 hover:text-[#064E3B] hover:bg-[#F0FDF4] transition-colors"
                         >
                           <CheckCircle size={14} />
+                        </button>
+                        <button
+                          onClick={() => duplicatePlan(p)}
+                          title="Make a copy of this plan"
+                          className="p-1.5 rounded-lg text-[#064E3B]/50 hover:text-[#064E3B] hover:bg-[#F0FDF4] transition-colors"
+                        >
+                          <Copy size={14} />
                         </button>
                         <button
                           onClick={() => deleteProject(p.id)}
