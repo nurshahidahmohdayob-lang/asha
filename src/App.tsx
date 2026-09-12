@@ -38420,7 +38420,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 {/* Year group first, then the subjects taught inside it —
                     a shelf within a shelf, rather than two lists side by side
                     that a teacher has to combine in their head. */}
-                {yearsHere.length > 1 && (
+                {/* Each shelf shows even when one chip covers everything.
+                    Hiding it there is why Subject was missing for a teacher
+                    who teaches one subject — the row reads as a feature that
+                    was never built rather than one with a single answer. */}
+                {yearsHere.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
                       Year group
@@ -38465,10 +38469,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 )}
 
                 {/* Only the subjects taught to the year that is open. */}
-                {subjectsHere.length > 1 && (
-                  <div className="flex flex-wrap items-center gap-1.5 pl-3 border-l-2 border-[#D1FAE5]">
+                {subjectsHere.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {/* A row of its own, like Year group and Week, rather than
+                        something indented off the year above it. */}
                     <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
-                      {lpYearFilter ? `${lpYearFilter} · subject` : "Subject"}
+                      Subject
                     </span>
                     {subjectsHere.map((sub) => {
                         const on = lpSubjectFilter === sub;
@@ -38505,7 +38511,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 {/* The term week, so a teacher can pull up everything they
                     are teaching this week across every year and subject —
                     which is how the week before a week is actually spent. */}
-                {weeksHere.length > 1 && (
+                {weeksHere.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="text-[9px] font-black uppercase tracking-widest text-[#064E3B]/35 mr-1">
                       Week
