@@ -3,11 +3,29 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>My Google AI Studio App</title>
+    <title>Zera Education Suite</title>
+    <meta
+      name="description"
+      content="Lesson plans, worksheets and projected lessons for Zera International School."
+    />
+
+    <!-- Installing the suite: the manifest names it and supplies its icon, and
+         the service worker registered in main.tsx is what makes a browser
+         offer to install it at all. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#0A4F29" />
+
+    <!-- iOS reads none of the manifest. Added to the Home Screen it takes its
+         icon and its full-screen behaviour from these instead. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Zera Suite" />
+
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

@@ -8,3 +8,20 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 );
+
+/* Registering this is what makes a browser offer to install the suite, so it
+   can be opened from a dock or a home screen like any other app. The worker
+   itself is network-first and caches only the last page, so an installed copy
+   never serves yesterday's build back.
+
+   Registered after the app has painted: it is not needed to show anything, and
+   fetching it during start-up competes with the bundle for the connection. */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      // An install that cannot be offered is a missing convenience, not a
+      // broken app — so this is noted and nothing else happens.
+      console.warn('Service worker registration failed:', err);
+    });
+  });
+}
