@@ -42573,6 +42573,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     if (!content) return;
     const ws = override || content.worksheet;
     if (!ws) return;
+    try {
 
     const doc = new Document({
       sections: [
@@ -42820,6 +42821,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       levelLabel ? "_" + levelLabel + "L" : ""
     }_Worksheet.docx`;
     a.click();
+    } catch (err: any) {
+      // An async click handler that throws does nothing visible at all — the
+      // rejection only reaches the console — so say what went wrong.
+      console.error("Download DOCX failed:", err);
+      alert(`The DOCX could not be made:\n\n${err?.message || err}`);
+    }
   };
 
   /** The marking scheme as its own document — a teacher marks from a printed
@@ -42901,6 +42908,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       }
     }
 
+    try {
     const doc = new Document({
       sections: [{ properties: { type: SectionType.CONTINUOUS }, children }],
     });
@@ -42914,6 +42922,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     );
     a.download = `${safeBase.replace(/\s+/g, "_")}_Answer_Scheme.docx`;
     a.click();
+    } catch (err: any) {
+      console.error("Answer scheme DOCX failed:", err);
+      alert(`The answer scheme DOCX could not be made:\n\n${err?.message || err}`);
+    }
   };
 
   // Download the paper assessment AND the playful interactive organizer as a
@@ -43093,7 +43105,16 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     // Build the colourful, interactive worksheet using the chosen design.
     // Store `ws` so the design picker can re-render other themes instantly.
     const subjectName = (content?.lessonPlan?.subject || subject || "").trim();
-    const html = buildInteractiveHTML(ws, title, interactiveDesign, docKind, subjectName);
+    let html = "";
+    try {
+      html = buildInteractiveHTML(ws, title, interactiveDesign, docKind, subjectName);
+    } catch (err: any) {
+      // Thrown inside a click handler this is swallowed entirely, and both
+      // Open and Download HTML simply do nothing — so say what failed.
+      console.error("Building the interactive page failed:", err);
+      alert(`The interactive page could not be built:\n\n${err?.message || err}`);
+      return;
+    }
 
     if (opts?.download) {
       const blob = new Blob([html], { type: "text/html;charset=utf-8" });
