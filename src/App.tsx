@@ -16389,7 +16389,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   > | null>(null);
   const [copiedSug, setCopiedSug] = useState<string | null>(null);
   // Collapse/expand the Lesson Settings side panel.
-  const [lpSettingsOpen, setLpSettingsOpen] = useState(true);
+  const [lpSettingsOpen, setLpSettingsOpen] = useState(
+    () =>
+      typeof window === "undefined" ||
+      window.matchMedia("(min-width: 64rem)").matches,
+  );
   // Which blocks of the Lesson Settings pane are expanded, and which of the two
   // generators is showing (they used to be stacked and competing).
   const [lpOpenSections, setLpOpenSections] = useState<Record<string, boolean>>({
@@ -39005,7 +39009,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         </div>
         <div className="flex-1 flex flex-col lg:flex-row overflow-y-auto lg:overflow-hidden">
           {!isReviewMode && !lpSettingsOpen && (
-            <div className="w-12 shrink-0 bg-white border-r-2 border-[#D1FAE5] flex flex-col items-center gap-2 py-3">
+            <div className="w-full lg:w-12 shrink-0 bg-white border-b-2 lg:border-b-0 lg:border-r-2 border-[#D1FAE5] flex flex-row lg:flex-col flex-wrap items-center justify-center gap-2 px-3 py-2 lg:px-0 lg:py-3">
               <button
                 onClick={() => setLpSettingsOpen(true)}
                 title="Show actions & lesson settings"
@@ -39013,7 +39017,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               >
                 <ChevronRight size={18} />
               </button>
-              <div className="h-px w-6 bg-[#D1FAE5]" />
+              <div className="h-6 w-px lg:h-px lg:w-6 bg-[#D1FAE5]" />
               <button
                 onClick={openLessonPlanBoard}
                 title="Minimise this plan and see all your lesson plans"
@@ -39023,7 +39027,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               </button>
               {content?.lessonPlan && (
                 <>
-                  <div className="h-px w-6 bg-[#D1FAE5]" />
+                  <div className="h-6 w-px lg:h-px lg:w-6 bg-[#D1FAE5]" />
                   <button
                     onClick={sendLessonPlanEmail}
                     disabled={isSharingLessonPlan}
@@ -39057,7 +39061,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                   >
                     <Save size={16} />
                   </button>
-                  <div className="h-px w-6 bg-[#D1FAE5]" />
+                  <div className="h-6 w-px lg:h-px lg:w-6 bg-[#D1FAE5]" />
                   <button
                     onClick={() => submitToAdmin()}
                     disabled={isSubmitting}
@@ -40015,17 +40019,18 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     className="max-w-[1000px] mx-auto bg-white shadow-2xl rounded-lg overflow-hidden text-[#111827]"
                   >
                     {/* Header bar */}
-                    <div className="bg-[#064E3B] px-10 py-6 flex items-center">
+                    <div className="bg-[#064E3B] px-5 sm:px-10 py-4 sm:py-6 flex items-center">
                       <h1 className="text-2xl font-black text-white tracking-tight">
                         Lesson Plan
                       </h1>
                     </div>
 
-                    <div className="p-10 space-y-10">
+                    <div className="p-4 sm:p-10 space-y-6 sm:space-y-10">
                       {/* DETAILS */}
                       <section>
                         <div className={secLabel}>Details</div>
-                        <table className="w-full border-collapse text-[13px]">
+                        <div className="overflow-x-auto -mx-1 px-1">
+                        <table className="w-full min-w-[520px] border-collapse text-[13px]">
                           <tbody>
                             <tr>
                               <td className={labelCls + " w-[16%]"}>Term</td>
@@ -40206,6 +40211,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             </tr>
                           </tbody>
                         </table>
+                        </div>
                       </section>
 
                       {/* SUMMARY */}
