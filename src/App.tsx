@@ -33886,7 +33886,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         one file that opens in any browser, with nothing to
                         install and no internet needed to read it. */}
                     <button
-                      onClick={() => openAssessmentHTML(undefined, { download: true })}
+                      onClick={() => downloadWorksheetAsShown()}
                       className="w-full py-3 bg-[#F0FDF4] text-[#064E3B] border-2 border-[#059669] rounded-xl text-xs font-black uppercase tracking-widest hover:bg-[#D1FAE5] transition-all shadow-sm flex items-center justify-center gap-2"
                     >
                       <Download size={16} /> Download HTML
@@ -42928,6 +42928,78 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     } catch (err: any) {
       console.error("Answer scheme DOCX failed:", err);
       alert(`The answer scheme DOCX could not be made:\n\n${err?.message || err}`);
+    }
+  };
+
+  /** Save the worksheet exactly as it looks on screen, as one HTML file.
+   *
+   *  A copy of the sheet the teacher is looking at, with the app's own
+   *  stylesheet carried inside — so the file is that page, not a second
+   *  design that has to be kept looking like it. The teacher's tools come
+   *  out of the copy: the bins, the passage level controls, and the typing
+   *  that makes every line editable on screen. */
+  const downloadWorksheetAsShown = async () => {
+    const sheet = worksheetRef.current;
+    if (!sheet) {
+      alert("Open the worksheet first, then download it.");
+      return;
+    }
+    try {
+      const copy = sheet.cloneNode(true) as HTMLElement;
+      // Teacher tools, and anything already hidden on screen.
+      copy
+        .querySelectorAll("button, select, textarea, input, [style*='display: none']")
+        .forEach((el) => el.remove());
+      copy.querySelectorAll("[contenteditable]").forEach((el) => {
+        el.removeAttribute("contenteditable");
+      });
+
+      // The app's stylesheet, so the classes on the copy mean what they mean
+      // here. Fetched rather than read from document.styleSheets: the Google
+      // Fonts import inside it cannot be read back across origins, and the
+      // file needs to keep that import to load DM Sans.
+      const css: string[] = [];
+      for (const link of Array.from(
+        document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'),
+      )) {
+        try {
+          css.push(await (await fetch(link.href)).text());
+        } catch {
+          /* a stylesheet that will not load is left out, not fatal */
+        }
+      }
+      // During development the styles arrive as <style> tags instead.
+      document.querySelectorAll("style").forEach((tag) => {
+        if (tag.textContent) css.push(tag.textContent);
+      });
+
+      const title = content?.worksheet?.title || content?.lessonTitle || "Worksheet";
+      const esc = (t: string) =>
+        t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const html =
+        "<!doctype html>\n" +
+        '<html lang="en"><head><meta charset="utf-8" />' +
+        '<meta name="viewport" content="width=device-width, initial-scale=1" />' +
+        `<title>${esc(title)}</title>` +
+        // The app's CSS first: an @import has to come before every other rule.
+        `<style>${css.join("\n")}</style>` +
+        "<style>body{background:#f3f4f6;margin:0;padding:24px 12px}" +
+        "@media print{body{background:#fff;padding:0}" +
+        "body>div{box-shadow:none!important;min-height:0!important}}</style>" +
+        `</head><body>${copy.outerHTML}</body></html>`;
+
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${title.replace(/[\\/:*?"<>|]+/g, "").replace(/\s+/g, "_")}_${
+        docKind === "assessment" ? "Assessment" : "Worksheet"
+      }.html`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err: any) {
+      console.error("Download HTML failed:", err);
+      alert(`The HTML could not be made:\n\n${err?.message || err}`);
     }
   };
 
