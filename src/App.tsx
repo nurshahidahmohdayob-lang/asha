@@ -1091,7 +1091,10 @@ function zQText(s: any): string {
 function zQuestionText(q: any): string {
   if (isMatchingQuestion(q) && matchingPairsOf(q).length >= 2)
     return zQText(matchingLead(q?.text || ""));
-  return zQuestionText(q);
+  // The plain wording. This line once read zQuestionText(q) — a blanket rename
+  // of every zQText(q?.text) caught the function's own fallback too, and every
+  // question that was not a matching one recursed until the stack ran out.
+  return zQText(q?.text);
 }
 // Map a sort/cut-out item label to a representative emoji icon (for the
 // "File or Not a File?" style cut-out cards). Falls back to 🧩.
@@ -1467,7 +1470,7 @@ const matchingRightColumn = (pairs: MatchPair[]): string[] => {
 const isMatchingQuestion = (q: any): boolean =>
   String(q?.type || "").toLowerCase().includes("match");
 
-function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detective", kind: string = "worksheet", subject: string = ""): string {
+export function buildInteractiveHTML(ws: any, title: string, themeKey: string = "detective", kind: string = "worksheet", subject: string = ""): string {
   const T = ZTHEMES[themeKey] || ZTHEMES.detective;
   const kindWord = kind === "assessment" ? "Assessment" : "Worksheet";
   // Heading reads "<Subject> <Assessment/Worksheet>" (e.g. "Digital Literacy
