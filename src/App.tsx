@@ -11599,6 +11599,165 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     );
   };
 
+  /* The approval status and its buttons, as one piece. Used in the tracker's
+     row and at the foot of a submitted plan opened for review — two copies of
+     the same buttons would drift, and a fix made to one would miss the other. */
+  const renderReviewActions = (project: any) => {
+    const stage = getReviewStage(project);
+    const hodDone = stage === "pending_coordinator" || stage === "approved";
+    const coordDone = stage === "approved";
+    const hodTurn = stage === "pending_hod";
+    const coordTurn = stage === "pending_coordinator";
+    // A sign-off can be taken back one step at a time, by whoever is allowed
+    // to give it, so a mis-click is a click to fix.
+    const undoCoord = coordDone && canReviewAsCoordinator;
+    const undoHod = coordTurn && canReviewAsHod;
+    // By content, not the stored label — a plan submitted under the wrong
+    // category was left with no approve or send-back buttons at all.
+    const reviewable = isPlanReviewer && isLessonPlanProject(project);
+    return (
+      <div className="flex flex-col items-start gap-1.5">
+                                      <span
+                                        className={cn(
+                                          "flex items-center gap-1 px-1.5 py-px rounded-full text-[8px] font-black uppercase tracking-wider border",
+                                          REVIEW_STAGES[stage].chip,
+                                        )}
+                                      >
+                                        <CheckCircle size={8} />
+                                        {REVIEW_STAGES[stage].short}
+                                      </span>
+                                      {reviewable && (
+                                        <div className="flex items-center gap-1.5">
+                                          <button
+                                            onClick={() =>
+                                              hodDone
+                                                ? undoApproval(project)
+                                                : hodApprovePlan(project)
+                                            }
+                                            disabled={
+                                              hodDone
+                                                ? !undoHod
+                                                : !hodTurn || !canReviewAsHod
+                                            }
+                                            title={
+                                              hodDone
+                                                ? `Approved by the Head of Department${
+                                                    project.hodApprovedBy
+                                                      ? ` — ${project.hodApprovedBy}`
+                                                      : ""
+                                                  }${
+                                                    undoHod
+                                                      ? " — click to undo"
+                                                      : ""
+                                                  }`
+                                                : !canReviewAsHod
+                                                  ? "Only the Head of Department can approve this step"
+                                                  : "Step 1 — Head of Department approval"
+                                            }
+                                            className={cn(
+                                              "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
+                                              hodDone
+                                                ? cn(
+                                                    "bg-emerald-50 text-emerald-700 border-2 border-emerald-200",
+                                                    undoHod
+                                                      ? "hover:bg-emerald-100 hover:border-emerald-300 active:scale-95"
+                                                      : "cursor-default",
+                                                  )
+                                                : hodTurn && canReviewAsHod
+                                                  ? "bg-[#059669] text-white hover:bg-[#047857] active:scale-95"
+                                                  : "bg-gray-100 text-gray-400 cursor-not-allowed",
+                                            )}
+                                          >
+                                            <CheckCircle size={11} />
+                                            {hodDone ? "HOD ✓" : "1 · HOD"}
+                                          </button>
+                                          <button
+                                            onClick={() =>
+                                              coordDone
+                                                ? undoApproval(project)
+                                                : coordinatorApprovePlan(project)
+                                            }
+                                            disabled={
+                                              coordDone
+                                                ? !undoCoord
+                                                : !coordTurn ||
+                                                  !canReviewAsCoordinator
+                                            }
+                                            title={
+                                              coordDone
+                                                ? `Approved by the Coordinator${
+                                                    project.approvedBy
+                                                      ? ` — ${project.approvedBy}`
+                                                      : ""
+                                                  }${
+                                                    undoCoord
+                                                      ? " — click to undo"
+                                                      : ""
+                                                  }`
+                                                : !hodDone
+                                                  ? "Waiting for the Head of Department to approve first"
+                                                  : !canReviewAsCoordinator
+                                                    ? "Only the Coordinator can approve this step"
+                                                    : "Step 2 — Coordinator approves and returns it to the teacher"
+                                            }
+                                            className={cn(
+                                              "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
+                                              coordDone
+                                                ? cn(
+                                                    "bg-emerald-50 text-emerald-700 border-2 border-emerald-200",
+                                                    undoCoord
+                                                      ? "hover:bg-emerald-100 hover:border-emerald-300 active:scale-95"
+                                                      : "cursor-default",
+                                                  )
+                                                : coordTurn &&
+                                                    canReviewAsCoordinator
+                                                  ? "bg-[#064E3B] text-white hover:bg-[#0B6B4F] active:scale-95"
+                                                  : "bg-gray-100 text-gray-400 cursor-not-allowed",
+                                            )}
+                                          >
+                                            <CheckCircle size={11} />
+                                            {coordDone
+                                              ? "Approved"
+                                              : "2 · Coord"}
+                                          </button>
+                                          {stage !== "approved" && (
+                                            <button
+                                              onClick={() =>
+                                                openFeedbackModal(project)
+                                              }
+                                              title="Request changes"
+                                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-400 text-amber-950 text-[9px] font-black uppercase tracking-widest hover:bg-amber-300 transition-all active:scale-95"
+                                            >
+                                              <MessageSquare size={11} />{" "}
+                                              Changes
+                                            </button>
+                                          )}
+                                          {/* Spelled out rather than left as a
+                                              click on the green button: nobody
+                                              can tell a finished step is still
+                                              clickable, so a mis-click looked
+                                              permanent. */}
+                                          {(undoCoord || undoHod) && (
+                                            <button
+                                              onClick={() =>
+                                                undoApproval(project)
+                                              }
+                                              title={
+                                                undoCoord
+                                                  ? "Undo the Coordinator approval — back to step 2"
+                                                  : "Undo the Head of Department approval — back to step 1"
+                                              }
+                                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white text-[#7C7A65] border-2 border-[#E7E5D8] text-[9px] font-black uppercase tracking-widest hover:bg-[#F9F8F0] hover:text-[#064E3B] hover:border-[#D1FAE5] transition-all active:scale-95"
+                                            >
+                                              <RotateCcw size={11} /> Undo
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+    );
+  };
+
   // Grant or remove the review roles that drive the approval flow.
   const toggleMemberRole = async (member: any, role: string) => {
     if (!user || !userRoles.includes("admin")) return;
@@ -25159,17 +25318,12 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           .filter(inSelectedDivision)
                           .map((project) => {
                             const stage = getReviewStage(project);
-                            const hodDone =
-                              stage === "pending_coordinator" ||
-                              stage === "approved";
-                            const coordDone = stage === "approved";
-                            const hodTurn = stage === "pending_hod";
-                            const coordTurn = stage === "pending_coordinator";
-                            // A sign-off can be taken back one step at a time,
-                            // by whoever is allowed to give it, so a mis-click
-                            // is a click to fix rather than a job for me.
-                            const undoCoord = coordDone && canReviewAsCoordinator;
-                            const undoHod = coordTurn && canReviewAsHod;
+                            
+                            
+                            
+                            
+                            
+                            
                             const folder = submittedFolders.find(
                               (f) => f.id === project.folderId,
                             );
@@ -25200,8 +25354,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                             // By content, not the stored label — a plan
                             // submitted under the wrong category was left with
                             // no approve or send-back buttons at all.
-                            const reviewable =
-                              isPlanReviewer && isLessonPlanProject(project);
+                            
                             const hasReturnNote =
                               stage === "changes_requested" &&
                               (project.reviewNote ||
@@ -25294,145 +25447,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
                                   {/* Where it has got to, and the two approvals */}
                                   <td className="px-3 py-2.5">
-                                    <div className="flex flex-col items-start gap-1.5">
-                                      <span
-                                        className={cn(
-                                          "flex items-center gap-1 px-1.5 py-px rounded-full text-[8px] font-black uppercase tracking-wider border",
-                                          REVIEW_STAGES[stage].chip,
-                                        )}
-                                      >
-                                        <CheckCircle size={8} />
-                                        {REVIEW_STAGES[stage].short}
-                                      </span>
-                                      {reviewable && (
-                                        <div className="flex items-center gap-1.5">
-                                          <button
-                                            onClick={() =>
-                                              hodDone
-                                                ? undoApproval(project)
-                                                : hodApprovePlan(project)
-                                            }
-                                            disabled={
-                                              hodDone
-                                                ? !undoHod
-                                                : !hodTurn || !canReviewAsHod
-                                            }
-                                            title={
-                                              hodDone
-                                                ? `Approved by the Head of Department${
-                                                    project.hodApprovedBy
-                                                      ? ` — ${project.hodApprovedBy}`
-                                                      : ""
-                                                  }${
-                                                    undoHod
-                                                      ? " — click to undo"
-                                                      : ""
-                                                  }`
-                                                : !canReviewAsHod
-                                                  ? "Only the Head of Department can approve this step"
-                                                  : "Step 1 — Head of Department approval"
-                                            }
-                                            className={cn(
-                                              "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
-                                              hodDone
-                                                ? cn(
-                                                    "bg-emerald-50 text-emerald-700 border-2 border-emerald-200",
-                                                    undoHod
-                                                      ? "hover:bg-emerald-100 hover:border-emerald-300 active:scale-95"
-                                                      : "cursor-default",
-                                                  )
-                                                : hodTurn && canReviewAsHod
-                                                  ? "bg-[#059669] text-white hover:bg-[#047857] active:scale-95"
-                                                  : "bg-gray-100 text-gray-400 cursor-not-allowed",
-                                            )}
-                                          >
-                                            <CheckCircle size={11} />
-                                            {hodDone ? "HOD ✓" : "1 · HOD"}
-                                          </button>
-                                          <button
-                                            onClick={() =>
-                                              coordDone
-                                                ? undoApproval(project)
-                                                : coordinatorApprovePlan(project)
-                                            }
-                                            disabled={
-                                              coordDone
-                                                ? !undoCoord
-                                                : !coordTurn ||
-                                                  !canReviewAsCoordinator
-                                            }
-                                            title={
-                                              coordDone
-                                                ? `Approved by the Coordinator${
-                                                    project.approvedBy
-                                                      ? ` — ${project.approvedBy}`
-                                                      : ""
-                                                  }${
-                                                    undoCoord
-                                                      ? " — click to undo"
-                                                      : ""
-                                                  }`
-                                                : !hodDone
-                                                  ? "Waiting for the Head of Department to approve first"
-                                                  : !canReviewAsCoordinator
-                                                    ? "Only the Coordinator can approve this step"
-                                                    : "Step 2 — Coordinator approves and returns it to the teacher"
-                                            }
-                                            className={cn(
-                                              "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
-                                              coordDone
-                                                ? cn(
-                                                    "bg-emerald-50 text-emerald-700 border-2 border-emerald-200",
-                                                    undoCoord
-                                                      ? "hover:bg-emerald-100 hover:border-emerald-300 active:scale-95"
-                                                      : "cursor-default",
-                                                  )
-                                                : coordTurn &&
-                                                    canReviewAsCoordinator
-                                                  ? "bg-[#064E3B] text-white hover:bg-[#0B6B4F] active:scale-95"
-                                                  : "bg-gray-100 text-gray-400 cursor-not-allowed",
-                                            )}
-                                          >
-                                            <CheckCircle size={11} />
-                                            {coordDone
-                                              ? "Approved"
-                                              : "2 · Coord"}
-                                          </button>
-                                          {stage !== "approved" && (
-                                            <button
-                                              onClick={() =>
-                                                openFeedbackModal(project)
-                                              }
-                                              title="Request changes"
-                                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-400 text-amber-950 text-[9px] font-black uppercase tracking-widest hover:bg-amber-300 transition-all active:scale-95"
-                                            >
-                                              <MessageSquare size={11} />{" "}
-                                              Changes
-                                            </button>
-                                          )}
-                                          {/* Spelled out rather than left as a
-                                              click on the green button: nobody
-                                              can tell a finished step is still
-                                              clickable, so a mis-click looked
-                                              permanent. */}
-                                          {(undoCoord || undoHod) && (
-                                            <button
-                                              onClick={() =>
-                                                undoApproval(project)
-                                              }
-                                              title={
-                                                undoCoord
-                                                  ? "Undo the Coordinator approval — back to step 2"
-                                                  : "Undo the Head of Department approval — back to step 1"
-                                              }
-                                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white text-[#7C7A65] border-2 border-[#E7E5D8] text-[9px] font-black uppercase tracking-widest hover:bg-[#F9F8F0] hover:text-[#064E3B] hover:border-[#D1FAE5] transition-all active:scale-95"
-                                            >
-                                              <RotateCcw size={11} /> Undo
-                                            </button>
-                                          )}
-                                        </div>
-                                      )}
-                                    </div>
+                                    {renderReviewActions(project)}
                                   </td>
 
                                   {/* Open, file, delete */}
@@ -41108,6 +41123,30 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                           )
                         )}
                       </section>
+
+                      {/* Approve where the plan is read. A reviewer who opens
+                          a submission reads it to the end, and used to have
+                          to close it and find the row again to decide. Left
+                          out of print and of the downloaded PDF. */}
+                      {(() => {
+                        const reviewing =
+                          isReviewMode &&
+                          submittedProjects.find(
+                            (sp: any) => sp.id === currentProjectId,
+                          );
+                        if (!reviewing || !isPlanReviewer) return null;
+                        return (
+                          <section
+                            className="print:hidden"
+                            data-html2canvas-ignore="true"
+                          >
+                            <div className={secLabel}>Approval</div>
+                            <div className="border border-[#E5E7EB] rounded-lg p-4">
+                              {renderReviewActions(reviewing)}
+                            </div>
+                          </section>
+                        );
+                      })()}
 
                       {essentials.length > 0 && (
                         <section>
