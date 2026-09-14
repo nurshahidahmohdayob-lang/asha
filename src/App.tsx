@@ -11492,13 +11492,21 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     );
     try {
       await store.patch("submitted_plans", id, changes);
-    } catch (err) {
+    } catch (err: any) {
       // Put the plan back as it was, so the screen never claims a decision
       // that was not saved.
       setSubmittedProjects((prev: any[]) =>
         prev.map((p: any) => (p?.id === id ? plan : p)),
       );
-      handleFirestoreError(err, OperationType.WRITE, `submitted_plans/${id}`);
+      // Said out loud. handleFirestoreError logs and then throws, and thrown
+      // from here it went nowhere — the plan flicked to approved, flicked back,
+      // and the screen said nothing, which reads as a button that is broken.
+      console.error("Saving the review decision failed:", err);
+      alert(
+        `That could not be saved, so the plan is back as it was.\n\n${
+          err?.message || err
+        }`,
+      );
     } finally {
       // Safe to drop once the save has resolved: the save itself announces the
       // change, which discards any refresh that started before it, and every
