@@ -300,8 +300,25 @@ export function mountDataApi(app: Express, projectId: string) {
     return rule;
   }
 
-  const send = (res: Response, err: any) =>
-    res.status(err?.status || 500).json({ error: err?.message || String(err) });
+  const send = (res: Response, err: any) => {
+    const status = err?.status || 500;
+    // A failure the caller did not cause is recorded with its reason. Without
+    // this a failed save reached the logs only as "500 (no message)" — every
+    // approval could fail for twenty minutes with nothing saying why.
+    if (status >= 500) {
+      console.error(
+        "[data-api] request failed:",
+        JSON.stringify({
+          status,
+          message: err?.message || String(err),
+          code: err?.code,
+          details: err?.details,
+          hint: err?.hint,
+        }),
+      );
+    }
+    return res.status(status).json({ error: err?.message || String(err) });
+  };
 
   const guardReady = (res: Response) => {
     if (!driver) {
