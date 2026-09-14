@@ -11463,6 +11463,50 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       content?.lessonPlan?.class || content?.gradeLevel || yearGroup || "",
   });
 
+  /* A review decision is shown the moment it is made.
+
+     Saving one used to take three round trips before the button changed: read
+     the whole plan back, write it, then reload every submission in the school.
+     So the change is put on screen at once and saved behind it.
+
+     Until the save is confirmed it is also kept here and laid over whatever a
+     refresh brings in. A refresh already on its way when the button was
+     pressed is not cancelled until the save lands, and without this it would
+     paint the old status back over the new one for a moment. */
+  const pendingReview = useRef(new Map<string, Record<string, any>>());
+
+  const withPendingReview = (rows: any[]): any[] =>
+    pendingReview.current.size
+      ? rows.map((p: any) => {
+          const changes = pendingReview.current.get(p?.id);
+          return changes ? { ...p, ...changes } : p;
+        })
+      : rows;
+
+  const reviewNow = async (plan: any, changes: Record<string, any>) => {
+    if (!plan?.id) return;
+    const id = plan.id;
+    pendingReview.current.set(id, changes);
+    setSubmittedProjects((prev: any[]) =>
+      prev.map((p: any) => (p?.id === id ? { ...p, ...changes } : p)),
+    );
+    try {
+      await store.patch("submitted_plans", id, changes);
+    } catch (err) {
+      // Put the plan back as it was, so the screen never claims a decision
+      // that was not saved.
+      setSubmittedProjects((prev: any[]) =>
+        prev.map((p: any) => (p?.id === id ? plan : p)),
+      );
+      handleFirestoreError(err, OperationType.WRITE, `submitted_plans/${id}`);
+    } finally {
+      // Safe to drop once the save has resolved: the save itself announces the
+      // change, which discards any refresh that started before it, and every
+      // refresh after it reads the saved record.
+      pendingReview.current.delete(id);
+    }
+  };
+
   // --- Approval workflow -----------------------------------------------------
   // Admins can act at either step so the flow never stalls; a dedicated Head of
   // Department or Coordinator only sees the step that belongs to them.
@@ -11491,46 +11535,26 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   ];
 
   // HOD signs off → the plan moves on to the Coordinator.
-  const hodApprovePlan = async (plan: any) => {
-    if (!plan?.id) return;
-    try {
-      await store.patch("submitted_plans", plan.id, {
-        reviewStage: "pending_coordinator",
-        reviewNote: "",
-        weeklyFeedback: {},
-        hodApprovedAt: Date.now(),
-        hodApprovedBy: teacherName,
-        reviewHistory: appendReviewEntry(plan, "Approved by HOD", ""),
-      });
-    } catch (err) {
-      handleFirestoreError(
-        err,
-        OperationType.WRITE,
-        `submitted_plans/${plan.id}`,
-      );
-    }
-  };
+  const hodApprovePlan = (plan: any) =>
+    reviewNow(plan, {
+      reviewStage: "pending_coordinator",
+      reviewNote: "",
+      weeklyFeedback: {},
+      hodApprovedAt: Date.now(),
+      hodApprovedBy: teacherName,
+      reviewHistory: appendReviewEntry(plan, "Approved by HOD", ""),
+    });
 
   // Coordinator signs off → the plan goes back to the teacher to use.
-  const coordinatorApprovePlan = async (plan: any) => {
-    if (!plan?.id) return;
-    try {
-      await store.patch("submitted_plans", plan.id, {
-        reviewStage: "approved",
-        reviewNote: "",
-        weeklyFeedback: {},
-        approvedAt: Date.now(),
-        approvedBy: teacherName,
-        reviewHistory: appendReviewEntry(plan, "Approved by Coordinator", ""),
-      });
-    } catch (err) {
-      handleFirestoreError(
-        err,
-        OperationType.WRITE,
-        `submitted_plans/${plan.id}`,
-      );
-    }
-  };
+  const coordinatorApprovePlan = (plan: any) =>
+    reviewNow(plan, {
+      reviewStage: "approved",
+      reviewNote: "",
+      weeklyFeedback: {},
+      approvedAt: Date.now(),
+      approvedBy: teacherName,
+      reviewHistory: appendReviewEntry(plan, "Approved by Coordinator", ""),
+    });
 
   // Take a sign-off back. A mis-click on Approved had no way back short of
   // editing the database by hand, and the plan meanwhile reads as cleared for
@@ -11549,31 +11573,22 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       )
     )
       return;
-    try {
-      await store.patch(
-        "submitted_plans",
-        plan.id,
-        undoingCoordinator
-          ? {
-              reviewStage: "pending_coordinator",
-              approvedAt: null,
-              approvedBy: "",
-              reviewHistory: appendReviewEntry(plan, "Approval undone", ""),
-            }
-          : {
-              reviewStage: "pending_hod",
-              hodApprovedAt: null,
-              hodApprovedBy: "",
-              reviewHistory: appendReviewEntry(plan, "HOD approval undone", ""),
-            },
-      );
-    } catch (err) {
-      handleFirestoreError(
-        err,
-        OperationType.WRITE,
-        `submitted_plans/${plan.id}`,
-      );
-    }
+    await reviewNow(
+      plan,
+      undoingCoordinator
+        ? {
+            reviewStage: "pending_coordinator",
+            approvedAt: null,
+            approvedBy: "",
+            reviewHistory: appendReviewEntry(plan, "Approval undone", ""),
+          }
+        : {
+            reviewStage: "pending_hod",
+            hodApprovedAt: null,
+            hodApprovedBy: "",
+            reviewHistory: appendReviewEntry(plan, "HOD approval undone", ""),
+          },
+    );
   };
 
   // Grant or remove the review roles that drive the approval flow.
@@ -13020,15 +13035,17 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             (p: any) => !isRemovedTeacher(p?.teacherName),
           );
           setSubmittedProjects(
-            scoped
-              ? visible.filter((p: any) =>
-                  scoped.some(
-                    (n) =>
-                      p?.folderId === teacherFolderId(n) ||
-                      sameTeacherIdentity(p?.teacherName, n),
-                  ),
-                )
-              : visible,
+            withPendingReview(
+              scoped
+                ? visible.filter((p: any) =>
+                    scoped.some(
+                      (n) =>
+                        p?.folderId === teacherFolderId(n) ||
+                        sameTeacherIdentity(p?.teacherName, n),
+                    ),
+                  )
+                : visible,
+            ),
           );
           setIsFetchingSubmitted(false);
         },
@@ -13078,7 +13095,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           const projects = [...rows].sort(
             (a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0),
           );
-          setSubmittedProjects(projects);
+          setSubmittedProjects(withPendingReview(projects));
           setIsFetchingSubmitted(false);
         },
         (err) => {
