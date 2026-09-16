@@ -10799,6 +10799,37 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       // something the class never saw. Dropping it makes this roughly a third
       // faster. Slide Studio still generates editable slides when you want
       // them for PowerPoint.
+      // NOT forced. Forcing rebuilt the lesson on every press and wrote the
+      // new one over the top, so a teacher who edited her slides and pressed
+      // Project Lesson again lost every change she had made. A lesson already
+      // built for this week is simply projected; Rebuild is how you ask for a
+      // new one.
+      await ensureActivitiesForWeek(week, false, () => setTeachWeekIdx(weekIdx));
+    } catch (err: any) {
+      handleEduError(err, "Build lesson");
+    } finally {
+      setIsGeneratingWeek(null);
+      setIsGenerating(false);
+    }
+  };
+
+  /** Throw away the lesson built for this week and write a new one.
+   *
+   *  Separate from Project Lesson, and it asks first: the slides may have been
+   *  edited by hand, and there is no getting them back afterwards. */
+  const rebuildLessonForWeek = async (weekIdx: number) => {
+    const week = content?.lessonPlan?.weeklyBreakdown[weekIdx];
+    if (!week) return;
+    if (
+      !window.confirm(
+        `Build a new Week ${week.week} lesson?\n\nAnything you changed on the slides is replaced.`,
+      )
+    )
+      return;
+    setGeneratingMessage("Creating the slide presentation…");
+    setIsGeneratingWeek({ index: weekIdx, type: "slides" });
+    setIsGenerating(true);
+    try {
       await ensureActivitiesForWeek(week, true, () => setTeachWeekIdx(weekIdx));
     } catch (err: any) {
       handleEduError(err, "Build lesson");
@@ -40983,6 +41014,26 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                               )}
                                               Project Lesson
                                             </button>
+                                            {/* Only once there is a lesson to
+                                                replace: on a week with none,
+                                                this would be Project Lesson
+                                                under another name. */}
+                                            {content?.lessonPack?.week ===
+                                              week.week && (
+                                              <button
+                                                onClick={() =>
+                                                  rebuildLessonForWeek(idx)
+                                                }
+                                                disabled={
+                                                  isGeneratingWeek !== null
+                                                }
+                                                title="Write a new lesson for this week — replaces the slides, including anything you edited"
+                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-white text-[#064E3B] border-2 border-[#D1FAE5] rounded-lg text-[10px] font-black uppercase hover:border-[#059669] transition-all disabled:opacity-50 cursor-pointer shadow-sm active:scale-95"
+                                              >
+                                                <RotateCcw size={12} />
+                                                Rebuild
+                                              </button>
+                                            )}
                                             <button
                                               onClick={() =>
                                                 generateWorksheetForWeek(idx)
@@ -45098,9 +45149,18 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           week={teachWeeks[teachWeekIdx]}
           studioSlides={studioSlides}
           pack={content?.lessonPack}
-          onPackChange={(next) =>
-            setContent((prev) => (prev ? { ...prev, lessonPack: next } : prev))
-          }
+          onPackChange={(next) => {
+            // Kept, not just shown. This only set state, so an edited slide
+            // lived in the tab and nowhere else: a refresh, or opening
+            // another plan, and the teacher's changes were gone.
+            const updated = content
+              ? { ...content, lessonPack: next }
+              : null;
+            setContent(updated);
+            if (updated && currentProjectId && !isReviewMode) {
+              void persistLessonPlanSilently(updated, currentProjectId);
+            }
+          }}
           onUploadImage={uploadFileToHost}
           onDownloadHtml={(markup) =>
             downloadDeckHtml(
@@ -45121,9 +45181,18 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           week={soloDeckWeek}
           studioSlides={studioSlides}
           pack={content?.lessonPack}
-          onPackChange={(next) =>
-            setContent((prev) => (prev ? { ...prev, lessonPack: next } : prev))
-          }
+          onPackChange={(next) => {
+            // Kept, not just shown. This only set state, so an edited slide
+            // lived in the tab and nowhere else: a refresh, or opening
+            // another plan, and the teacher's changes were gone.
+            const updated = content
+              ? { ...content, lessonPack: next }
+              : null;
+            setContent(updated);
+            if (updated && currentProjectId && !isReviewMode) {
+              void persistLessonPlanSilently(updated, currentProjectId);
+            }
+          }}
           onUploadImage={uploadFileToHost}
           onDownloadHtml={(markup) =>
             downloadDeckHtml(soloDeckPlan, soloDeckWeek, markup)
