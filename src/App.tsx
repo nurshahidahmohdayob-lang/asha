@@ -45161,6 +45161,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
               void persistLessonPlanSilently(updated, currentProjectId);
             }
           }}
+          onSavePack={async () => {
+            if (!content || !currentProjectId || isReviewMode) return;
+            const id = await persistLessonPlanSilently(content, currentProjectId);
+            if (!id) throw new Error("The plan could not be saved just now.");
+          }}
           onUploadImage={uploadFileToHost}
           onDownloadHtml={(markup) =>
             downloadDeckHtml(
@@ -45192,6 +45197,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             if (updated && currentProjectId && !isReviewMode) {
               void persistLessonPlanSilently(updated, currentProjectId);
             }
+          }}
+          onSavePack={async () => {
+            if (!content || !currentProjectId || isReviewMode) return;
+            const id = await persistLessonPlanSilently(content, currentProjectId);
+            if (!id) throw new Error("The plan could not be saved just now.");
           }}
           onUploadImage={uploadFileToHost}
           onDownloadHtml={(markup) =>

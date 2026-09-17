@@ -2752,6 +2752,7 @@ export default function TeachingDeck({
   studioSlides = [],
   pack,
   onPackChange,
+  onSavePack,
   onUploadImage,
   onClose,
   onDownloadHtml,
@@ -2762,6 +2763,11 @@ export default function TeachingDeck({
   studioSlides?: SlideContent[];
   /** The class-facing activities built from this week of the plan. */
   pack?: LessonActivityPack;
+  /** Save the edited lesson, so it is there the next time it is projected.
+   *  Supplying this puts a Save button beside Done while editing: editing
+   *  something and finding no way to keep it is its own kind of broken, even
+   *  where the saving happens on its own. */
+  onSavePack?: () => Promise<void>;
   /** Supply this to make the lesson editable on the board. */
   onPackChange?: (next: LessonActivityPack) => void;
   /** Supply this to allow pictures to be added to slides while editing. */
@@ -2776,6 +2782,7 @@ export default function TeachingDeck({
   onDownloadHtml?: (slidesMarkup: string[]) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   /* ── The lesson in another language ───────────────────────────────────
      A Mandarin or Bahasa Melayu class plans in English and teaches in its own
      language, so the board needs the same lesson in the other language — not a
@@ -3051,6 +3058,41 @@ export default function TeachingDeck({
           <span className="text-base font-bold opacity-70">
             {i + 1} / {n}
           </span>
+          {canEdit && editing && onSavePack && (
+            <button
+              onClick={async () => {
+                setSaveState("saving");
+                try {
+                  await onSavePack();
+                  setSaveState("saved");
+                  // Long enough to be read, short enough that the button is
+                  // ready again before the next change is made.
+                  setTimeout(() => setSaveState("idle"), 2000);
+                } catch (err) {
+                  setSaveState("idle");
+                  alert(
+                    `That could not be saved:\n\n${
+                      (err as Error)?.message || err
+                    }`,
+                  );
+                }
+              }}
+              disabled={saveState === "saving"}
+              className={`flex h-11 items-center gap-2 rounded-2xl px-4 text-sm font-bold backdrop-blur transition-all active:scale-90 disabled:opacity-70 ${
+                saveState === "saved"
+                  ? "bg-leaf text-white"
+                  : "bg-white text-brand-900 hover:bg-white/90"
+              }`}
+              title="Keep these changes, so this lesson opens like this next time"
+            >
+              <Icon d={saveState === "saved" ? I.check : I.download} className="h-5 w-5" />
+              {saveState === "saving"
+                ? "Saving…"
+                : saveState === "saved"
+                  ? "Saved"
+                  : "Save"}
+            </button>
+          )}
           {canEdit && (
             <button
               onClick={() => setEditing((e) => !e)}
