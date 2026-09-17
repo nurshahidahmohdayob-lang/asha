@@ -1,8 +1,15 @@
-import {StrictMode} from 'react';
+import {StrictMode, Suspense, lazy} from 'react';
 import {createRoot} from 'react-dom/client';
-import App from './App.tsx';
-import CardScanner from './components/CardScanner.tsx';
 import './index.css';
+
+/* Loaded only once we know which of the two this is.
+ *
+ *  Imported outright, the phone that scans answer cards downloaded the whole
+ *  suite — every planning screen, the editors, the exporters — before its
+ *  camera could start, on a school phone on school wifi. The scanner is a few
+ *  kilobytes; the suite is megabytes. */
+const App = lazy(() => import('./App.tsx'));
+const CardScanner = lazy(() => import('./components/CardScanner.tsx'));
 
 /* The phone that reads answer cards is its own page, not a corner of the
    suite: it is opened by pointing a camera at the QR code on the board, and
@@ -11,7 +18,26 @@ import './index.css';
 const isScanner = window.location.pathname.replace(/\/+$/, '') === '/scan';
 
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>{isScanner ? <CardScanner /> : <App />}</StrictMode>,
+  <StrictMode>
+    <Suspense
+      fallback={
+        <div
+          style={{
+            minHeight: '100vh',
+            display: 'grid',
+            placeItems: 'center',
+            background: isScanner ? '#064E3B' : '#F0FDF4',
+            color: isScanner ? '#ffffff' : '#064E3B',
+            font: '600 14px system-ui, -apple-system, sans-serif',
+          }}
+        >
+          Loading…
+        </div>
+      }
+    >
+      {isScanner ? <CardScanner /> : <App />}
+    </Suspense>
+  </StrictMode>,
 );
 
 /* A tab left open across a deploy is still running the build it loaded, and
