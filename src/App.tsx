@@ -3587,6 +3587,7 @@ import {
   HandoutMetadata,
   WorksheetSection,
   LessonActivityPack,
+  QuizQuestion,
   LessonPlan,
   WeeklyPlan,
   PDLog,
@@ -10192,6 +10193,78 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   // Discussion prompts and the mini quiz have to be about THIS week, so they
   // are built from the week's own plan before it goes on the board. Without
   // this the deck falls back to generic prompts, which is not a lesson.
+  /** What the lesson generators need to know about the plan and the class.
+   *
+   *  One copy, because two things now ask for a lesson: projecting it, and the
+   *  answer-card game writing the quiz it asks. Two copies of this drift, and
+   *  the one that drifts is the one that stops naming the term's competencies. */
+  const lessonContextsFor = (week: WeeklyPlan) => {
+    const planCtx = {
+      subject: content?.lessonPlan?.subject || subject,
+      class: content?.lessonPlan?.class || yearGroup,
+      overallTopic: content?.lessonPlan?.overallTopic || week.topic || "",
+      // The deck names the term's competencies and values, so it has to be
+      // told them. Left out, the slide had nothing to name and never
+      // appeared — which the type checker was pointing at all along.
+      term: content?.lessonPlan?.term || "",
+      keyCompetencies: content?.lessonPlan?.keyCompetencies || "",
+      zeraValue: content?.lessonPlan?.zeraValue || "",
+    };
+    const aiCtx = {
+      yearGroup: content?.lessonPlan?.class || yearGroup,
+      lexileLevel,
+      subject: content?.lessonPlan?.subject || subject,
+      numSlides: 0,
+      numQuestions: 3,
+      questionTypes: [],
+    };
+    return { planCtx, aiCtx };
+  };
+
+  /** The quiz for a week, written from the plan if it is not there yet.
+   *
+   *  Only the quiz half: rebuilding the whole lesson would throw away slides a
+   *  teacher had edited. Whatever it writes is merged in and kept, so the game
+   *  asks the same questions next time. */
+  const ensureQuizForWeek = async (weekIdx: number): Promise<QuizQuestion[]> => {
+    const week = content?.lessonPlan?.weeklyBreakdown?.[weekIdx];
+    if (!week) return [];
+    const already = content?.lessonPack;
+    if (already?.week === week.week && (already.questions || []).length)
+      return already.questions;
+
+    const { planCtx, aiCtx } = lessonContextsFor(week);
+    const { generateLessonGames } = await import("./services/geminiService");
+    const games = await generateLessonGames(week, planCtx, aiCtx);
+    const questions = (games?.questions || []).filter(
+      (q: QuizQuestion) => q?.text && (q.options || []).length >= 2,
+    );
+    if (!questions.length) return [];
+
+    // Merged the way the projected lesson merges: each side gives what it
+    // actually has, so writing a quiz never blanks the teaching slides.
+    const base: LessonActivityPack =
+      already?.week === week.week
+        ? already
+        : ({ week: week.week, discussion: [], questions: [] } as LessonActivityPack);
+    const merged: LessonActivityPack = { ...base, week: week.week };
+    for (const [key, value] of Object.entries(games || {})) {
+      const empty =
+        value == null ||
+        (Array.isArray(value) && value.length === 0) ||
+        (typeof value === "object" && !Array.isArray(value) && !Object.keys(value).length);
+      if (!empty) (merged as any)[key] = value;
+    }
+    setContent((prev) => (prev ? { ...prev, lessonPack: merged } : prev));
+    if (currentProjectId && !isReviewMode) {
+      void persistLessonPlanSilently(
+        { ...(content as EduContent), lessonPack: merged },
+        currentProjectId,
+      );
+    }
+    return questions;
+  };
+
   const ensureActivitiesForWeek = async (
     week: WeeklyPlan,
     force = false,
@@ -10214,25 +10287,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       onReady?.();
       return; // Don't pay for it twice, and never overwrite an edited lesson.
     }
-    const planCtx = {
-      subject: content?.lessonPlan?.subject || subject,
-      class: content?.lessonPlan?.class || yearGroup,
-      overallTopic: content?.lessonPlan?.overallTopic || week.topic || "",
-      // The deck names the term's competencies and values, so it has to be
-      // told them. Left out, the slide had nothing to name and never
-      // appeared — which the type checker was pointing at all along.
-      term: content?.lessonPlan?.term || "",
-      keyCompetencies: content?.lessonPlan?.keyCompetencies || "",
-      zeraValue: content?.lessonPlan?.zeraValue || "",
-    };
-    const aiCtx = {
-      yearGroup: content?.lessonPlan?.class || yearGroup,
-      lexileLevel,
-      subject: content?.lessonPlan?.subject || subject,
-      numSlides: 0,
-      numQuestions: 3,
-      questionTypes: [],
-    };
+    const { planCtx, aiCtx } = lessonContextsFor(week);
     // What the teacher asked for is a presentation, so say that. The week
     // number and the word "lesson" described the machinery underneath and
     // left them wondering whether the right thing was being built.
@@ -45239,6 +45294,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 ? content.lessonPack
                 : undefined
             }
+            onWriteQuiz={() => ensureQuizForWeek(cardsWeekIdx)}
             onClose={() => setCardsWeekIdx(null)}
           />
         )}

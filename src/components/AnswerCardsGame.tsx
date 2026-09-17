@@ -34,6 +34,7 @@ export default function AnswerCardsGame({
   subject,
   academicYear,
   pack,
+  onWriteQuiz,
   onClose,
 }: {
   /** What the class is answering about — the week's topic. */
@@ -42,12 +43,38 @@ export default function AnswerCardsGame({
   academicYear: string;
   /** The lesson, whose quiz the game asks. */
   pack?: LessonActivityPack;
+  /** Write the quiz from the plan, for a lesson that has none yet. */
+  onWriteQuiz?: () => Promise<QuizQuestion[]>;
   onClose: () => void;
 }) {
-  const rounds: QuizQuestion[] = useMemo(
+  const stored: QuizQuestion[] = useMemo(
     () => (pack?.questions || []).filter((q) => q?.text && (q.options || []).length >= 2),
     [pack],
   );
+  /* A lesson built before the quiz was kept has none. Rather than sending the
+     teacher away to rebuild the lesson — which would replace slides they may
+     have edited — the game writes the questions from the plan itself. */
+  const [written, setWritten] = useState<QuizQuestion[] | null>(null);
+  const [writing, setWriting] = useState(false);
+  const [writeFailed, setWriteFailed] = useState<string | null>(null);
+  const rounds = written ?? stored;
+
+  const askedRef = useRef(false);
+  useEffect(() => {
+    if (stored.length || !onWriteQuiz || askedRef.current) return;
+    askedRef.current = true;
+    setWriting(true);
+    setWriteFailed(null);
+    onWriteQuiz()
+      .then((qs) => {
+        if (qs.length) setWritten(qs);
+        else setWriteFailed("No questions came back. Try again in a moment.");
+      })
+      .catch((err: unknown) =>
+        setWriteFailed((err as Error)?.message || String(err)),
+      )
+      .finally(() => setWriting(false));
+  }, [stored.length, onWriteQuiz]);
 
   const [classSize, setClassSize] = useState(20);
   const [qi, setQi] = useState(0);
@@ -304,9 +331,13 @@ export default function AnswerCardsGame({
 
             {rounds.length === 0 ? (
               <p className="rounded-2xl bg-white/10 p-4 text-[13px] text-white/80">
-                This lesson has no quiz yet. Close this, press{" "}
-                <b className="text-white">Rebuild</b> beside Project Lesson to
-                write one, then come back.
+                {writing ? (
+                  <>Writing the questions from your lesson plan…</>
+                ) : writeFailed ? (
+                  <>The questions could not be written: {writeFailed}</>
+                ) : (
+                  <>This lesson has no questions to ask yet.</>
+                )}
               </p>
             ) : (
               <>
