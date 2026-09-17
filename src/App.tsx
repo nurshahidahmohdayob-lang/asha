@@ -3585,6 +3585,7 @@ import {
   FontSettings,
   HandoutMetadata,
   WorksheetSection,
+  LessonActivityPack,
   LessonPlan,
   WeeklyPlan,
   PDLog,
@@ -10195,13 +10196,20 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
      *  keeps loading behind the open deck. */
     onReady?: () => void,
   ) => {
-    if (
-      !force &&
-      content?.lessonPack?.week === week.week &&
-      content.lessonPack.questions.length > 0
-    ) {
+    /* Already built for this week? Project it and stop.
+     *
+     *  This used to insist on quiz questions, and the teaching half returns
+     *  none — so every saved lesson failed the test and was rebuilt on every
+     *  press, losing whatever the teacher had edited. A lesson IS its
+     *  teaching: the big idea, the things being taught, the slides. */
+    const built = content?.lessonPack;
+    const hasTeaching =
+      (built?.teach?.length || 0) > 0 ||
+      (built?.keyIdeas?.length || 0) > 0 ||
+      Boolean(built?.bigIdea?.title);
+    if (!force && built?.week === week.week && hasTeaching) {
       onReady?.();
-      return; // Already built for this week — don't pay for it twice.
+      return; // Don't pay for it twice, and never overwrite an edited lesson.
     }
     const planCtx = {
       subject: content?.lessonPlan?.subject || subject,
@@ -10245,15 +10253,28 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         return null;
       });
       if (games) {
-        // Merge rather than replace — the teaching half is already on screen.
-        setContent((prev) =>
-          prev
-            ? {
-                ...prev,
-                lessonPack: { ...games, ...teaching, week: week.week },
-              }
-            : prev,
-        );
+        /* Merge rather than replace — the teaching half is already on screen.
+         *
+         *  Teaching LAST was wrong: asked for the teaching half alone it hands
+         *  back empty questions and discussion, and those empties landed on
+         *  top of the quiz this half had just written. Every lesson ever saved
+         *  came out with no quiz. Now each side gives what it actually has. */
+        const merged: LessonActivityPack = { ...teaching, week: week.week };
+        for (const [key, value] of Object.entries(games || {})) {
+          const empty =
+            value == null ||
+            (Array.isArray(value) && value.length === 0) ||
+            (typeof value === "object" && !Array.isArray(value) && !Object.keys(value).length);
+          if (!empty) (merged as any)[key] = value;
+        }
+        setContent((prev) => (prev ? { ...prev, lessonPack: merged } : prev));
+        // Keep the finished lesson, not just the half the deck opened on.
+        if (currentProjectId && !isReviewMode) {
+          void persistLessonPlanSilently(
+            { ...(content as EduContent), lessonPack: merged },
+            currentProjectId,
+          );
+        }
       }
     } catch (e: any) {
       console.error("Lesson generation failed:", e);
