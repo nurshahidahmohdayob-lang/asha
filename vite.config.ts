@@ -1,11 +1,26 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import {defineConfig, loadEnv} from 'vite';
 
-export default defineConfig(() => {
+export default defineConfig(({mode}) => {
+  // Read the whole .env, not only VITE_* — these two are named without the
+  // prefix because the server uses them as well.
+  const env = loadEnv(mode, process.cwd(), '');
   return {
     plugins: [react(), tailwindcss()],
+    define: {
+      // The answer-card game needs a Supabase channel from the browser: a
+      // phone reads the room, the board shows the question. Broadcast only —
+      // no table is reachable with this, and the service key stays on the
+      // server. See src/lib/browserSupabase.ts.
+      'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(
+        env.SUPABASE_URL ?? process.env.SUPABASE_URL ?? '',
+      ),
+      'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(
+        env.SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY ?? '',
+      ),
+    },
     // NOTHING secret is defined here, and nothing secret should be.
     //
     // GEMINI_API_KEY used to be inlined into the browser bundle, which put a

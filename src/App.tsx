@@ -138,6 +138,7 @@ import {
 import { ZeraBrandLogo } from "./components/ZeraBrandLogo";
 import { InteractiveOrganizerWorksheet } from "./components/InteractiveOrganizerWorksheet";
 import TeachingDeck from "./components/TeachingDeck";
+import AnswerCardsGame from "./components/AnswerCardsGame";
 import LessonPlanGuide from "./components/LessonPlanGuide";
 import RegisterGuide, { RegisterGuideLink } from "./components/RegisterGuide";
 import ProfessionalDevelopment from "./components/ProfessionalDevelopment";
@@ -10153,6 +10154,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   // goals, an activity slide each, share back, check, exit ticket. Built from
   // the week's own fields, so there is nothing to generate or save.
   const [teachWeekIdx, setTeachWeekIdx] = useState<number | null>(null);
+  /** Which week's answer-card game is open, if any. */
+  const [cardsWeekIdx, setCardsWeekIdx] = useState<number | null>(null);
   // Slides but no lesson plan — still one deck, just without a week's fields.
   const [teachSlidesOnly, setTeachSlidesOnly] = useState(false);
 
@@ -41055,6 +41058,24 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                                 Rebuild
                                               </button>
                                             )}
+                                            {/* The class answers together
+                                                with printed cards. Offered
+                                                only once the lesson exists,
+                                                because its quiz is what the
+                                                game asks. */}
+                                            {content?.lessonPack?.week ===
+                                              week.week && (
+                                              <button
+                                                onClick={() =>
+                                                  setCardsWeekIdx(idx)
+                                                }
+                                                title="Play the week's quiz with printed answer cards — the whole class answers at once"
+                                                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#FACC15] text-[#064E3B] rounded-lg text-[10px] font-black uppercase hover:bg-yellow-300 transition-all cursor-pointer shadow-sm active:scale-95"
+                                              >
+                                                <Grid size={12} />
+                                                Answer Cards
+                                              </button>
+                                            )}
                                             <button
                                               onClick={() =>
                                                 generateWorksheetForWeek(idx)
@@ -45198,6 +45219,29 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
           onClose={() => setTeachWeekIdx(null)}
         />
       )}
+
+      {cardsWeekIdx !== null &&
+        content?.lessonPlan?.weeklyBreakdown?.[cardsWeekIdx] && (
+          <AnswerCardsGame
+            title={[
+              content.lessonPlan.weeklyBreakdown[cardsWeekIdx].topic,
+              content.lessonPlan.class,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+            subject={content.lessonPlan.subject || "Lesson"}
+            academicYear={content.lessonPlan.academicYear || ""}
+            /* Only this week's lesson. A pack built for another week would
+               ask the class about a lesson they have not had. */
+            pack={
+              content.lessonPack?.week ===
+              content.lessonPlan.weeklyBreakdown[cardsWeekIdx].week
+                ? content.lessonPack
+                : undefined
+            }
+            onClose={() => setCardsWeekIdx(null)}
+          />
+        )}
 
       {lpGuideOpen && <LessonPlanGuide onClose={() => setLpGuideOpen(false)} />}
 

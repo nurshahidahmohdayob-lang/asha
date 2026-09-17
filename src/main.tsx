@@ -1,12 +1,17 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
+import CardScanner from './components/CardScanner.tsx';
 import './index.css';
 
+/* The phone that reads answer cards is its own page, not a corner of the
+   suite: it is opened by pointing a camera at the QR code on the board, and
+   loading the whole app on a phone to read a room would be absurd. Every
+   other address is the suite. */
+const isScanner = window.location.pathname.replace(/\/+$/, '') === '/scan';
+
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
+  <StrictMode>{isScanner ? <CardScanner /> : <App />}</StrictMode>,
 );
 
 /* A tab left open across a deploy is still running the build it loaded, and
