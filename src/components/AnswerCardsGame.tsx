@@ -28,8 +28,9 @@ type Camera = "off" | "starting" | "on" | "denied";
 
 /** How many cards a class might need. One printed set serves every class. */
 const CARD_COUNTS = [20, 30, 40];
-/** How many questions a teacher can ask for. */
-const QUIZ_COUNTS = [3, 5, 10, 15];
+/** How many questions a game asks. Fixed: a teacher setting up in front of a
+ *  class has enough to decide already, and fifteen is a lesson's worth. */
+const QUIZ_COUNT = 15;
 
 export default function AnswerCardsGame({
   title,
@@ -59,10 +60,8 @@ export default function AnswerCardsGame({
   const [written, setWritten] = useState<QuizQuestion[] | null>(null);
   const [writing, setWriting] = useState(false);
   const [writeFailed, setWriteFailed] = useState<string | null>(null);
-  /** How many questions this game asks. */
-  const [wanted, setWanted] = useState(5);
   const available = written ?? stored;
-  const rounds = available.slice(0, wanted);
+  const rounds = available.slice(0, QUIZ_COUNT);
 
   /** Write the questions from the plan. Asked for on opening, and again if the
    *  teacher wants more than the lesson has. */
@@ -85,7 +84,7 @@ export default function AnswerCardsGame({
   useEffect(() => {
     if (stored.length || !onWriteQuiz || askedRef.current) return;
     askedRef.current = true;
-    writeQuiz(wanted);
+    writeQuiz(QUIZ_COUNT);
     // Only on opening; asking for more is a deliberate press afterwards.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stored.length, onWriteQuiz]);
@@ -361,36 +360,11 @@ export default function AnswerCardsGame({
               </p>
             ) : (
               <>
-                <div>
-                  <p className="text-[11px] font-black uppercase tracking-wider text-[#FACC15]">
-                    How many questions
+                {writing && (
+                  <p className="text-[12px] text-white/60">
+                    Writing the questions…
                   </p>
-                  <div className="mt-2 flex flex-wrap justify-center gap-2">
-                    {QUIZ_COUNTS.map((c) => (
-                      <button
-                        key={c}
-                        disabled={writing}
-                        onClick={() => {
-                          setWanted(c);
-                          // More than the lesson has? Write a fresh set.
-                          if (available.length < c) writeQuiz(c);
-                        }}
-                        className={`rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50 ${
-                          wanted === c
-                            ? "bg-[#FACC15] text-[#064E3B]"
-                            : "bg-white/10 hover:bg-white/20"
-                        }`}
-                      >
-                        {c}
-                      </button>
-                    ))}
-                  </div>
-                  {writing && (
-                    <p className="mt-2 text-[12px] text-white/60">
-                      Writing the questions…
-                    </p>
-                  )}
-                </div>
+                )}
 
                 <div>
                   <p className="text-[11px] font-black uppercase tracking-wider text-[#FACC15]">
