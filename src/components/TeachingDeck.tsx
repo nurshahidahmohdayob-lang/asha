@@ -2791,7 +2791,13 @@ export default function TeachingDeck({
    *  It takes nothing: the app already holds the plan, the week, the pack and
    *  the Studio slides it handed to this deck, and it is THOSE that make the
    *  saved file work like this lesson rather than merely look like it. */
-  onDownloadHtml?: (slidesMarkup: string[]) => Promise<void>;
+  /** The saved file is the lesson as it is being TAUGHT, so the language and
+   *  the translated copy travel with it. Without them the file came out in
+   *  English even while the board it was saved from was in Bahasa Melayu. */
+  onDownloadHtml?: (
+    slidesMarkup: string[],
+    taught?: { lang: string | null; plan: LessonPlan; week: WeeklyPlan; pack?: LessonActivityPack },
+  ) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
@@ -2951,7 +2957,12 @@ export default function TeachingDeck({
           setExporting({ done: k + 1, total: n });
         }
         if (!markup.length) throw new Error("Nothing was captured");
-        await onDownloadHtml(markup);
+        await onDownloadHtml(markup, {
+          lang,
+          plan: shown.plan,
+          week: shown.week,
+          pack: shown.pack,
+        });
       } catch (err: any) {
         console.error("Deck HTML export failed:", err);
         alert(

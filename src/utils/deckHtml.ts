@@ -34,7 +34,9 @@ function collectCss(): string {
 export function buildProjectedDeckHTML(
   slidesMarkup: string[],
   title: string,
+  lang?: string | null,
 ): string {
+  const L = deckLabels(lang);
   const esc = (v: any) =>
     (v ?? "")
       .toString()
@@ -48,7 +50,7 @@ export function buildProjectedDeckHTML(
     .join("");
 
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
+<html lang="${L.htmlLang}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
 <style>${collectCss()}</style>
@@ -367,6 +369,7 @@ export function buildProjectedDeckHTML(
 }
 
 import type { LessonPlan, WeeklyPlan, LessonActivityPack, SlideContent } from "../types";
+import { deckLabels } from "../lib/deckLabels";
 
 /** The lesson written out from its own content — the fallback for when
  *  the slides could not be copied out of the running deck.
@@ -422,20 +425,26 @@ export function buildInteractiveDeckHTML(
   week: WeeklyPlan,
   pack?: LessonActivityPack,
   studioSlides: SlideContent[] = [],
+  lang?: string | null,
 ): string {
+  const L = deckLabels(lang);
   const title =
-    [plan?.subject, plan?.class, week?.week && `Week ${week.week}`]
+    [plan?.subject, plan?.class, week?.week && L.week(week.week)]
       .filter(Boolean)
-      .join(" · ") || "Lesson";
+      .join(" · ") || L.lesson;
   const focus =
-    (week?.subTopic || week?.topic || plan?.overallTopic || "Today's lesson").trim();
+    (week?.subTopic || week?.topic || plan?.overallTopic || L.todaysLesson).trim();
 
   const out: string[] = [];
 
   // 1 · Title
   out.push(
     slide(
-      [plan?.subject, plan?.class, plan?.term && `Term ${plan.term}`]
+      [
+        plan?.subject,
+        plan?.class,
+        plan?.term && L.term((/(\d+)/.exec(String(plan.term)) || [])[1] || plan.term),
+      ]
         .filter(Boolean)
         .join(" · "),
       `<h1>${esc(focus)}</h1>${
@@ -447,14 +456,19 @@ export function buildInteractiveDeckHTML(
 
   // 2 · Do now
   if (week?.introduction?.trim()) {
-    out.push(slide("Let's begin", `<h2>Do now</h2><p class="lede">${esc(week.introduction)}</p>`));
+    out.push(
+      slide(
+        L.letsBegin,
+        `<h2>${esc(L.doNow)}</h2><p class="lede">${esc(week.introduction)}</p>`,
+      ),
+    );
   }
 
   // 3 · The big idea, then the teaching itself
   if (pack?.bigIdea?.title) {
     out.push(
       slide(
-        "Let's learn",
+        L.letsLearn,
         `<h2>${esc(pack.bigIdea.title)}</h2>${
           pack.bigIdea.explain ? `<p class="lede">${esc(pack.bigIdea.explain)}</p>` : ""
         }`,
@@ -464,7 +478,7 @@ export function buildInteractiveDeckHTML(
   (pack?.teach || []).forEach((t: any, i: number) => {
     out.push(
       slide(
-        `Teaching ${i + 1} of ${(pack?.teach || []).length}`,
+        L.teachingCount(i + 1, (pack?.teach || []).length),
         `<div class="split"><div class="art">${
           t?.image ? `<img src="${esc(t.image)}" alt="">` : `<span class="emoji big">${esc(t?.emoji || "✨")}</span>`
         }</div><div><h2>${esc(t?.title)}</h2>${(t?.lines || [])
@@ -476,7 +490,7 @@ export function buildInteractiveDeckHTML(
   if (pack?.keyIdeas?.length) {
     out.push(
       slide(
-        "The things we are learning",
+        L.theThingsWeAreLearning,
         `<div class="tiles">${pack.keyIdeas.map(tile).join("")}</div>`,
       ),
     );
@@ -484,7 +498,7 @@ export function buildInteractiveDeckHTML(
   if (pack?.sequence?.steps?.length) {
     out.push(
       slide(
-        pack.sequence.title || "How it changes",
+        pack.sequence.title || L.howItChanges,
         `<div class="tiles seq">${pack.sequence.steps.map(tile).join("")}</div>`,
       ),
     );
@@ -494,17 +508,17 @@ export function buildInteractiveDeckHTML(
   if (pack?.story?.scenes?.length) {
     out.push(
       slide(
-        pack.story.title || "Story time",
+        pack.story.title || L.storyTime,
         `<div class="tiles">${pack.story.scenes.map(tile).join("")}</div>`,
       ),
     );
     (pack.story.questions || []).forEach((q: any) => {
       out.push(
         slide(
-          "What the story showed us",
+          L.whatTheStoryShowed,
           `<h2>${esc(q?.q)}</h2><button class="reveal" data-answer="${esc(
             q?.a,
-          )}">Show the answer</button>`,
+          )}">${esc(L.showTheAnswer)}</button>`,
         ),
       );
     });
@@ -514,7 +528,7 @@ export function buildInteractiveDeckHTML(
   if (pack?.discussion?.length) {
     out.push(
       slide(
-        "Talk it over",
+        L.talkItOver,
         `<ul class="big-list">${pack.discussion
           .map((d: string) => `<li>${esc(d)}</li>`)
           .join("")}</ul>`,
@@ -527,7 +541,7 @@ export function buildInteractiveDeckHTML(
   acts.forEach((a, i) =>
     out.push(
       slide(
-        acts.length > 1 ? `Activity ${i + 1} of ${acts.length}` : "Activity",
+        acts.length > 1 ? L.activity(i + 1, acts.length) : L.activityOne,
         `<p class="lede big">${esc(a)}</p>`,
       ),
     ),
@@ -539,7 +553,7 @@ export function buildInteractiveDeckHTML(
     .forEach((s: any) =>
       out.push(
         slide(
-          "From your slides",
+          L.fromYourSlides,
           `<h2>${esc(s.title)}</h2>${
             (s.content || []).length
               ? `<ul class="big-list">${(s.content || [])
@@ -561,7 +575,7 @@ export function buildInteractiveDeckHTML(
       .join("");
     out.push(
       slide(
-        `Question ${i + 1} of ${(pack?.questions || []).length}`,
+        L.question(i + 1, (pack?.questions || []).length),
         `<h2>${esc(q?.text)}</h2><div class="opts">${opts}</div>${
           q?.why ? `<p class="why" hidden>${esc(q.why)}</p>` : ""
         }`,
@@ -573,7 +587,7 @@ export function buildInteractiveDeckHTML(
   if (pack?.review?.length) {
     out.push(
       slide(
-        "Before we finish",
+        L.beforeWeFinish,
         `<ul class="big-list">${pack.review
           .map((r: string) => `<li>${esc(r)}</li>`)
           .join("")}</ul>`,
@@ -583,14 +597,19 @@ export function buildInteractiveDeckHTML(
 
   // 10 · Exit ticket
   if (week?.assessment?.trim()) {
-    out.push(slide("Exit ticket", `<h2>Show me what you know</h2><p class="lede">${esc(week.assessment)}</p>`));
+    out.push(
+      slide(
+        L.exitTicket,
+        `<h2>${esc(L.showMeWhatYouKnow)}</h2><p class="lede">${esc(week.assessment)}</p>`,
+      ),
+    );
   }
 
   // 11 · Well done
   if (pack?.celebrate?.title) {
     out.push(
       slide(
-        "Well done",
+        L.wellDone,
         `<h1>${esc(pack.celebrate.title)}</h1>${
           pack.celebrate.line ? `<p class="lede">${esc(pack.celebrate.line)}</p>` : ""
         }`,
@@ -603,21 +622,21 @@ export function buildInteractiveDeckHTML(
   const criteria = lines(week?.learningObjective).concat(lines((week as any)?.successCriteria));
   out.push(
     slide(
-      "What we learned",
+      L.whatWeLearned,
       `<h2>${esc(week?.learningObjective?.trim() || focus)}</h2>${
         criteria.length
-          ? `<p class="sub">We'll know we've done it when… <span class="hint">tap each one</span></p>
+          ? `<p class="sub">${esc(L.knowWhenDone)} <span class="hint">${esc(L.tapEachOneShort)}</span></p>
              <div class="checks">${criteria
                .map((c) => `<button class="check"><span class="box"></span><span>${esc(c)}</span></button>`)
                .join("")}</div>
-             <p class="tally"><span id="ticked">0</span> of ${criteria.length} ticked</p>`
+             <p class="tally"><span id="ticked">0</span> ${esc(L.ticked(criteria.length))}</p>`
           : ""
       }`,
     ),
   );
 
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
+<html lang="${L.htmlLang}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)}</title>
 <style>

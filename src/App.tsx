@@ -108,6 +108,7 @@ import {
 import * as XLSX from "xlsx";
 import { motion, AnimatePresence } from "motion/react";
 import { clsx, type ClassValue } from "clsx";
+import { deckLabels } from "./lib/deckLabels";
 import { twMerge } from "tailwind-merge";
 import ReactMarkdown from "react-markdown";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -8258,25 +8259,33 @@ export default function App() {
     plan: LessonPlan,
     week: WeeklyPlan,
     slidesMarkup: string[] = [],
+    /** The language the deck was being taught in when it was saved. */
+    lang?: string | null,
+    /** The pack as the deck had it — translated, when the deck was. */
+    taughtPack?: LessonActivityPack,
   ) => {
     if (!plan || !week) throw new Error("There is no lesson to save yet.");
     const { buildProjectedDeckHTML, buildInteractiveDeckHTML } = await import(
       "./utils/deckHtml"
     );
+    const L = deckLabels(lang);
     const title =
-      [plan.subject, plan.class, week.week && `Week ${week.week}`]
+      [plan.subject, plan.class, week.week && L.week(week.week)]
         .filter(Boolean)
-        .join(" · ") || "Lesson";
+        .join(" · ") || L.lesson;
     // The slides as the deck drew them. Only when none could be copied out
     // does this fall back to writing the lesson from its content — plainer,
     // but a file rather than an error.
     const html = slidesMarkup.length
-      ? buildProjectedDeckHTML(slidesMarkup, title)
+      ? buildProjectedDeckHTML(slidesMarkup, title, lang)
       : buildInteractiveDeckHTML(
           plan,
           week,
-          content?.lessonPack?.week === week.week ? content.lessonPack : undefined,
+          // The deck's own pack wins: it is the one that was translated.
+          taughtPack ||
+            (content?.lessonPack?.week === week.week ? content.lessonPack : undefined),
           content?.slides || [],
+          lang,
         );
     const name =
       [plan.subject, plan.class, week.week && `Week ${week.week}`]
@@ -45273,11 +45282,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             if (!id) throw new Error("The plan could not be saved just now.");
           }}
           onUploadImage={uploadFileToHost}
-          onDownloadHtml={(markup) =>
+          onDownloadHtml={(markup, taught) =>
             downloadDeckHtml(
-              content!.lessonPlan!,
-              teachWeeks[teachWeekIdx!],
+              taught?.plan || content!.lessonPlan!,
+              taught?.week || teachWeeks[teachWeekIdx!],
               markup,
+              taught?.lang,
+              taught?.pack,
             )
           }
           onClose={() => setTeachWeekIdx(null)}
@@ -45334,8 +45345,14 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             if (!id) throw new Error("The plan could not be saved just now.");
           }}
           onUploadImage={uploadFileToHost}
-          onDownloadHtml={(markup) =>
-            downloadDeckHtml(soloDeckPlan, soloDeckWeek, markup)
+          onDownloadHtml={(markup, taught) =>
+            downloadDeckHtml(
+              taught?.plan || soloDeckPlan,
+              taught?.week || soloDeckWeek,
+              markup,
+              taught?.lang,
+              taught?.pack,
+            )
           }
           onClose={() => setTeachSlidesOnly(false)}
         />

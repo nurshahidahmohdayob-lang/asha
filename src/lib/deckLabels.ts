@@ -87,6 +87,27 @@ export type DeckLabels = {
   questionLabel: string;
   sentenceLabel: string;
 
+  /* The standalone HTML deck builds its own markup rather than reusing the
+     slides, so it has a vocabulary of its own that never appears on screen. */
+  htmlLang: string;
+  lesson: string;
+  todaysLesson: string;
+  theThingsWeAreLearning: string;
+  howItChanges: string;
+  whatTheStoryShowed: string;
+  showTheAnswer: string;
+  talkItOver: string;
+  activityOne: string;
+  fromYourSlides: string;
+  question: (i: number, total: number) => string;
+  teachingCount: (i: number, total: number) => string;
+  beforeWeFinish: string;
+  exitTicket: string;
+  showMeWhatYouKnow: string;
+  whatWeLearned: string;
+  tapEachOneShort: string;
+  ticked: (n: number) => string;
+
   /** The scheme of work's competency and value names. Empty for English,
    *  where the name already IS the English name. */
   vocab: Record<string, string>;
@@ -155,6 +176,25 @@ const EN: DeckLabels = {
   notJustWhatWeLearned: "Not just what we learned — what we practised being",
   questionLabel: "question",
   sentenceLabel: "sentence",
+
+  htmlLang: "en",
+  lesson: "Lesson",
+  todaysLesson: "Today's lesson",
+  theThingsWeAreLearning: "The things we are learning",
+  howItChanges: "How it changes",
+  whatTheStoryShowed: "What the story showed us",
+  showTheAnswer: "Show the answer",
+  talkItOver: "Talk it over",
+  activityOne: "Activity",
+  fromYourSlides: "From your slides",
+  question: (i, total) => `Question ${i} of ${total}`,
+  teachingCount: (i, total) => `Teaching ${i} of ${total}`,
+  beforeWeFinish: "Before we finish",
+  exitTicket: "Exit ticket",
+  showMeWhatYouKnow: "Show me what you know",
+  whatWeLearned: "What we learned",
+  tapEachOneShort: "tap each one",
+  ticked: (n) => `of ${n} ticked`,
 
   vocab: {},
 };
@@ -256,6 +296,25 @@ const MS: DeckLabels = {
   questionLabel: "soalan",
   sentenceLabel: "ayat",
 
+  htmlLang: "ms",
+  lesson: "Pelajaran",
+  todaysLesson: "Pelajaran hari ini",
+  theThingsWeAreLearning: "Perkara yang kita pelajari",
+  howItChanges: "Bagaimana ia berubah",
+  whatTheStoryShowed: "Apa yang cerita itu tunjukkan",
+  showTheAnswer: "Tunjukkan jawapan",
+  talkItOver: "Bincangkan",
+  activityOne: "Aktiviti",
+  fromYourSlides: "Daripada slaid anda",
+  question: (i, total) => `Soalan ${i} daripada ${total}`,
+  teachingCount: (i, total) => `Pengajaran ${i} daripada ${total}`,
+  beforeWeFinish: "Sebelum kita tamat",
+  exitTicket: "Tiket keluar",
+  showMeWhatYouKnow: "Tunjukkan apa yang anda tahu",
+  whatWeLearned: "Apa yang kita pelajari",
+  tapEachOneShort: "ketik setiap satu",
+  ticked: (n) => `daripada ${n} ditanda`,
+
   vocab: VOCAB_MS,
 };
 
@@ -323,6 +382,25 @@ const ZH: DeckLabels = {
   notJustWhatWeLearned: "不只是我们学到了什么——还有我们练习成为什么样的人",
   questionLabel: "问题",
   sentenceLabel: "句子",
+
+  htmlLang: "zh-Hans",
+  lesson: "课",
+  todaysLesson: "今天的课",
+  theThingsWeAreLearning: "我们学到的内容",
+  howItChanges: "它是怎么变化的",
+  whatTheStoryShowed: "这个故事告诉我们什么",
+  showTheAnswer: "显示答案",
+  talkItOver: "一起聊一聊",
+  activityOne: "活动",
+  fromYourSlides: "来自你的幻灯片",
+  question: (i, total) => `问题 ${i} / ${total}`,
+  teachingCount: (i, total) => `教学 ${i} / ${total}`,
+  beforeWeFinish: "结束之前",
+  exitTicket: "课堂小结",
+  showMeWhatYouKnow: "让我看看你学会了什么",
+  whatWeLearned: "我们学到了什么",
+  tapEachOneShort: "逐项点选",
+  ticked: (n) => `/ ${n} 已完成`,
 
   vocab: VOCAB_ZH,
 };
