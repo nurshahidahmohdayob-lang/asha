@@ -4335,9 +4335,11 @@ const buildLessonPlanEditableHTML = (lp: any, title: string): string => {
 // note plus a note against any week), which returns it to the teacher to fix
 // and resubmit to the Head of Department.
 // ---------------------------------------------------------------------------
+/* One approval, not two. "pending_hod" keeps its stored name because it is
+   the value on 83 live rows and renaming it would strand them — but it now
+   means "nobody has approved this yet", whoever that turns out to be. */
 type ReviewStage =
   | "pending_hod"
-  | "pending_coordinator"
   | "changes_requested"
   | "approved";
 
@@ -4346,14 +4348,9 @@ const REVIEW_STAGES: Record<
   { label: string; short: string; chip: string }
 > = {
   pending_hod: {
-    label: "Awaiting Head of Department",
-    short: "With HOD",
+    label: "Awaiting approval",
+    short: "Not approved",
     chip: "bg-amber-50 text-amber-700 border-amber-200",
-  },
-  pending_coordinator: {
-    label: "Awaiting Coordinator",
-    short: "With Coordinator",
-    chip: "bg-blue-50 text-blue-700 border-blue-200",
   },
   changes_requested: {
     label: "Changes Requested",
@@ -4895,13 +4892,27 @@ const buildSubmissionTitle = (c: any, weekId?: number): string => {
   return topic ? `${head} — ${topic}` : head;
 };
 
-// Anything submitted before the workflow existed starts with the HOD.
+/* Anything submitted before the workflow existed starts unapproved.
+   "pending_coordinator" is the OLD middle step: a Head of Department had
+   signed it off and it sat waiting on a Coordinator. Under a single approval
+   that sign-off IS the approval, so those rows read as approved rather than
+   being rewritten — 122 plans, every one carrying the HOD's name, which
+   approverOf() then shows as the approver. Nothing is migrated: the stored
+   value stays as it is and is reinterpreted here, which is reversible. */
 const getReviewStage = (plan: any): ReviewStage =>
-  plan?.reviewStage === "pending_coordinator" ||
-  plan?.reviewStage === "changes_requested" ||
-  plan?.reviewStage === "approved"
-    ? plan.reviewStage
-    : "pending_hod";
+  plan?.reviewStage === "approved" ||
+  plan?.reviewStage === "pending_coordinator"
+    ? "approved"
+    : plan?.reviewStage === "changes_requested"
+      ? "changes_requested"
+      : "pending_hod";
+
+/** Who approved it and when, falling back to the old two-step HOD stamp so a
+ *  plan approved under the previous flow still says who cleared it. */
+const approverOf = (plan: any): { name: string; at?: number } => ({
+  name: String(plan?.approvedBy || plan?.hodApprovedBy || "").trim(),
+  at: plan?.approvedAt || plan?.hodApprovedAt || undefined,
+});
 
 // A standalone, printable page of a lesson plan — this is what gets published
 // so the teacher can email a link instead of pasting the whole plan into the
@@ -6883,7 +6894,6 @@ export default function App() {
     // reviewer's feedback to tidy up would be its own bug.
     const rank: Record<string, number> = {
       approved: 4,
-      pending_coordinator: 3,
       changes_requested: 2,
       pending_hod: 1,
     };
@@ -11670,61 +11680,65 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     },
   ];
 
-  // HOD signs off → the plan moves on to the Coordinator.
-  const hodApprovePlan = (plan: any) =>
-    reviewNow(plan, {
-      reviewStage: "pending_coordinator",
-      reviewNote: "",
-      weeklyFeedback: {},
-      hodApprovedAt: Date.now(),
-      hodApprovedBy: teacherName,
-      reviewHistory: appendReviewEntry(plan, "Approved by HOD", ""),
-    });
+  /* One sign-off. Whoever gets there first — Head of Department, Coordinator
+     or Admin — approves, and signs their name to it.
 
-  // Coordinator signs off → the plan goes back to the teacher to use.
-  const coordinatorApprovePlan = (plan: any) =>
-    reviewNow(plan, {
+     The typed name is what the teacher sees; the history entry separately
+     records the signed-in account and its role, so a name typed over on a
+     shared machine still leaves a true audit trail underneath. */
+  const [approvingPlan, setApprovingPlan] = useState<any>(null);
+  const [approverName, setApproverName] = useState<string>("");
+
+  const openApproveModal = (plan: any) => {
+    setApprovingPlan(plan);
+    // Prefilled, not blank: the common case is one tap, and a name that is
+    // already right beats an empty box nobody fills in properly.
+    setApproverName(teacherName || "");
+  };
+
+  const confirmApproval = async () => {
+    const plan = approvingPlan;
+    const name = approverName.trim();
+    if (!plan?.id || !name) return;
+    setApprovingPlan(null);
+    await reviewNow(plan, {
       reviewStage: "approved",
       reviewNote: "",
       weeklyFeedback: {},
       approvedAt: Date.now(),
-      approvedBy: teacherName,
-      reviewHistory: appendReviewEntry(plan, "Approved by Coordinator", ""),
+      approvedBy: name,
+      reviewHistory: appendReviewEntry(plan, `Approved by ${name}`, ""),
     });
+  };
 
-  // Take a sign-off back. A mis-click on Approved had no way back short of
-  // editing the database by hand, and the plan meanwhile reads as cleared for
-  // use. Undoing returns it to the step it was at, keeping the sign-off from
-  // the step before, and says so in the history rather than pretending the
-  // approval never happened.
+  /* Take the sign-off back. A mis-click on Approved had no way back short of
+     editing the database by hand, and the plan meanwhile reads as cleared for
+     use. It returns to awaiting approval and says so in the history rather
+     than pretending the approval never happened.
+
+     The OLD two-step stamps are cleared as well. Leaving them would make a
+     plan approved under the previous flow show its old approver's name again
+     the moment it was undone. */
   const undoApproval = async (plan: any) => {
     if (!plan?.id) return;
-    const stage = getReviewStage(plan);
-    if (stage !== "approved" && stage !== "pending_coordinator") return;
-    const undoingCoordinator = stage === "approved";
-    const who = undoingCoordinator ? "Coordinator" : "Head of Department";
+    if (getReviewStage(plan) !== "approved") return;
+    const who = approverOf(plan).name;
     if (
       !window.confirm(
-        `Undo the ${who} approval on this plan? It goes back to waiting for the ${who}.`,
+        `Undo the approval on this plan${
+          who ? ` by ${who}` : ""
+        }? It goes back to awaiting approval.`,
       )
     )
       return;
-    await reviewNow(
-      plan,
-      undoingCoordinator
-        ? {
-            reviewStage: "pending_coordinator",
-            approvedAt: null,
-            approvedBy: "",
-            reviewHistory: appendReviewEntry(plan, "Approval undone", ""),
-          }
-        : {
-            reviewStage: "pending_hod",
-            hodApprovedAt: null,
-            hodApprovedBy: "",
-            reviewHistory: appendReviewEntry(plan, "HOD approval undone", ""),
-          },
-    );
+    await reviewNow(plan, {
+      reviewStage: "pending_hod",
+      approvedAt: null,
+      approvedBy: "",
+      hodApprovedAt: null,
+      hodApprovedBy: "",
+      reviewHistory: appendReviewEntry(plan, "Approval undone", ""),
+    });
   };
 
   /* The approval status and its buttons, as one piece. Used in the tracker's
@@ -11732,157 +11746,72 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
      the same buttons would drift, and a fix made to one would miss the other. */
   const renderReviewActions = (project: any) => {
     const stage = getReviewStage(project);
-    const hodDone = stage === "pending_coordinator" || stage === "approved";
-    const coordDone = stage === "approved";
-    const hodTurn = stage === "pending_hod";
-    const coordTurn = stage === "pending_coordinator";
-    // A sign-off can be taken back one step at a time, by whoever is allowed
-    // to give it, so a mis-click is a click to fix.
-    const undoCoord = coordDone && canReviewAsCoordinator;
-    const undoHod = coordTurn && canReviewAsHod;
+    const done = stage === "approved";
+    const who = approverOf(project);
     // By content, not the stored label — a plan submitted under the wrong
     // category was left with no approve or send-back buttons at all.
     const reviewable = isPlanReviewer && isLessonPlanProject(project);
     return (
       <div className="flex flex-col items-start gap-1.5">
-                                      <span
-                                        className={cn(
-                                          "flex items-center gap-1 px-1.5 py-px rounded-full text-[8px] font-black uppercase tracking-wider border",
-                                          REVIEW_STAGES[stage].chip,
-                                        )}
-                                      >
-                                        <CheckCircle size={8} />
-                                        {REVIEW_STAGES[stage].short}
-                                      </span>
-                                      {reviewable && (
-                                        <div className="flex items-center gap-1.5">
-                                          <button
-                                            onClick={() =>
-                                              hodDone
-                                                ? undoApproval(project)
-                                                : hodApprovePlan(project)
-                                            }
-                                            disabled={
-                                              hodDone
-                                                ? !undoHod
-                                                : !hodTurn || !canReviewAsHod
-                                            }
-                                            title={
-                                              hodDone
-                                                ? `Approved by the Head of Department${
-                                                    project.hodApprovedBy
-                                                      ? ` — ${project.hodApprovedBy}`
-                                                      : ""
-                                                  }${
-                                                    undoHod
-                                                      ? " — click to undo"
-                                                      : ""
-                                                  }`
-                                                : !canReviewAsHod
-                                                  ? "Only the Head of Department can approve this step"
-                                                  : "Step 1 — Head of Department approval"
-                                            }
-                                            className={cn(
-                                              "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
-                                              hodDone
-                                                ? cn(
-                                                    "bg-emerald-50 text-emerald-700 border-2 border-emerald-200",
-                                                    undoHod
-                                                      ? "hover:bg-emerald-100 hover:border-emerald-300 active:scale-95"
-                                                      : "cursor-default",
-                                                  )
-                                                : hodTurn && canReviewAsHod
-                                                  ? "bg-[#059669] text-white hover:bg-[#047857] active:scale-95"
-                                                  : "bg-gray-100 text-gray-400 cursor-not-allowed",
-                                            )}
-                                          >
-                                            <CheckCircle size={11} />
-                                            {hodDone ? "HOD ✓" : "1 · HOD"}
-                                          </button>
-                                          <button
-                                            onClick={() =>
-                                              coordDone
-                                                ? undoApproval(project)
-                                                : coordinatorApprovePlan(project)
-                                            }
-                                            disabled={
-                                              coordDone
-                                                ? !undoCoord
-                                                : !coordTurn ||
-                                                  !canReviewAsCoordinator
-                                            }
-                                            title={
-                                              coordDone
-                                                ? `Approved by the Coordinator${
-                                                    project.approvedBy
-                                                      ? ` — ${project.approvedBy}`
-                                                      : ""
-                                                  }${
-                                                    undoCoord
-                                                      ? " — click to undo"
-                                                      : ""
-                                                  }`
-                                                : !hodDone
-                                                  ? "Waiting for the Head of Department to approve first"
-                                                  : !canReviewAsCoordinator
-                                                    ? "Only the Coordinator can approve this step"
-                                                    : "Step 2 — Coordinator approves and returns it to the teacher"
-                                            }
-                                            className={cn(
-                                              "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
-                                              coordDone
-                                                ? cn(
-                                                    "bg-emerald-50 text-emerald-700 border-2 border-emerald-200",
-                                                    undoCoord
-                                                      ? "hover:bg-emerald-100 hover:border-emerald-300 active:scale-95"
-                                                      : "cursor-default",
-                                                  )
-                                                : coordTurn &&
-                                                    canReviewAsCoordinator
-                                                  ? "bg-[#064E3B] text-white hover:bg-[#0B6B4F] active:scale-95"
-                                                  : "bg-gray-100 text-gray-400 cursor-not-allowed",
-                                            )}
-                                          >
-                                            <CheckCircle size={11} />
-                                            {coordDone
-                                              ? "Approved"
-                                              : "2 · Coord"}
-                                          </button>
-                                          {stage !== "approved" && (
-                                            <button
-                                              onClick={() =>
-                                                openFeedbackModal(project)
-                                              }
-                                              title="Request changes"
-                                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-400 text-amber-950 text-[9px] font-black uppercase tracking-widest hover:bg-amber-300 transition-all active:scale-95"
-                                            >
-                                              <MessageSquare size={11} />{" "}
-                                              Changes
-                                            </button>
-                                          )}
-                                          {/* Spelled out rather than left as a
-                                              click on the green button: nobody
-                                              can tell a finished step is still
-                                              clickable, so a mis-click looked
-                                              permanent. */}
-                                          {(undoCoord || undoHod) && (
-                                            <button
-                                              onClick={() =>
-                                                undoApproval(project)
-                                              }
-                                              title={
-                                                undoCoord
-                                                  ? "Undo the Coordinator approval — back to step 2"
-                                                  : "Undo the Head of Department approval — back to step 1"
-                                              }
-                                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white text-[#7C7A65] border-2 border-[#E7E5D8] text-[9px] font-black uppercase tracking-widest hover:bg-[#F9F8F0] hover:text-[#064E3B] hover:border-[#D1FAE5] transition-all active:scale-95"
-                                            >
-                                              <RotateCcw size={11} /> Undo
-                                            </button>
-                                          )}
-                                        </div>
-                                      )}
-                                    </div>
+        <span
+          className={cn(
+            "flex items-center gap-1 px-1.5 py-px rounded-full text-[8px] font-black uppercase tracking-wider border",
+            REVIEW_STAGES[stage].chip,
+          )}
+        >
+          <CheckCircle size={8} />
+          {REVIEW_STAGES[stage].short}
+        </span>
+        {done && who.name && (
+          <span className="text-[9px] font-bold text-emerald-700">
+            Approved by {who.name}
+          </span>
+        )}
+        {reviewable && (
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() =>
+                done ? undoApproval(project) : openApproveModal(project)
+              }
+              title={
+                done
+                  ? `Approved${who.name ? ` by ${who.name}` : ""} — click to undo`
+                  : "Approve this plan — you will be asked to sign your name"
+              }
+              className={cn(
+                "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all",
+                done
+                  ? "bg-emerald-50 text-emerald-700 border-2 border-emerald-200 hover:bg-emerald-100 hover:border-emerald-300 active:scale-95"
+                  : "bg-[#059669] text-white hover:bg-[#047857] active:scale-95",
+              )}
+            >
+              <CheckCircle size={11} />
+              {done ? "Approved ✓" : "Approve"}
+            </button>
+            {!done && (
+              <button
+                onClick={() => openFeedbackModal(project)}
+                title="Request changes"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-400 text-amber-950 text-[9px] font-black uppercase tracking-widest hover:bg-amber-300 transition-all active:scale-95"
+              >
+                <MessageSquare size={11} /> Changes
+              </button>
+            )}
+            {/* Spelled out rather than left as a click on the green button:
+                nobody can tell a finished step is still clickable, so a
+                mis-click looked permanent. */}
+            {done && (
+              <button
+                onClick={() => undoApproval(project)}
+                title="Undo the approval — back to awaiting approval"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white text-[#7C7A65] border-2 border-[#E7E5D8] text-[9px] font-black uppercase tracking-widest hover:bg-[#F9F8F0] hover:text-[#064E3B] hover:border-[#D1FAE5] transition-all active:scale-95"
+              >
+                <RotateCcw size={11} /> Undo
+              </button>
+            )}
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -24437,10 +24366,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                       ["all", "All"],
                       ["pending_hod", REVIEW_STAGES.pending_hod.short],
                       [
-                        "pending_coordinator",
-                        REVIEW_STAGES.pending_coordinator.short,
-                      ],
-                      [
                         "changes_requested",
                         REVIEW_STAGES.changes_requested.short,
                       ],
@@ -25548,18 +25473,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                         <Calendar size={10} />
                                         {formatStamp(project.timestamp) || "—"}
                                       </span>
-                                      {project.hodApprovedAt && (
-                                        <span className="flex items-center gap-1 text-blue-600/70">
-                                          <CheckCircle size={10} />
-                                          HOD{" "}
-                                          {formatStamp(project.hodApprovedAt)}
-                                        </span>
-                                      )}
-                                      {project.approvedAt && (
+                                      {approverOf(project).at && (
                                         <span className="flex items-center gap-1 text-emerald-700">
                                           <CheckCircle size={10} />
                                           Approved{" "}
-                                          {formatStamp(project.approvedAt)}
+                                          {formatStamp(approverOf(project).at)}
                                         </span>
                                       )}
                                       {project.reviewedAt &&
@@ -31161,8 +31079,8 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                   </span>
                                   {stage === "approved" && (
                                     <span className="text-[9px] font-bold text-emerald-700">
-                                      {plan.approvedBy
-                                        ? `Approved by ${plan.approvedBy}`
+                                      {approverOf(plan).name
+                                        ? `Approved by ${approverOf(plan).name}`
                                         : "Ready to use"}
                                     </span>
                                   )}
@@ -45320,6 +45238,69 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
         )}
 
       {lpGuideOpen && <LessonPlanGuide onClose={() => setLpGuideOpen(false)} />}
+
+      {/* Signing the approval. The name is asked for rather than assumed, so a
+          plan cleared from a shared staffroom machine still records who did
+          it — but it is prefilled, so the honest case is one tap. */}
+      {approvingPlan && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-6"
+          onClick={() => setApprovingPlan(null)}
+        >
+          <div
+            className="bg-white rounded-[2rem] shadow-2xl border-2 border-[#D1FAE5] w-full max-w-md overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-5 border-b-2 border-[#D1FAE5]">
+              <h4 className="text-lg font-black text-[#064E3B]">
+                Approve this plan
+              </h4>
+              <p className="text-[11px] font-bold text-[#064E3B]/50 mt-0.5 truncate">
+                {approvingPlan.title || "Lesson plan"}
+                {approvingPlan.teacherName
+                  ? ` · ${approvingPlan.teacherName}`
+                  : ""}
+              </p>
+            </div>
+            <div className="p-6">
+              <label className="block text-[10px] font-black uppercase tracking-wider text-[#064E3B]/60 mb-2">
+                Approved by
+              </label>
+              <input
+                autoFocus
+                value={approverName}
+                onChange={(e) => setApproverName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && approverName.trim()) {
+                    void confirmApproval();
+                  }
+                }}
+                placeholder="Your name"
+                className="w-full px-4 py-3 rounded-xl border-2 border-[#D1FAE5] font-bold text-[#064E3B] focus:outline-none focus:border-[#059669]"
+              />
+              <p className="mt-2 text-[11px] font-semibold text-[#064E3B]/50">
+                This is recorded on the plan, so the teacher can see who
+                approved it.
+              </p>
+            </div>
+            <div className="px-6 pb-6 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setApprovingPlan(null)}
+                className="px-4 py-2.5 rounded-xl bg-white border-2 border-[#E7E5D8] text-[#7C7A65] text-[11px] font-black uppercase tracking-widest hover:bg-[#F9F8F0] transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void confirmApproval()}
+                disabled={!approverName.trim()}
+                className="px-5 py-2.5 rounded-xl bg-[#059669] text-white text-[11px] font-black uppercase tracking-widest hover:bg-[#047857] active:scale-95 disabled:bg-gray-200 disabled:text-gray-400 transition-all"
+              >
+                Approve
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {teachSlidesOnly && (
         <TeachingDeck
