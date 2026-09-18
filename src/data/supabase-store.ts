@@ -548,7 +548,15 @@ export function createSupabaseStore(getToken: TokenGetter) {
       };
     },
 
-    /** Live results for ONE record, by polling. Same reasoning as watch(). */
+    /** Live results for ONE record, by polling. Same reasoning as watch(),
+     *  and now the same economy.
+     *
+     *  This used to re-read the whole row every fifteen seconds. The two rows
+     *  it watches — the timetable and the covers log — are the largest in the
+     *  database at about 38 KB each, and EVERY signed-in teacher watches both,
+     *  so that was ~18 MB an hour per person for documents that change a few
+     *  times a term. It asks for the change marker first now, exactly as
+     *  watch() does, and fetches the row itself only when the marker moves. */
     watchDoc(
       table: string,
       id: string,
@@ -558,6 +566,13 @@ export function createSupabaseStore(getToken: TokenGetter) {
       let stopped = false;
       let inFlight = false;
       let again = false;
+      /** The marker last seen. Undefined means "nothing read yet", which is
+       *  not the same as 0 — a row whose marker really is 0 must still be
+       *  fetched the first time round. */
+      let stamp: number | undefined;
+      let primed = false;
+
+      const rowId = requireId(table, id);
 
       const tick = async (force = false) => {
         if (stopped) return;
@@ -565,12 +580,50 @@ export function createSupabaseStore(getToken: TokenGetter) {
           if (force) again = true;
           return;
         }
+        // A hidden tab reads nothing, as watch() has always done. Coming back
+        // to the tab forces a read, so nothing is stale by the time it is
+        // seen. The very first read is forced for the same reason: a tab that
+        // starts in the background still needs its timetable.
+        if (isHidden() && !force) return;
         inFlight = true;
         const mark = tickOf(table);
         try {
-          const { row } = await call("get", { table, id: requireId(table, id) }, getToken);
+          const { rows, stamps } = await call(
+            "list",
+            { table, select: "stamps", ids: [rowId] },
+            getToken,
+          );
           if (stopped) return;
           if (changedSince(table, mark)) return void (again = true);
+
+          // Without the marker column the server sends full rows and says so.
+          // That IS the answer — use it rather than asking a second time.
+          if (stamps === false) {
+            primed = true;
+            onRow(decodeRow(table, (rows || [])[0] || null), { fromCache: false });
+            return;
+          }
+
+          const marker = (rows || [])[0];
+          if (!marker) {
+            // The row is gone, and nothing had to be fetched to learn that.
+            // Announced once, not on every poll thereafter.
+            if (!primed || stamp !== undefined) {
+              stamp = undefined;
+              primed = true;
+              onRow(null, { fromCache: false });
+            }
+            return;
+          }
+
+          const at = Number(marker.updated_at) || 0;
+          if (primed && stamp === at) return;
+
+          const { row } = await call("get", { table, id: rowId }, getToken);
+          if (stopped) return;
+          if (changedSince(table, mark)) return void (again = true);
+          stamp = at;
+          primed = true;
           onRow(decodeRow(table, row), { fromCache: false });
         } catch (err) {
           if (!stopped) onError?.(err);
@@ -583,17 +636,19 @@ export function createSupabaseStore(getToken: TokenGetter) {
         }
       };
 
-      void tick();
+      void tick(true);
       const timer = setInterval(() => void tick(), POLL_MS);
-      const onFocus = () => void tick();
-      window.addEventListener("focus", onFocus);
+      const wake = () => void tick(true);
+      window.addEventListener("focus", wake);
+      document.addEventListener("visibilitychange", wake);
       const unlisten = onChanged(table, () => void tick(true));
 
       return () => {
         stopped = true;
         clearInterval(timer);
         unlisten();
-        window.removeEventListener("focus", onFocus);
+        window.removeEventListener("focus", wake);
+        document.removeEventListener("visibilitychange", wake);
       };
     },
   };

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "PORT=3004 tsx watch server.ts",
     "build:api": "node scripts/build-api.mjs",
-    "build": "tsc --noEmit && npm run build:api && vite build && node scripts/check-deck-html.mjs",
+    "migrate": "node scripts/migrate.mjs",
+    "build": "npm run migrate && tsc --noEmit && npm run build:api && vite build && node scripts/check-deck-html.mjs",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
@@ -55,6 +56,7 @@
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.27.7",
     "firebase-admin": "^14.2.0",
+    "pg": "^8.23.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
