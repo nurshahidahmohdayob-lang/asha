@@ -17,10 +17,20 @@ yet, and the schema travels with the code that needs it.
 
 ## Configuration
 
-`SUPABASE_DB_URL` — Supabase Dashboard → Project Settings → Database →
-Connection string → URI. Use the **direct connection (port 5432)**, not the
-transaction pooler (6543); a pooled connection changes backend between
-statements, which breaks both the advisory lock and the per-file transaction.
+`SUPABASE_DB_URL` — Supabase Dashboard → **Connect** → **Session pooler** →
+copy the URI, and put the database password where the string says
+`[YOUR-PASSWORD]`.
+
+Supabase offers three strings and only one of them works here:
+
+| | port | why not |
+|---|---|---|
+| Direct connection | 5432 | IPv6 only. A Vercel build is IPv4 and cannot reach it. |
+| Transaction pooler | 6543 | Different backend per statement — breaks the advisory lock and the per-file transaction. |
+| **Session pooler** | **5432** | **One backend for the whole session, over IPv4. Use this.** |
+
+The session pooler's username is `postgres.<project-ref>`, not `postgres`; the
+string the dashboard gives you already has it.
 
 Deliberately not called `DATABASE_URL`: that name already means "use MySQL
 instead of Supabase" to `server/db-driver.ts`, and setting it would switch the

@@ -10,12 +10,15 @@
 //
 // NOT `DATABASE_URL`. That name already means "use MySQL instead of Supabase"
 // to server/db-driver.ts, and setting it would switch the whole app over. This
-// reads SUPABASE_DB_URL: Supabase Dashboard → Project Settings → Database →
-// Connection string → URI.
+// reads SUPABASE_DB_URL: Supabase Dashboard → Connect → Session pooler.
 //
-// Use the DIRECT connection (port 5432), not the transaction pooler (6543).
-// The pooler hands out a different backend per statement, which breaks both
-// the advisory lock and the per-file transaction this relies on.
+// WHICH of the three strings Supabase offers, and why it is not the obvious
+// one. Direct connection resolves to an IPv6 address only, and a Vercel build
+// runs on IPv4 — it cannot reach it at all. Transaction pooler (port 6543)
+// hands out a different backend per statement, which breaks both the advisory
+// lock and the per-file transaction this relies on. Session pooler is the one
+// that is both reachable and honest: port 5432, one backend for the whole
+// session, IPv4.
 
 import "dotenv/config";
 import { createHash } from "node:crypto";
@@ -46,9 +49,21 @@ if (!url) {
 
 if (/:6543\b/.test(url)) {
   console.warn(
-    "  ⚠ That looks like the transaction pooler (port 6543). Migrations need\n" +
-      "    the direct connection (5432) — a pooled connection changes backend\n" +
-      "    between statements, which breaks the lock and the transaction.",
+    "  ⚠ That looks like the TRANSACTION pooler (port 6543), which changes\n" +
+      "    backend between statements and breaks both the advisory lock and\n" +
+      "    the per-file transaction. Use the Session pooler (port 5432).",
+  );
+}
+
+// Named so the failure explains itself: a direct-connection host resolves to
+// IPv6 only, so on an IPv4 network — which is what a Vercel build runs on —
+// this fails as ENETUNREACH with nothing to say why.
+if (/@db\.[a-z0-9]+\.supabase\.co\b/.test(url)) {
+  console.warn(
+    "  ⚠ That is the DIRECT connection host, which Supabase publishes over\n" +
+      "    IPv6 only. It works from an IPv6 network and fails as 'network\n" +
+      "    unreachable' from an IPv4 one, a Vercel build included. If this\n" +
+      "    cannot connect, switch to the Session pooler (port 5432).",
   );
 }
 
