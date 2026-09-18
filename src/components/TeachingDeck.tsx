@@ -35,6 +35,7 @@ import {
   translationLanguagesFor,
   curriculumLinkForTerm,
 } from "../services/geminiService";
+import { deckLabels, schemeLine } from "../lib/deckLabels";
 import type {
   LessonActivityPack,
   LessonPlan,
@@ -1811,7 +1812,15 @@ export function buildWeekSlides(
   w: WeeklyPlan,
   studio: SlideContent[] = [],
   pack?: LessonActivityPack,
+  /** The language the deck is being TAUGHT in. The lesson itself arrives
+   *  already translated; this is for the words the deck writes for itself. */
+  lang?: string | null,
+  /** The Curriculum Link, already looked up from the ORIGINAL plan. It cannot
+   *  be looked up here: the lookup matches on the subject name, and by now the
+   *  subject may read "Kompetensi Hidup", which matches nothing. */
+  schemeLink?: string,
 ): TeachSlide[] {
+  const L = deckLabels(lang);
   // The deck opens with its own title slide, so a leading studio title slide
   // would be the same curtain going up twice.
   const usable = studio.filter(
@@ -1829,21 +1838,23 @@ export function buildWeekSlides(
 
   const asDeck = (list: SlideContent[], label: string): TeachSlide[] =>
     list.map((s, i) => ({
-      kicker: list.length > 1 ? `${label} ${i + 1} of ${list.length}` : label,
+      kicker: list.length > 1 ? L.countOf(label, i + 1, list.length) : label,
       tone: studioTone(s.type),
       content: <StudioSlideView s={s} />,
     }));
 
   return buildSequence(plan, w, {
-    teach: asDeck(teachSlides, "Teaching"),
+    lang,
+    schemeLink,
+    teach: asDeck(teachSlides, L.teaching),
     activities: studioActivities.map((s, i) => ({
-      kicker: `Activity ${weekActivityCount + i + 1} of ${activityTotal}`,
+      kicker: L.activity(weekActivityCount + i + 1, activityTotal),
       tone: studioTone(s.type),
       content: (
         <StudioSlideView s={s} index={weekActivityCount + i + 1} total={activityTotal} />
       ),
     })),
-    assessment: asDeck(studioAssessment, "Assessment"),
+    assessment: asDeck(studioAssessment, L.assessment),
     activityTotal,
     // Only use a quiz that was built for THIS week — switching weeks must not
     // project the previous week's questions.
@@ -1861,8 +1872,11 @@ function buildSequence(
     /** Week activities plus studio activities — they share one numbering. */
     activityTotal: number;
     pack?: LessonActivityPack;
+    lang?: string | null;
+    schemeLink?: string;
   },
 ): TeachSlide[] {
+  const L = deckLabels(studio.lang);
   // What the lesson is about. Most specific field first, and never the school
   // subject — "Life Competencies" is a timetable label, not a thing to teach.
   const unitTopic = (w.unit || "")
@@ -1871,7 +1885,7 @@ function buildSequence(
   const focus =
     meaningful(w.subTopic, w.topic, plan.overallTopic, unitTopic, w.learningObjective) ||
     w.topic?.trim() ||
-    `Week ${w.week}`;
+    L.week(w.week);
   // What to put after "What do you know about ___?" — never a section label
   // and never the subject.
   const namedThing = meaningful(w.subTopic, w.topic, plan.overallTopic, unitTopic);
@@ -1888,25 +1902,33 @@ function buildSequence(
   const young = year !== null && year <= 2;
   const doNow =
     w.introduction?.trim() ||
-    (young
-      ? `Today we are learning about ${focus}. Tell your partner one thing you know.`
-      : `Think about today's topic — "${focus}". Tell your partner one thing you already know, or one thing you'd like to find out.`);
+    (young ? L.doNowYoung(focus) : L.doNowOlder(focus));
   const slides: TeachSlide[] = [];
   /* Declared here rather than beside the slide that first used it: the title
      and Do Now slides read it too, and a const used above its declaration is
      a dead app, not a type error at the point of use. */
   const pack = studio.pack;
+  /* The Curriculum Link, translated name by name rather than looked up again.
+     A translated plan no longer says "Life Competencies", so looking it up
+     here would return nothing and the badge would silently disappear. */
+  const schemeLink =
+    studio.schemeLink ?? curriculumLinkForTerm(plan.term, plan.subject);
+  const link = schemeLink ? schemeLine(schemeLink, L) : "";
 
   // 1 · Title — full-bleed colour, no card, so it feels like a curtain going up
   slides.push({
-    kicker: [plan.subject, plan.class, plan.term && `Term ${plan.term}`.replace(/Term Term/i, "Term")]
+    kicker: [
+      plan.subject,
+      plan.class,
+      plan.term && L.term((/(\d+)/.exec(String(plan.term)) || [])[1] || plan.term),
+    ]
       .filter(Boolean)
       .join(" · "),
     tone: "start",
     content: (
       <div className="anim-pop mx-auto max-w-4xl text-center">
         <span className="inline-flex items-center rounded-full bg-sunny px-7 py-3 text-2xl font-bold text-brand-900 shadow-lg">
-          Week {w.week}
+          {L.week(w.week)}
         </span>
         <Ed
           as="h2"
@@ -1942,14 +1964,8 @@ function buildSequence(
           {/* For Life Competencies this is the term's, not whatever the week
               happens to hold — the same reading the plan document uses, so a
               slide and the plan behind it cannot disagree. */}
-          {(curriculumLinkForTerm(plan.term, plan.subject) || w.strand?.trim()) && (
-            <TeachBadge
-              icon={I.check}
-              label={
-                curriculumLinkForTerm(plan.term, plan.subject) ||
-                (w.strand || "").trim()
-              }
-            />
+          {(link || w.strand?.trim()) && (
+            <TeachBadge icon={I.check} label={link || (w.strand || "").trim()} />
           )}
         </div>
       </div>
@@ -1958,14 +1974,14 @@ function buildSequence(
 
   // 2 · Do Now — a sticky note pinned to the board, timer alongside
   slides.push({
-    kicker: "Let's begin",
+    kicker: L.letsBegin,
     tone: "donow",
     content: (
       <div className="anim-pop grid grid-cols-[1.45fr_1fr] items-stretch gap-7">
         <div className="tilt-a relative rounded-[2rem] bg-white p-10 shadow-2xl">
           {/* folded corner */}
           <span className="absolute right-0 top-0 h-14 w-14 rounded-bl-[2rem] rounded-tr-[2rem] bg-sun-soft" />
-          <TeachBadge icon={I.clock} label="Do now" />
+          <TeachBadge icon={I.clock} label={L.doNow} />
           <Ed
             as="p"
             multiline
@@ -1978,7 +1994,7 @@ function buildSequence(
         </div>
         <div className="tilt-b flex flex-col items-center justify-center rounded-[2rem] bg-white/95 p-7 shadow-2xl">
           <p className="mb-5 text-xl font-bold uppercase tracking-wider text-brand-600">
-            Talk time
+            {L.talkTime}
           </p>
           <TeachTimer minutes={3} />
         </div>
@@ -1994,7 +2010,7 @@ function buildSequence(
      review: the criteria are things they have just done, so the checklist is
      ticked off from memory rather than promised in advance. */
   const goalBoard: TeachSlide = {
-    kicker: "Our learning today",
+    kicker: L.ourLearningToday,
     tone: "learn",
     content: (
       <div
@@ -2003,10 +2019,10 @@ function buildSequence(
         <div className="flex flex-col justify-center rounded-[2rem] bg-white p-9 shadow-2xl">
           <span className="inline-flex w-fit items-center gap-2.5 rounded-full bg-teal px-5 py-2 text-lg font-bold text-white">
             <Icon d={I.book} className="h-5 w-5" />
-            Today
+            {L.today}
           </span>
           <h2 className="mt-6 text-[2.9rem] font-bold leading-[1.05] text-ink">
-            What we&rsquo;re learning
+            {L.whatWereLearning}
           </h2>
           <p className="mt-4 text-2xl leading-snug text-zinc-600">
             {w.learningObjective?.trim() || focus}
@@ -2014,10 +2030,8 @@ function buildSequence(
         </div>
         {criteria.length > 0 && (
           <div className="rounded-[2rem] bg-white/95 p-8 shadow-2xl">
-            <p className="text-xl font-bold text-teal">
-              We&rsquo;ll know we&rsquo;ve done it when&hellip;
-            </p>
-            <p className="mt-1 text-base font-medium text-zinc-400">tap each one as we get there</p>
+            <p className="text-xl font-bold text-teal">{L.knowWhenDone}</p>
+            <p className="mt-1 text-base font-medium text-zinc-400">{L.tapEachOne}</p>
             <div className="mt-5">
               <TeachChecklist items={criteria} />
             </div>
@@ -2030,13 +2044,13 @@ function buildSequence(
   // 3a · The idea said once, plainly, with the things it is made of.
   if (pack?.bigIdea || pack?.keyIdeas?.length) {
     slides.push({
-      kicker: pack?.bigIdea?.title || "What we are learning",
+      kicker: pack?.bigIdea?.title || L.whatWeAreLearning,
       tone: "learn",
       content: (
         <div className="anim-pop rounded-[2.5rem] bg-white p-9 shadow-2xl">
           <span className="inline-flex items-center gap-2.5 rounded-full bg-teal px-5 py-2 text-lg font-bold text-white">
             <Icon d={I.book} className="h-5 w-5" />
-            Let&rsquo;s learn
+            {L.letsLearn}
           </span>
           <Ed
             as="h2"
@@ -2261,37 +2275,35 @@ function buildSequence(
       ? studio.pack.discussion
       : young
         ? [
-            "How are you feeling today?",
-            "Are you okay?",
-            namedThing && `Tell me what you like about ${namedThing}.`,
-            "What made you smile today?",
+            L.feelingToday,
+            L.areYouOkay,
+            namedThing && L.likeAbout(namedThing),
+            L.madeYouSmile,
           ].filter(Boolean as unknown as (v: unknown) => v is string)
         : [
-            "How are you feeling today?",
-            "Are you okay? Is there anything you want to talk about?",
-            namedThing && `What do you think about ${namedThing}?`,
-            "What would you like to get better at?",
+            L.feelingToday,
+            L.areYouOkay,
+            namedThing && L.thinkAbout(namedThing),
+            L.getBetterAt,
           ].filter(Boolean as unknown as (v: unknown) => v is string)
   ).slice(0, 3);
 
   slides.push({
-    kicker: "Ask your partner",
+    kicker: L.askYourPartner,
     tone: "share",
     content: (
       <div className="anim-pop">
         <div className="text-center">
           <h2 className="text-[3.4rem] font-bold leading-none text-white">
-            Turn to your partner 🗣️
+            {L.turnToYourPartner} 🗣️
           </h2>
-          <p className="mt-4 text-2xl text-white/80">
-            Tap a question and ask them. Listen to their answer, then swap over.
-          </p>
+          <p className="mt-4 text-2xl text-white/80">{L.tapAQuestion}</p>
         </div>
         <div className="mx-auto mt-8 grid max-w-[980px] grid-cols-[1.5fr_1fr] items-start gap-7">
           <TeachReveal
             items={discussion}
             tilted
-            label="question"
+            label={L.questionLabel}
             editItem={(i, t, d) => {
               d.discussion = [...(d.discussion || [])];
               d.discussion[i] = t;
@@ -2299,7 +2311,7 @@ function buildSequence(
           />
           <div className="rounded-[2rem] bg-white/95 p-6 shadow-2xl">
             <p className="mb-4 text-center text-lg font-bold uppercase tracking-wider text-brand-600">
-              Talk time
+              {L.talkTime}
             </p>
             <TeachTimer minutes={3} compact />
           </div>
@@ -2312,12 +2324,12 @@ function buildSequence(
   // further than an explanation does at primary age.
   if (pack?.story?.scenes?.length) {
     slides.push({
-      kicker: "Story time",
+      kicker: L.storyTime,
       tone: "share",
       content: (
         <div className="anim-pop rounded-[2.5rem] bg-white p-9 shadow-2xl">
           <span className="inline-flex items-center gap-2.5 rounded-full bg-sky px-5 py-2 text-lg font-bold text-white">
-            📖 Story time
+            📖 {L.storyTime}
           </span>
           <h2 className="mt-4 text-[3rem] font-bold leading-[1.02] text-ink">{pack.story.title}</h2>
           <StoryScenes
@@ -2331,20 +2343,20 @@ function buildSequence(
     });
     if (pack.story.questions.length) {
       slides.push({
-        kicker: "Think about the story",
+        kicker: L.thinkAboutTheStory,
         tone: "learn",
         content: (
           <div className="anim-pop rounded-[2.5rem] bg-white p-9 shadow-2xl">
             <span className="inline-flex items-center gap-2.5 rounded-full bg-teal px-5 py-2 text-lg font-bold text-white">
-              💭 Think about it
+              💭 {L.thinkAboutIt}
             </span>
             <h2 className="mt-4 text-[3rem] font-bold leading-[1.02] text-ink">
-              Let&rsquo;s think about the story
+              {L.letsThinkAboutStory}
             </h2>
             <div className="mt-6">
               <TeachReveal
                 items={pack.story.questions.map((x) => `${x.q}  →  ${x.a}`)}
-                label="question"
+                label={L.questionLabel}
                 editItem={(i, t, d) => {
                   // Kept as one editable line: "question → answer".
                   const [q, a2] = t.split("→");
@@ -2374,7 +2386,7 @@ function buildSequence(
     const { head, body } = activityHeading(title);
     const total = studio.activityTotal || activities.length;
     slides.push({
-      kicker: `Activity ${idx + 1} of ${total}`,
+      kicker: L.activity(idx + 1, total),
       tone: "activity",
       content: (
         <ActivitySlide
@@ -2401,12 +2413,12 @@ function buildSequence(
   // 4c · Get them out of their seats: act it out, draw it, match it.
   if (pack?.actOut?.items?.length) {
     slides.push({
-      kicker: "Act it out",
+      kicker: L.actItOut,
       tone: "activity",
       content: (
         <div className="anim-pop rounded-[2.5rem] bg-white p-9 text-center shadow-2xl">
           <span className="inline-flex items-center gap-2.5 rounded-full bg-leaf px-5 py-2 text-lg font-bold text-white">
-            🎭 Act it out
+            🎭 {L.actItOut}
           </span>
           <h2 className="mt-4 text-[3rem] font-bold leading-[1.02] text-ink">{pack.actOut.title}</h2>
           {pack.actOut.steps.length > 0 && (
@@ -2441,12 +2453,12 @@ function buildSequence(
 
   if (pack?.draw) {
     slides.push({
-      kicker: "Draw it",
+      kicker: L.drawIt,
       tone: "activity",
       content: (
         <div className="anim-pop rounded-[2.5rem] bg-white p-9 shadow-2xl">
           <span className="inline-flex items-center gap-2.5 rounded-full bg-leaf px-5 py-2 text-lg font-bold text-white">
-            ✏️ Draw
+            ✏️ {L.draw}
           </span>
           <h2 className="mt-4 text-[2.8rem] font-bold leading-[1.02] text-ink">{pack.draw.title}</h2>
           <p className="mt-2 text-2xl leading-snug text-zinc-500">{pack.draw.instruction}</p>
@@ -2463,12 +2475,12 @@ function buildSequence(
 
   if (pack?.matching?.pairs?.length) {
     slides.push({
-      kicker: "Match it",
+      kicker: L.matchIt,
       tone: "check",
       content: (
         <div className="anim-pop rounded-[2.5rem] bg-white p-9 shadow-2xl">
           <span className="inline-flex items-center gap-2.5 rounded-full bg-sunny px-5 py-2 text-lg font-bold text-brand-900">
-            🧩 Match it
+            🧩 {L.matchIt}
           </span>
           <h2 className="mt-4 text-[2.8rem] font-bold leading-[1.02] text-ink">
             {pack.matching.title}
@@ -2497,7 +2509,7 @@ function buildSequence(
   // that was actually taught.
   (studio.pack?.questions || []).forEach((q, idx, all) => {
     slides.push({
-      kicker: `Mini quiz · ${idx + 1} of ${all.length}`,
+      kicker: L.miniQuiz(idx + 1, all.length),
       tone: "check",
       content: <QuizCard q={q} index={idx + 1} total={all.length} qi={idx} />,
     });
@@ -2506,12 +2518,12 @@ function buildSequence(
   // 5d · What to DO with what they have learned — the transfer slide.
   if (pack?.strategies?.items?.length) {
     slides.push({
-      kicker: "What can we do?",
+      kicker: L.whatCanWeDo,
       tone: "learn",
       content: (
         <div className="anim-pop rounded-[2.5rem] bg-white p-9 shadow-2xl">
           <span className="inline-flex items-center gap-2.5 rounded-full bg-teal px-5 py-2 text-lg font-bold text-white">
-            💪 Try it
+            💪 {L.tryIt}
           </span>
           <h2 className="mt-4 text-[3rem] font-bold leading-[1.02] text-ink">
             {pack.strategies.title}
@@ -2543,13 +2555,13 @@ function buildSequence(
   // 5e · Recall, out loud, before the confidence check.
   if (pack?.review?.length) {
     slides.push({
-      kicker: "Let's remember",
+      kicker: L.letsRemember,
       tone: "check",
       content: (
         <div className="anim-pop">
           <div className="text-center">
             <h2 className="text-[3.4rem] font-bold leading-none text-brand-900">
-              Let&rsquo;s remember 🌟
+              {L.letsRemember} 🌟
             </h2>
           </div>
           {pack.keyIdeas?.length ? (
@@ -2597,15 +2609,15 @@ function buildSequence(
 
   // 7 · Reflection / exit ticket
   slides.push({
-    kicker: "Before we go",
+    kicker: L.beforeWeGo,
     tone: "reflect",
     content: (
       <div className="anim-pop">
         <div className="text-center">
-          <h2 className="text-[3.4rem] font-bold leading-none text-white">Before we go&hellip;</h2>
-          <p className="mt-4 text-2xl text-white/80">
-            Finish one of these sentences out loud or in your journal.
-          </p>
+          <h2 className="text-[3.4rem] font-bold leading-none text-white">
+            {L.beforeWeGo}&hellip;
+          </h2>
+          <p className="mt-4 text-2xl text-white/80">{L.finishOneOfThese}</p>
         </div>
         {/* Sentence strips, each tilted a little like paper on a desk.
             Kept narrower than the canvas so the rotation has room — a rotated
@@ -2617,16 +2629,16 @@ function buildSequence(
               pack?.board?.closing?.length
                 ? pack.board.closing
                 : young
-                  ? ["Today I learned…", "I liked…", "Next time I want to try…"]
+                  ? [L.todayILearned, L.iLiked, L.nextTimeIWantToTry]
                   : [
-                      "Today I learned…",
-                      "Something I found tricky was… and I kept going by…",
+                      L.todayILearned,
+                      L.somethingTricky,
                       competencies[0]
-                        ? `I showed ${competencies[0]} today when I…`
-                        : `One thing I want to get better at is…`,
+                        ? L.iShowed(competencies[0])
+                        : L.oneThingToImprove,
                     ]
             }
-            label="sentence"
+            label={L.sentenceLabel}
             editItem={(i, t, d) => {
               // Written by the deck rather than held in the pack, so the whole
               // set is captured the first time one of them is changed.
@@ -2634,13 +2646,13 @@ function buildSequence(
               const current = [
                 ...(board.closing ||
                   (young
-                    ? ["Today I learned…", "I liked…", "Next time I want to try…"]
+                    ? [L.todayILearned, L.iLiked, L.nextTimeIWantToTry]
                     : [
-                        "Today I learned…",
-                        "Something I found tricky was… and I kept going by…",
+                        L.todayILearned,
+                        L.somethingTricky,
                         competencies[0]
-                          ? `I showed ${competencies[0]} today when I…`
-                          : `One thing I want to get better at is…`,
+                          ? L.iShowed(competencies[0])
+                          : L.oneThingToImprove,
                       ])),
               ];
               current[i] = t;
@@ -2656,7 +2668,7 @@ function buildSequence(
   // 7b · End on a win — the children see what they can now do.
   if (pack?.celebrate) {
     slides.push({
-      kicker: "Well done",
+      kicker: L.wellDone,
       tone: "start",
       content: (
         <div className="anim-pop text-center">
@@ -2698,16 +2710,16 @@ function buildSequence(
   ];
   if (growth.length) {
     slides.push({
-      kicker: "More than the lesson",
+      kicker: L.moreThanTheLesson,
       tone: "share",
       content: (
         <div className="anim-pop rounded-[2.5rem] bg-white p-9 shadow-2xl">
           <span className="inline-flex items-center gap-2.5 rounded-full bg-teal px-5 py-2 text-lg font-bold text-white">
             <Icon d={I.star} className="h-5 w-5" />
-            What we grew today
+            {L.whatWeGrewToday}
           </span>
           <h2 className="mt-4 text-[2.7rem] font-bold leading-[1.05] text-ink">
-            Not just what we learned — what we practised being
+            {L.notJustWhatWeLearned}
           </h2>
           <div className="anim-stagger mt-7 grid gap-4">
             {growth.map((g, i) => (
@@ -2725,7 +2737,7 @@ function buildSequence(
                   <span className="block text-[1.7rem] font-bold leading-tight text-ink">
                     {g.label}
                     <span className="ml-3 align-middle text-base font-bold uppercase tracking-wider text-zinc-400">
-                      {g.kind === "value" ? "Our value" : "Competency"}
+                      {g.kind === "value" ? L.ourValue : L.competency}
                     </span>
                   </span>
                   <span className="mt-1 block text-[1.45rem] leading-snug text-zinc-600">
@@ -2873,6 +2885,10 @@ export default function TeachingDeck({
     shown.week,
     shown.studioSlides,
     shown.pack,
+    lang,
+    // Looked up from the ORIGINAL plan, before translation renamed the subject
+    // out of the scheme's reach.
+    curriculumLinkForTerm(plan.term, plan.subject),
   );
   const n = slides.length;
   const [i, setI] = useState(0);
