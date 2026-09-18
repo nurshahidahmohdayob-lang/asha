@@ -28,6 +28,8 @@ type Camera = "off" | "starting" | "on" | "denied";
 
 /** How many cards a class might need. One printed set serves every class. */
 const CARD_COUNTS = [20, 30, 40];
+/** How many questions a teacher can ask for. */
+const QUIZ_COUNTS = [3, 5, 10, 15];
 
 export default function AnswerCardsGame({
   title,
@@ -44,7 +46,7 @@ export default function AnswerCardsGame({
   /** The lesson, whose quiz the game asks. */
   pack?: LessonActivityPack;
   /** Write the quiz from the plan, for a lesson that has none yet. */
-  onWriteQuiz?: () => Promise<QuizQuestion[]>;
+  onWriteQuiz?: (wanted: number) => Promise<QuizQuestion[]>;
   onClose: () => void;
 }) {
   const stored: QuizQuestion[] = useMemo(
@@ -57,15 +59,18 @@ export default function AnswerCardsGame({
   const [written, setWritten] = useState<QuizQuestion[] | null>(null);
   const [writing, setWriting] = useState(false);
   const [writeFailed, setWriteFailed] = useState<string | null>(null);
-  const rounds = written ?? stored;
+  /** How many questions this game asks. */
+  const [wanted, setWanted] = useState(5);
+  const available = written ?? stored;
+  const rounds = available.slice(0, wanted);
 
-  const askedRef = useRef(false);
-  useEffect(() => {
-    if (stored.length || !onWriteQuiz || askedRef.current) return;
-    askedRef.current = true;
+  /** Write the questions from the plan. Asked for on opening, and again if the
+   *  teacher wants more than the lesson has. */
+  const writeQuiz = (count: number) => {
+    if (!onWriteQuiz) return;
     setWriting(true);
     setWriteFailed(null);
-    onWriteQuiz()
+    onWriteQuiz(count)
       .then((qs) => {
         if (qs.length) setWritten(qs);
         else setWriteFailed("No questions came back. Try again in a moment.");
@@ -74,6 +79,15 @@ export default function AnswerCardsGame({
         setWriteFailed((err as Error)?.message || String(err)),
       )
       .finally(() => setWriting(false));
+  };
+
+  const askedRef = useRef(false);
+  useEffect(() => {
+    if (stored.length || !onWriteQuiz || askedRef.current) return;
+    askedRef.current = true;
+    writeQuiz(wanted);
+    // Only on opening; asking for more is a deliberate press afterwards.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stored.length, onWriteQuiz]);
 
   const [classSize, setClassSize] = useState(20);
@@ -287,6 +301,12 @@ export default function AnswerCardsGame({
     .map((n) => ({ n, points: pointsOf(n) }))
     .sort((a, b) => b.points - a.points || a.n - b.n);
 
+  /** The same list, marking who has just scored on this question, so the
+   *  board shows a mark landing rather than only its total. */
+  const scoreboard = Array.from({ length: classSize }, (_, i) => i + 1)
+    .map((n) => ({ n, points: pointsOf(n), justScored: liveRight(n) }))
+    .sort((a, b) => b.points - a.points || a.n - b.n);
+
   const letters = ["A", "B", "C", "D"];
 
   return createPortal(
@@ -341,6 +361,37 @@ export default function AnswerCardsGame({
               </p>
             ) : (
               <>
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-wider text-[#FACC15]">
+                    How many questions
+                  </p>
+                  <div className="mt-2 flex flex-wrap justify-center gap-2">
+                    {QUIZ_COUNTS.map((c) => (
+                      <button
+                        key={c}
+                        disabled={writing}
+                        onClick={() => {
+                          setWanted(c);
+                          // More than the lesson has? Write a fresh set.
+                          if (available.length < c) writeQuiz(c);
+                        }}
+                        className={`rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-50 ${
+                          wanted === c
+                            ? "bg-[#FACC15] text-[#064E3B]"
+                            : "bg-white/10 hover:bg-white/20"
+                        }`}
+                      >
+                        {c}
+                      </button>
+                    ))}
+                  </div>
+                  {writing && (
+                    <p className="mt-2 text-[12px] text-white/60">
+                      Writing the questions…
+                    </p>
+                  )}
+                </div>
+
                 <div>
                   <p className="text-[11px] font-black uppercase tracking-wider text-[#FACC15]">
                     How many cards
@@ -411,7 +462,8 @@ export default function AnswerCardsGame({
         )}
 
         {(phase === "asking" || phase === "revealed") && round && (
-          <div className="mx-auto w-full max-w-4xl space-y-5">
+          <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 lg:flex-row">
+          <div className="min-w-0 flex-1 space-y-5">
             <p className="text-center text-sm font-bold uppercase tracking-wider text-[#FACC15]">
               Question {qi + 1} of {rounds.length}
             </p>
@@ -512,6 +564,43 @@ export default function AnswerCardsGame({
               />
               <canvas ref={canvasRef} className="hidden" />
             </div>
+          </div>
+
+          {/* The marks, beside the question rather than saved for the end.
+              A card read with the right letter scores the moment it is read,
+              so the board moves while the class watches, highest first. */}
+          <aside className="w-full shrink-0 lg:w-72">
+            <div className="rounded-2xl bg-white/10 p-4">
+              <div className="flex items-baseline justify-between">
+                <p className="text-[11px] font-black uppercase tracking-wider text-[#FACC15]">
+                  Marks
+                </p>
+                <p className="text-[11px] font-bold text-white/50">
+                  {answered} of {classSize} in
+                </p>
+              </div>
+              <div className="mt-3 max-h-[60vh] space-y-1.5 overflow-y-auto pr-1">
+                {scoreboard.map((r, i) => (
+                  <div
+                    key={r.n}
+                    className={`flex items-center gap-2.5 rounded-xl px-3 py-2 ${
+                      r.justScored
+                        ? "bg-[#FACC15] text-[#064E3B]"
+                        : r.points > 0
+                          ? "bg-white/15"
+                          : "bg-white/5 text-white/45"
+                    }`}
+                  >
+                    <span className="w-5 text-[12px] font-black opacity-70">
+                      {i + 1}
+                    </span>
+                    <span className="flex-1 text-sm font-bold">Student {r.n}</span>
+                    <span className="text-sm font-black">{r.points}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </aside>
           </div>
         )}
 

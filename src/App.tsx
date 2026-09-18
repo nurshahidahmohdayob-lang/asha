@@ -10226,16 +10226,25 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
    *  Only the quiz half: rebuilding the whole lesson would throw away slides a
    *  teacher had edited. Whatever it writes is merged in and kept, so the game
    *  asks the same questions next time. */
-  const ensureQuizForWeek = async (weekIdx: number): Promise<QuizQuestion[]> => {
+  const ensureQuizForWeek = async (
+    weekIdx: number,
+    /** How many questions the teacher asked for. */
+    wanted = 3,
+  ): Promise<QuizQuestion[]> => {
     const week = content?.lessonPlan?.weeklyBreakdown?.[weekIdx];
     if (!week) return [];
     const already = content?.lessonPack;
-    if (already?.week === week.week && (already.questions || []).length)
+    // Enough already written? Use them. Fewer than asked for, and it writes
+    // a fresh set — a teacher who asks for ten should not be given three.
+    if (already?.week === week.week && (already.questions || []).length >= wanted)
       return already.questions;
 
     const { planCtx, aiCtx } = lessonContextsFor(week);
     const { generateLessonGames } = await import("./services/geminiService");
-    const games = await generateLessonGames(week, planCtx, aiCtx);
+    const games = await generateLessonGames(week, planCtx, {
+      ...aiCtx,
+      numQuestions: wanted,
+    });
     const questions = (games?.questions || []).filter(
       (q: QuizQuestion) => q?.text && (q.options || []).length >= 2,
     );
@@ -45294,7 +45303,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 ? content.lessonPack
                 : undefined
             }
-            onWriteQuiz={() => ensureQuizForWeek(cardsWeekIdx)}
+            onWriteQuiz={(wanted) => ensureQuizForWeek(cardsWeekIdx, wanted)}
             onClose={() => setCardsWeekIdx(null)}
           />
         )}

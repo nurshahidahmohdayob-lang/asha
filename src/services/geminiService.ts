@@ -3393,6 +3393,10 @@ async function generateLessonActivitiesDirect(
 
   const yearGroup = plan.class || options.yearGroup;
   const optionCount = quizOptionCount(yearGroup);
+  /* How many quiz questions to write. The answer-card game lets a teacher
+     ask for more than the three a lesson used to get, so the number comes
+     from the caller; three stays the default for the projected deck. */
+  const quizCount = Math.min(20, Math.max(1, Number(options.numQuestions) || 3));
   const young = (yearNumberOf(yearGroup) ?? 99) <= 2;
 
   // The lesson is generated in two halves. One request for all of it exceeds
@@ -3437,15 +3441,15 @@ BE SPECIFIC TO THIS LESSON — this is what most often goes wrong:
    - NEVER put a child's name in them ("Are you okay, Emma?" is WRONG). The same words are on the board for every pair in the room, and each child's partner is someone different.
    - ${young ? "Each one 8 words or fewer, and easy to say out loud." : "Each one short enough to say in one breath."} A ${yearGroup} child must be able to read them off the board and say them to a friend.
 
-2. "questions": 3 mini-quiz questions checking whether the class understood THIS lesson.
-   - Each has "text", "options" (exactly ${optionCount} short choices), "correctIndex" (0-${optionCount - 1}, the index of the correct choice — vary its position across the three questions), and "why" (one short sentence explaining the answer, for the teacher to read out).
+2. "questions": ${quizCount} mini-quiz questions checking whether the class understood THIS lesson.
+   - Each has "text", "options" (exactly ${optionCount} short choices), "correctIndex" (0-${optionCount - 1}, the index of the correct choice — vary its position across the questions), and "why" (one short sentence explaining the answer, for the teacher to read out).
    - Exactly one option is correct; the others must be clearly wrong to someone who understood the lesson, but plausible to someone who did not.
    - Never put the answer in the question text. ${
      young
        ? "Each question 8 words or fewer; each option 3 words or fewer."
        : "Keep every option under 10 words."
    }
-   - Order the three from easiest to hardest.
+   - Order them from easiest to hardest.
 
 3. "story": a very short story that carries the idea, told in 4 scenes. Give it a "title", 4 "scenes", and 3 "questions" (each a "q" the teacher asks and a short "a" revealed after the class answers).
    - Each scene's "label" MUST be a complete sentence the teacher reads aloud, about 8-12 words. A title or caption like "Sunny Day" or "Happy Emily" is WRONG — write "Emily walks to school and smiles at her friend."
