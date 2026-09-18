@@ -3651,10 +3651,14 @@ LABEL RULES: a label names the thing itself — "Happy", not "Happy Face". Do no
         required: ["discussion", "questions"],
   };
 
-  const ask = async (text: string, schema: any) => {
+  const ask = async (text: string, schema: any, room?: number) => {
     const r = await generateContentWithRetry({
       contents: { parts: [{ text }] },
-      config: { responseMimeType: "application/json", responseSchema: schema },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: schema,
+        ...(room ? { maxOutputTokens: room } : {}),
+      },
     });
     if (!r.text) throw new Error("Empty response");
     // A lesson is a big reply and the teaching half is the biggest part of
@@ -3672,7 +3676,15 @@ LABEL RULES: a label names the thing itself — "Happy", not "Happy Face". Do no
   const activityPart =
     half === "teaching"
       ? { discussion: [], questions: [] }
-      : await ask(activityPrompt, activitySchema).catch((e: any) => {
+      : await ask(
+          activityPrompt,
+          activitySchema,
+          /* Room for the quiz on top of the eight other sections this half
+             writes. Asked for fifteen questions it ran out of output part way
+             and the mended reply came back with six, silently — the quiz is
+             last-but-one, so it is what gets cut. */
+          Math.min(7000, 2600 + quizCount * 190),
+        ).catch((e: any) => {
           /* A browser has no AI key, and this half asked for one. Swallowed
              here, the wrapper above never saw a failure and never asked the
              server instead — so the games half quietly returned nothing, every

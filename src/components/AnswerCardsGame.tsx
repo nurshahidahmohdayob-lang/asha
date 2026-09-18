@@ -29,8 +29,8 @@ type Camera = "off" | "starting" | "on" | "denied";
 /** How many cards a class might need. One printed set serves every class. */
 const CARD_COUNTS = [20, 30, 40];
 /** How many questions a game asks. Fixed: a teacher setting up in front of a
- *  class has enough to decide already, and fifteen is a lesson's worth. */
-const QUIZ_COUNT = 15;
+ *  class has enough to decide already. */
+const QUIZ_COUNT = 10;
 
 export default function AnswerCardsGame({
   title,
