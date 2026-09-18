@@ -3668,7 +3668,16 @@ LABEL RULES: a label names the thing itself — "Happy", not "Happy Face". Do no
   const activityPart =
     half === "teaching"
       ? { discussion: [], questions: [] }
-      : await ask(activityPrompt, activitySchema).catch((e) => {
+      : await ask(activityPrompt, activitySchema).catch((e: any) => {
+          /* A browser has no AI key, and this half asked for one. Swallowed
+             here, the wrapper above never saw a failure and never asked the
+             server instead — so the games half quietly returned nothing, every
+             time, and every lesson came out with teaching slides and no quiz,
+             story or games. That error has to travel. */
+          const message = String(e?.message || e);
+          if (message.includes("API Key") || message.includes("configured")) throw e;
+          // Anything else stays as it was: a lesson missing its games is
+          // better in front of a class than no lesson at all.
           console.error("Lesson activities half failed:", e);
           return { discussion: [], questions: [] };
         });
