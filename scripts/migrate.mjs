@@ -26,6 +26,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { parse as parseConn } from "pg-connection-string";
 
 const DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "supabase", "migrations");
 
@@ -47,23 +48,75 @@ if (!url) {
   process.exit(0);
 }
 
-if (/:6543\b/.test(url)) {
+/* ── Read the string before trusting it ───────────────────────────────────
+   A malformed value fails deep inside the driver as something like
+   "getaddrinfo ENOTFOUND base" — a host nobody typed, out of a value nobody
+   can read back, because it is stored write-only. Parsing it up here lets the
+   error name what is actually wrong. The password is never printed; only
+   whether there is one and whether it still says YOUR-PASSWORD. */
+let conn;
+try {
+  conn = parseConn(url);
+} catch (e) {
+  console.error(
+    `\n✗ SUPABASE_DB_URL is not a usable connection string: ${e.message}\n\n` +
+      "  A password containing # / or ? breaks the URL unless it is\n" +
+      "  percent-encoded:  # → %23   / → %2F   ? → %3F   @ → %40\n",
+  );
+  process.exit(1);
+}
+
+const host = String(conn.host || "");
+
+// Printed on every run, and the single most useful line here: it is what
+// turns "ENOTFOUND base" into something anyone can act on. No password.
+console.log(
+  `  connecting as ${conn.user || "(none)"} to ${host || "(no host)"}:${conn.port || 5432}` +
+    `/${conn.database || "(no database)"}`,
+);
+
+if (/YOUR-PASSWORD/i.test(String(conn.password || ""))) {
+  console.error(
+    "\n✗ The password is still the placeholder. Replace [YOUR-PASSWORD] with\n" +
+      "  the real one — Supabase Dashboard → Project Settings → Database →\n" +
+      "  Reset database password, if it is not to hand.\n",
+  );
+  process.exit(1);
+}
+
+const looksLikeSupabase = host.endsWith(".supabase.com") || host.endsWith(".supabase.co");
+const looksLocal = /^(localhost|127\.0\.0\.1|::1)$/.test(host);
+
+if (!looksLikeSupabase && !looksLocal) {
+  console.error(
+    `\n✗ That string parsed to host "${host}", which is not a Supabase host.\n\n` +
+      "  The value is malformed rather than merely wrong — something in it is\n" +
+      "  ending the hostname early. Usually that is a special character in the\n" +
+      "  password, which has to be percent-encoded:\n" +
+      "      # → %23   / → %2F   ? → %3F   @ → %40\n\n" +
+      "  Copy it again from Dashboard → Connect → Session pooler, encode the\n" +
+      "  password, and check the host reads <something>.pooler.supabase.com\n",
+  );
+  process.exit(1);
+}
+
+if (String(conn.port) === "6543") {
   console.warn(
-    "  ⚠ That looks like the TRANSACTION pooler (port 6543), which changes\n" +
-      "    backend between statements and breaks both the advisory lock and\n" +
-      "    the per-file transaction. Use the Session pooler (port 5432).",
+    "  ⚠ That is the TRANSACTION pooler (port 6543), which changes backend\n" +
+      "    between statements and breaks both the advisory lock and the\n" +
+      "    per-file transaction. Use the Session pooler (port 5432).",
   );
 }
 
-// Named so the failure explains itself: a direct-connection host resolves to
-// IPv6 only, so on an IPv4 network — which is what a Vercel build runs on —
-// this fails as ENETUNREACH with nothing to say why.
-if (/@db\.[a-z0-9]+\.supabase\.co\b/.test(url)) {
+// A direct-connection host resolves to IPv6 only, so on an IPv4 network —
+// which is what a Vercel build runs on — it fails as ENETUNREACH with nothing
+// to say why. Still a warning, not an error: from an IPv6 machine it works.
+if (/^db\.[a-z0-9]+\.supabase\.co$/.test(host)) {
   console.warn(
     "  ⚠ That is the DIRECT connection host, which Supabase publishes over\n" +
       "    IPv6 only. It works from an IPv6 network and fails as 'network\n" +
-      "    unreachable' from an IPv4 one, a Vercel build included. If this\n" +
-      "    cannot connect, switch to the Session pooler (port 5432).",
+      "    unreachable' from an IPv4 one, a Vercel build included. Prefer the\n" +
+      "    Session pooler (port 5432).",
   );
 }
 
@@ -83,9 +136,8 @@ const sha = (text) => createHash("sha256").update(text).digest("hex").slice(0, 1
 // near production — has no certificate at all, and forcing SSL on it fails the
 // connection outright. So the host decides, and an explicit sslmode in the
 // string always wins.
-const isLocal = /@(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(url);
 const ssl =
-  /sslmode=disable/.test(url) || isLocal ? false : { rejectUnauthorized: false };
+  /sslmode=disable/.test(url) || looksLocal ? false : { rejectUnauthorized: false };
 
 const client = new pg.Client({ connectionString: url, ssl });
 
