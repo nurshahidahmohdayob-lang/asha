@@ -4257,7 +4257,7 @@ const buildLessonPlanEditableHTML = (lp: any, title: string): string => {
           ${pair("Term", lp?.term, "Academic Year", lp?.academicYear)}
           ${pair("Subject", lp?.subject, "Year Group", lp?.class)}
           ${pair("Class", lp?.classGroup, "Target Lesson Duration", lp?.duration)}
-          ${pair("Prepared by", lp?.preparedBy, "Checked by", lp?.checkedBy)}
+          ${pair("Prepared by", lp?.preparedBy, "Approved by", lp?.checkedBy)}
           ${pair("Date of lesson", lp?.date, "", "")}
         </table>
       </section>
@@ -5021,7 +5021,7 @@ const buildLessonPlanShareHTML = (lp: any, title: string): string => {
           ${detail("Duration", lp?.duration)}
           ${detail("Date", lp?.date)}
           ${detail("Prepared By", lp?.preparedBy)}
-          ${detail("Checked By", lp?.checkedBy)}
+          ${detail("Approved By", lp?.checkedBy)}
         </table>
       </section>
       ${listBlock("Learning Objectives", lp?.learningObjectiveSummary)}
@@ -8810,6 +8810,36 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     return () => window.clearTimeout(timer);
   }, [content, submissionForPlan, isReviewMode]);
 
+  /* Who approved the plan currently open, if anyone has.
+     "Approved by" lives on the lesson plan document, but the approval is
+     recorded on the SUBMITTED copy — a different record. This joins the two at
+     render time, which is what fills the box on the 271 plans already approved
+     with it blank. A name the teacher typed there wins: the field is still
+     theirs to write in. */
+  const approvedByForOpenPlan = useMemo(() => {
+    /* A REVIEWER opens the submitted row itself, so currentProjectId is that
+       row's own id. submissionForPlan cannot find it — it looks for
+       sub_<projectId> — and would refuse it anyway, since it only considers
+       the signed-in teacher's own rows. So the reviewer, the person most
+       likely to be reading this box, was the one person who saw it blank.
+
+       Resolved directly here rather than by widening submissionForPlan: that
+       one is the target of the write that keeps a submission in step with the
+       plan, and it has no business reaching another teacher's row. */
+    const opened =
+      isReviewMode && currentProjectId
+        ? (submittedProjects || []).find(
+            (p: any) =>
+              p?.id === currentProjectId ||
+              p?.id === `sub_${currentProjectId}` ||
+              p?.sourceProjectId === currentProjectId,
+          )
+        : null;
+    const sub = opened || submissionForPlan;
+    if (!sub || getReviewStage(sub) !== "approved") return "";
+    return approverOf(sub).name;
+  }, [submissionForPlan, isReviewMode, currentProjectId, submittedProjects]);
+
   const [includeStory, setIncludeStory] = useState(false);
   const [readingPassageOnly, setReadingPassageOnly] = useState(false);
   const [sessionTopic, setSessionTopic] = useState("");
@@ -11283,7 +11313,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       ["Term", lessonPlan.term || ""],
       ["Date", lessonPlan.date || ""],
       ["Prepared By", lessonPlan.preparedBy || ""],
-      ["Checked By", lessonPlan.checkedBy || ""],
+      ["Approved By", lessonPlan.checkedBy || ""],
       ["Overall Topic", lessonPlan.overallTopic || ""],
       [""],
       ["Weekly Breakdown"],
@@ -11701,12 +11731,25 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     const name = approverName.trim();
     if (!plan?.id || !name) return;
     setApprovingPlan(null);
+    /* Written into the submitted copy as well as recorded against it. The
+       screen can fall back to approvedBy, but a DOCX or a printed plan reads
+       the document itself, so the name has to be IN it. An existing value is
+       left alone — that is the teacher's own writing. */
+    const signed =
+      plan?.content?.lessonPlan &&
+      !String(plan.content.lessonPlan.checkedBy || "").trim()
+        ? {
+            ...plan.content,
+            lessonPlan: { ...plan.content.lessonPlan, checkedBy: name },
+          }
+        : undefined;
     await reviewNow(plan, {
       reviewStage: "approved",
       reviewNote: "",
       weeklyFeedback: {},
       approvedAt: Date.now(),
       approvedBy: name,
+      ...(signed ? { content: signed } : {}),
       reviewHistory: appendReviewEntry(plan, `Approved by ${name}`, ""),
     });
   };
@@ -39554,11 +39597,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     </div>
                     <div className="space-y-1">
                       <label className="text-[11px] font-black uppercase text-[#064E3B]/50">
-                        Checked By
+                        Approved By
                       </label>
                       <input
                         type="text"
-                        value={content?.lessonPlan?.checkedBy || lpCheckedBy}
+                        value={
+                          content?.lessonPlan?.checkedBy ||
+                          lpCheckedBy ||
+                          approvedByForOpenPlan
+                        }
                         onChange={(e) => {
                           setLpCheckedBy(e.target.value);
                           if (content?.lessonPlan)
@@ -40284,10 +40331,15 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                   className={inCls}
                                 />
                               </td>
-                              <td className={labelCls}>Checked by</td>
+                              <td className={labelCls}>Approved by</td>
                               <td className={cellCls}>
                                 <input
-                                  value={lp.checkedBy || ""}
+                                  value={lp.checkedBy || approvedByForOpenPlan}
+                                  placeholder={
+                                    approvedByForOpenPlan
+                                      ? ""
+                                      : "filled in when the plan is approved"
+                                  }
                                   onChange={(e) =>
                                     updateLessonPlanMetadata(
                                       "checkedBy",
