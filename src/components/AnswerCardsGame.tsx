@@ -97,9 +97,13 @@ export default function AnswerCardsGame({
       .finally(() => setWriting(false));
   };
 
+  /* A lesson short of questions is filled out on opening, not only an empty
+     one: a set of three was three, game after game, because nothing asked for
+     more. What comes back is added to what is there, so a question the
+     teacher has reworded stays as they wrote it. */
   const askedRef = useRef(false);
   useEffect(() => {
-    if (stored.length || !onWriteQuiz || askedRef.current) return;
+    if (stored.length >= QUIZ_COUNT || !onWriteQuiz || askedRef.current) return;
     askedRef.current = true;
     writeQuiz(QUIZ_COUNT);
     // Only on opening; asking for more is a deliberate press afterwards.
@@ -389,7 +393,9 @@ export default function AnswerCardsGame({
               <>
                 {writing && (
                   <p className="text-[12px] text-white/60">
-                    Writing the questions…
+                    Writing {Math.max(QUIZ_COUNT - rounds.length, 1)} more question
+                    {QUIZ_COUNT - rounds.length === 1 ? "" : "s"} from your lesson plan… you can
+                    start without waiting.
                   </p>
                 )}
 

@@ -74,6 +74,10 @@ export interface LessonActivityPack {
   week: number;
   discussion: string[];
   questions: QuizQuestion[];
+  /** Whether the quiz has been filled out to a full set once already. A
+   *  lesson built with three questions is topped up the first time its cards
+   *  are opened; after that the set belongs to the teacher. */
+  quizFilled?: boolean;
   /** The handful of things being taught, as picture tiles. */
   keyIdeas?: LessonTile[];
   /** "What are feelings?" — the idea stated once, plainly, before the detail. */

@@ -173,7 +173,7 @@ const SECTIONS: Section[] = [
       {
         problem: "There are only a few questions",
         fix:
-          "The lesson was built with a short quiz. Press Edit questions and Add a question — or write the line yourself — and they are kept with the lesson.",
+          "A lesson built with a short quiz is filled out to ten from the plan the first time its cards are opened — you can start while it writes. After that the set is yours: press Edit questions to add your own, and it stays as you leave it.",
       },
     ],
   },

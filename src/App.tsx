@@ -10282,37 +10282,62 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
   ): Promise<QuizQuestion[]> => {
     const week = content?.lessonPlan?.weeklyBreakdown?.[weekIdx];
     if (!week) return [];
-    const already = content?.lessonPack;
-    // Enough already written? Use them. Fewer than asked for, and it writes
-    // a fresh set — a teacher who asks for ten should not be given three.
-    if (already?.week === week.week && (already.questions || []).length >= wanted)
-      return already.questions;
+    const already = content?.lessonPack?.week === week.week ? content.lessonPack : undefined;
+    const have = (already?.questions || []).filter(
+      (q: QuizQuestion) => q?.text && (q.options || []).length >= 2,
+    );
+    // Enough already? Use them.
+    if (have.length >= wanted) return have;
+    /* Topped up once, and then left alone. A lesson built with three
+       questions is filled to ten the first time its cards are opened; after
+       that the set is the teacher's, and a week they have deliberately cut
+       back to five stays at five rather than growing again every lesson. */
+    if (already?.quizFilled) return have;
 
     const { planCtx, aiCtx } = lessonContextsFor(week);
     const { generateLessonGames } = await import("./services/geminiService");
     const games = await generateLessonGames(week, planCtx, {
       ...aiCtx,
-      numQuestions: wanted,
+      // A couple more than the gap, since some come back unusable.
+      numQuestions: Math.min(12, wanted - have.length + 2),
     });
-    const questions = (games?.questions || []).filter(
+    const written = (games?.questions || []).filter(
       (q: QuizQuestion) => q?.text && (q.options || []).length >= 2,
     );
-    if (!questions.length) return [];
+    if (!written.length) return have;
+
+    /* Added to what is there, never over it: a question the teacher has
+       reworded is theirs, and the new ones fill the gap behind it. Matched
+       by wording so the same question does not arrive twice. */
+    const seen = new Set(have.map((q: QuizQuestion) => q.text.trim().toLowerCase()));
+    const questions = [...have];
+    for (const q of written) {
+      if (questions.length >= wanted) break;
+      const key = q.text.trim().toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      questions.push(q);
+    }
 
     // Merged the way the projected lesson merges: each side gives what it
     // actually has, so writing a quiz never blanks the teaching slides.
     const base: LessonActivityPack =
-      already?.week === week.week
-        ? already
-        : ({ week: week.week, discussion: [], questions: [] } as LessonActivityPack);
+      already ?? ({ week: week.week, discussion: [], questions: [] } as LessonActivityPack);
     const merged: LessonActivityPack = { ...base, week: week.week };
     for (const [key, value] of Object.entries(games || {})) {
+      // The questions are settled above; anything else the writing returned
+      // is worth keeping, but it must not overwrite them.
+      if (key === "questions") continue;
       const empty =
         value == null ||
         (Array.isArray(value) && value.length === 0) ||
         (typeof value === "object" && !Array.isArray(value) && !Object.keys(value).length);
       if (!empty) (merged as any)[key] = value;
     }
+    merged.questions = questions;
+    // Only a full set counts as filled. A writing that came back short leaves
+    // the week open to being topped up again next time its cards are opened.
+    merged.quizFilled = questions.length >= wanted;
     setContent((prev) => (prev ? { ...prev, lessonPack: merged } : prev));
     if (currentProjectId && !isReviewMode) {
       void persistLessonPlanSilently(
@@ -10338,7 +10363,13 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
       already?.week === week.week
         ? already
         : ({ week: week.week, discussion: [], questions: [] } as LessonActivityPack);
-    const merged: LessonActivityPack = { ...base, week: week.week, questions };
+    const merged: LessonActivityPack = {
+      ...base,
+      week: week.week,
+      questions,
+      // Once a teacher has had a hand in them, the set is theirs to grow.
+      quizFilled: true,
+    };
     setContent((prev) => (prev ? { ...prev, lessonPack: merged } : prev));
     if (currentProjectId && !isReviewMode) {
       void persistLessonPlanSilently(
