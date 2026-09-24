@@ -13,11 +13,17 @@ const TURNS = [
   { letter: "D", turn: "A quarter turn anticlockwise", rest: "" },
 ];
 
-type Section =
-  | { kind: "steps"; title: string; tag?: string; steps: { lead: string; body: string }[]; warn?: string }
-  | { kind: "card"; title: string; tag?: string; note: string }
-  | { kind: "points"; title: string; tag?: string; points: { lead: string; body: string }[]; note?: string }
-  | { kind: "fixes"; title: string; tag?: string; fixes: { problem: string; fix: string }[] };
+/** The screen this section is talking about, so a teacher reading it away from
+ *  the class can see what they are being pointed at. Taken from the game
+ *  itself with a made-up lesson — no class's work is in them. */
+type Shot = { src: string; alt: string; caption: string };
+
+type Section = { title: string; tag?: string; shot?: Shot } & (
+  | { kind: "steps"; steps: { lead: string; body: string }[]; warn?: string }
+  | { kind: "card"; note: string }
+  | { kind: "points"; points: { lead: string; body: string }[]; note?: string }
+  | { kind: "fixes"; fixes: { problem: string; fix: string }[] }
+);
 
 const SECTIONS: Section[] = [
   {
@@ -38,6 +44,12 @@ const SECTIONS: Section[] = [
     ],
     warn:
       "The one thing to get right: if the cards go out in a different order from the register, the marks on the board belong to the wrong children.",
+    shot: {
+      src: "/guide/cards-lobby.png",
+      alt: "The Answer Cards opening screen, with the card-count buttons, the QR code for a phone, and the buttons Print cards, How it works, Edit questions and Start.",
+      caption:
+        "The opening screen: how many cards are out, the code your phone scans, and the four buttons — Print cards, How it works, Edit questions, and Start.",
+    },
   },
   {
     kind: "card",
@@ -80,6 +92,12 @@ const SECTIONS: Section[] = [
           "Show the answer lights the right option and freezes the readings; the line you wrote for it is read out underneath. Next question clears the room for the next one, and the last question ends on the marks.",
       },
     ],
+    shot: {
+      src: "/guide/cards-question.png",
+      alt: "A question on the board with four lettered options, the class numbers underneath, and the marks listed down the right.",
+      caption:
+        "A question on the board. The numbers underneath are who has answered — numbers only, never letters — and the marks build down the right as the cards are read.",
+    },
   },
   {
     kind: "points",
@@ -102,6 +120,12 @@ const SECTIONS: Section[] = [
           "Nor is one with fewer than two options. The editor says so at the time, so a half-finished question never reaches the board.",
       },
     ],
+    shot: {
+      src: "/guide/cards-editor.png",
+      alt: "The question editor: the question in a box, its four options lettered A to D with A marked as the right answer, and a box for the line read out after the reveal.",
+      caption:
+        "Edit questions, opened at the question that is on the board. Tap a letter to mark the right answer; the last box is the line read out once the answer is shown.",
+    },
   },
   {
     kind: "points",
@@ -315,6 +339,20 @@ export default function AnswerCardsGuide({ onClose }: { onClose: () => void }) {
                     </div>
                   ))}
                 </dl>
+              )}
+
+              {sec.shot && (
+                <figure className="m-0 space-y-2 pt-1">
+                  <img
+                    src={sec.shot.src}
+                    alt={sec.shot.alt}
+                    loading="lazy"
+                    className="w-full rounded-xl border border-white/15 shadow-lg shadow-black/30"
+                  />
+                  <figcaption className="text-[12px] leading-relaxed text-white/50">
+                    {sec.shot.caption}
+                  </figcaption>
+                </figure>
               )}
             </section>
           ))}
