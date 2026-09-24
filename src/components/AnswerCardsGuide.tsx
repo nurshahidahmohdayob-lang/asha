@@ -179,30 +179,99 @@ const SECTIONS: Section[] = [
   },
 ];
 
-/** The card, drawn: one letter to an edge, each turned by as much as the card
- *  must be turned to bring it to the top — which is the only place it reads
- *  upright, and the answer. */
+/** The card, drawn as the sheet prints it: white, a square code in the middle
+ *  that says which card it is, "Student 1" underneath, and one letter to each
+ *  edge in the school green — each printed pre-turned by as much as the card
+ *  must be turned to bring it to the top, which is the only place it reads
+ *  upright. The yellow label is the diagram's own, not the card's. */
 function CardFace() {
+  /* The code, drawn as a likeness of the printed one: three finder squares
+     and a scatter of modules, laid out on the 96–204 box the sheet uses and
+     scaled into place. */
+  const finders = [
+    [102, 102],
+    [172, 102],
+    [102, 172],
+  ];
+  const modules = [
+    [134, 102], [146, 108], [158, 102], [140, 120], [152, 126], [102, 140],
+    [114, 146], [126, 140], [138, 152], [150, 146], [162, 158], [174, 146],
+    [186, 152], [168, 134], [180, 140], [134, 170], [146, 182], [158, 176],
+    [170, 188], [182, 176], [192, 164], [120, 164], [108, 158], [192, 188],
+  ];
+  const CARD_TOP = 38;
+  const MID = 184;
+
   return (
-    <div className="relative aspect-square w-full max-w-[13rem] shrink-0 rounded-2xl border-2 border-white/25 bg-white/5 p-[16%]">
-      <span className="absolute left-1/2 top-1 -translate-x-1/2 text-2xl font-black text-[#FACC15]">
-        A
-      </span>
-      <span className="absolute left-1 top-1/2 -translate-y-1/2 -rotate-90 text-2xl font-black text-white/40">
-        B
-      </span>
-      <span className="absolute bottom-1 left-1/2 -translate-x-1/2 rotate-180 text-2xl font-black text-white/40">
-        C
-      </span>
-      <span className="absolute right-1 top-1/2 -translate-y-1/2 rotate-90 text-2xl font-black text-white/40">
-        D
-      </span>
-      <div className="grid h-full w-full place-items-center rounded-lg bg-white/10 px-1 text-center text-[9px] font-bold leading-tight text-white/50">
-        the code that
-        <br />
-        names the card
-      </div>
-    </div>
+    <svg
+      viewBox="0 0 300 336"
+      role="img"
+      aria-label="A printed answer card: A at the top edge, B at the left, C at the bottom, D at the right, the code that names the card in the middle, and Student 1 underneath. The letter at the top is the answer."
+      className="w-[15rem] max-w-full shrink-0"
+    >
+      {/* The diagram's own label — the card itself carries no yellow. */}
+      <g>
+        <rect x="62" y="0" width="176" height="26" rx="13" fill="#FACC15" />
+        <path d="M144 26h12l-6 10z" fill="#FACC15" />
+        <text
+          x="150"
+          y="18"
+          textAnchor="middle"
+          fontSize="12.5"
+          fontWeight="800"
+          fill="#064E3B"
+        >
+          at the top = the answer
+        </text>
+      </g>
+
+      <rect
+        x="4"
+        y={CARD_TOP}
+        width="292"
+        height="292"
+        rx="14"
+        fill="#FFFFFF"
+        stroke="#D1D5DB"
+        strokeWidth="2"
+      />
+
+      <g fontWeight="800" fontSize="28" textAnchor="middle" fill="#064E3B">
+        <text x="150" y="68">A</text>
+        <text x="150" y="68" transform={`rotate(180 150 ${MID})`}>
+          C
+        </text>
+        <text x="150" y="68" transform={`rotate(-90 150 ${MID})`}>
+          B
+        </text>
+        <text x="150" y="68" transform={`rotate(90 150 ${MID})`}>
+          D
+        </text>
+      </g>
+
+      <rect x="68" y="90" width="164" height="164" fill="#FFFFFF" stroke="#E5E7EB" />
+      <g fill="#111827" transform="translate(68 90) scale(1.5185) translate(-96 -96)">
+        {finders.map(([x, y]) => (
+          <g key={`f-${x}-${y}`}>
+            <rect x={x} y={y} width="26" height="26" />
+            <rect x={x + 6} y={y + 6} width="14" height="14" fill="#FFFFFF" />
+            <rect x={x + 10} y={y + 10} width="6" height="6" />
+          </g>
+        ))}
+        {modules.map(([x, y]) => (
+          <rect key={`m-${x}-${y}`} x={x} y={y} width="6" height="6" />
+        ))}
+      </g>
+
+      <text x="150" y="286" textAnchor="middle">
+        <tspan fontSize="13" fontWeight="600" fill="#374151">
+          Student{" "}
+        </tspan>
+        <tspan fontSize="26" fontWeight="800" fill="#064E3B">
+          1
+        </tspan>
+      </text>
+    </svg>
   );
 }
 
