@@ -10323,6 +10323,31 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     return questions;
   };
 
+  /**
+   * The questions a teacher has rewritten, kept with the lesson.
+   *
+   * Written straight into the lesson pack beside its slides and activities,
+   * so the cards ask them next time and nothing is generated again — and so
+   * they travel with the plan to whatever device it is opened on.
+   */
+  const saveQuizForWeek = (weekIdx: number, questions: QuizQuestion[]) => {
+    const week = content?.lessonPlan?.weeklyBreakdown?.[weekIdx];
+    if (!week || !content) return;
+    const already = content.lessonPack;
+    const base: LessonActivityPack =
+      already?.week === week.week
+        ? already
+        : ({ week: week.week, discussion: [], questions: [] } as LessonActivityPack);
+    const merged: LessonActivityPack = { ...base, week: week.week, questions };
+    setContent((prev) => (prev ? { ...prev, lessonPack: merged } : prev));
+    if (currentProjectId && !isReviewMode) {
+      void persistLessonPlanSilently(
+        { ...(content as EduContent), lessonPack: merged },
+        currentProjectId,
+      );
+    }
+  };
+
   const ensureActivitiesForWeek = async (
     week: WeeklyPlan,
     force = false,
@@ -45285,6 +45310,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                 : undefined
             }
             onWriteQuiz={(wanted) => ensureQuizForWeek(cardsWeekIdx, wanted)}
+            onSaveQuestions={(questions) => saveQuizForWeek(cardsWeekIdx, questions)}
             onClose={() => setCardsWeekIdx(null)}
           />
         )}

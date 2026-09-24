@@ -13,6 +13,8 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import type { LessonActivityPack, QuizQuestion } from "../types";
 import { browserSupabase, relayConfigured } from "../lib/browserSupabase";
 import { buildCardsHtml, readCardsInFrame } from "../lib/answerCards";
+import AnswerCardsEditor from "./AnswerCardsEditor";
+import AnswerCardsGuide from "./AnswerCardsGuide";
 import {
   HELLO_EVENT,
   newRoomCode,
@@ -38,6 +40,7 @@ export default function AnswerCardsGame({
   academicYear,
   pack,
   onWriteQuiz,
+  onSaveQuestions,
   onClose,
 }: {
   /** What the class is answering about — the week's topic. */
@@ -48,6 +51,8 @@ export default function AnswerCardsGame({
   pack?: LessonActivityPack;
   /** Write the quiz from the plan, for a lesson that has none yet. */
   onWriteQuiz?: (wanted: number) => Promise<QuizQuestion[]>;
+  /** Keep the questions the teacher has rewritten, with the lesson. */
+  onSaveQuestions?: (questions: QuizQuestion[]) => void;
   onClose: () => void;
 }) {
   const stored: QuizQuestion[] = useMemo(
@@ -60,8 +65,20 @@ export default function AnswerCardsGame({
   const [written, setWritten] = useState<QuizQuestion[] | null>(null);
   const [writing, setWriting] = useState(false);
   const [writeFailed, setWriteFailed] = useState<string | null>(null);
-  const available = written ?? stored;
-  const rounds = available.slice(0, QUIZ_COUNT);
+  /* The teacher's own questions, as they are typed. They are saved into the
+     lesson as well, so this is only what the game asks between the typing and
+     the lesson coming back from the store. */
+  const [edited, setEdited] = useState<QuizQuestion[] | null>(null);
+  const available = edited ?? written ?? stored;
+  const rounds = available
+    .filter((q) => q?.text?.trim() && (q.options || []).filter((o) => o?.trim()).length >= 2)
+    .slice(0, QUIZ_COUNT);
+  /** Open over the game: the guide, or the questions to edit. */
+  const [panel, setPanel] = useState<"guide" | "edit" | null>(null);
+  const saveQuestions = (qs: QuizQuestion[]) => {
+    setEdited(qs);
+    onSaveQuestions?.(qs);
+  };
 
   /** Write the questions from the plan. Asked for on opening, and again if the
    *  teacher wants more than the lesson has. */
@@ -349,15 +366,25 @@ export default function AnswerCardsGame({
             </p>
 
             {rounds.length === 0 ? (
-              <p className="rounded-2xl bg-white/10 p-4 text-[13px] text-white/80">
-                {writing ? (
-                  <>Writing the questions from your lesson plan…</>
-                ) : writeFailed ? (
-                  <>The questions could not be written: {writeFailed}</>
-                ) : (
-                  <>This lesson has no questions to ask yet.</>
+              <>
+                <p className="rounded-2xl bg-white/10 p-4 text-[13px] text-white/80">
+                  {writing ? (
+                    <>Writing the questions from your lesson plan…</>
+                  ) : writeFailed ? (
+                    <>The questions could not be written: {writeFailed}</>
+                  ) : (
+                    <>This lesson has no questions to ask yet.</>
+                  )}
+                </p>
+                {onSaveQuestions && !writing && (
+                  <button
+                    onClick={() => setPanel("edit")}
+                    className="mx-auto block rounded-xl bg-white/10 px-4 py-3 text-sm font-bold hover:bg-white/20"
+                  >
+                    Write the questions yourself
+                  </button>
                 )}
-              </p>
+              </>
             ) : (
               <>
                 {writing && (
@@ -422,6 +449,21 @@ export default function AnswerCardsGame({
                   >
                     Print cards 1–{classSize}
                   </button>
+                  <button
+                    onClick={() => setPanel("guide")}
+                    className="rounded-xl bg-white/10 px-4 py-3 text-sm font-bold hover:bg-white/20"
+                  >
+                    How it works
+                  </button>
+                  {onSaveQuestions && (
+                    <button
+                      onClick={() => setPanel("edit")}
+                      title="Reword the questions, or mark different answers"
+                      className="rounded-xl bg-white/10 px-4 py-3 text-sm font-bold hover:bg-white/20"
+                    >
+                      Edit questions
+                    </button>
+                  )}
                   <button
                     onClick={() => setPhase("asking")}
                     className="rounded-xl bg-[#FACC15] px-6 py-3 text-base font-black text-[#064E3B] hover:bg-yellow-300"
@@ -509,6 +551,15 @@ export default function AnswerCardsGame({
                     : camera === "denied"
                       ? "Camera blocked — try again"
                       : "Use this device's camera"}
+                </button>
+              )}
+              {onSaveQuestions && (
+                <button
+                  onClick={() => setPanel("edit")}
+                  title="Reword this question, or mark a different answer"
+                  className="rounded-xl bg-white/10 px-4 py-3 text-sm font-bold hover:bg-white/20"
+                >
+                  Edit
                 </button>
               )}
               {phase === "asking" ? (
@@ -616,6 +667,18 @@ export default function AnswerCardsGame({
           </div>
         )}
       </div>
+
+      {panel === "guide" && <AnswerCardsGuide onClose={() => setPanel(null)} />}
+      {panel === "edit" && (
+        <AnswerCardsEditor
+          title={title}
+          questions={available}
+          max={QUIZ_COUNT}
+          at={phase === "asking" || phase === "revealed" ? qi : undefined}
+          onChange={saveQuestions}
+          onClose={() => setPanel(null)}
+        />
+      )}
     </div>,
     document.body,
   );
