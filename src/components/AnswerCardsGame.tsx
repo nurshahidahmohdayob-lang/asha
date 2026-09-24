@@ -80,35 +80,39 @@ export default function AnswerCardsGame({
     onSaveQuestions?.(qs);
   };
 
-  /** Write the questions from the plan. Asked for on opening, and again if the
-   *  teacher wants more than the lesson has. */
-  const writeQuiz = (count: number) => {
-    if (!onWriteQuiz) return;
+  /** Write the questions from the plan, and hand back what there is to ask. */
+  const writeQuiz = async (count: number): Promise<QuizQuestion[]> => {
+    if (!onWriteQuiz) return available;
     setWriting(true);
     setWriteFailed(null);
-    onWriteQuiz(count)
-      .then((qs) => {
-        if (qs.length) setWritten(qs);
-        else setWriteFailed("No questions came back. Try again in a moment.");
-      })
-      .catch((err: unknown) =>
-        setWriteFailed((err as Error)?.message || String(err)),
-      )
-      .finally(() => setWriting(false));
+    try {
+      const qs = await onWriteQuiz(count);
+      if (qs.length) {
+        setWritten(qs);
+        return qs;
+      }
+      setWriteFailed("No questions came back. Try again in a moment.");
+      return available;
+    } catch (err: unknown) {
+      setWriteFailed((err as Error)?.message || String(err));
+      return available;
+    } finally {
+      setWriting(false);
+    }
   };
 
-  /* A lesson short of questions is filled out on opening, not only an empty
-     one: a set of three was three, game after game, because nothing asked for
-     more. What comes back is added to what is there, so a question the
-     teacher has reworded stays as they wrote it. */
-  const askedRef = useRef(false);
-  useEffect(() => {
-    if (stored.length >= QUIZ_COUNT || !onWriteQuiz || askedRef.current) return;
-    askedRef.current = true;
-    writeQuiz(QUIZ_COUNT);
-    // Only on opening; asking for more is a deliberate press afterwards.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stored.length, onWriteQuiz]);
+  /* Start is the moment the questions are wanted, so it is the moment they
+     are written: a lesson short of a full set is filled out from the plan
+     when the teacher presses it, rather than on the way in. What comes back
+     is added behind what is there, so a question they have reworded stays as
+     they wrote it. */
+  const start = async () => {
+    const enough = await (available.length < QUIZ_COUNT && onWriteQuiz && !writing
+      ? writeQuiz(QUIZ_COUNT)
+      : Promise.resolve(available));
+    if (!enough.length) return;
+    setPhase("asking");
+  };
 
   const [classSize, setClassSize] = useState(20);
   const [qi, setQi] = useState(0);
@@ -369,116 +373,111 @@ export default function AnswerCardsGame({
               to the second.
             </p>
 
-            {rounds.length === 0 ? (
-              <>
-                <p className="rounded-2xl bg-white/10 p-4 text-[13px] text-white/80">
-                  {writing ? (
-                    <>Writing the questions from your lesson plan…</>
-                  ) : writeFailed ? (
-                    <>The questions could not be written: {writeFailed}</>
-                  ) : (
-                    <>This lesson has no questions to ask yet.</>
-                  )}
-                </p>
-                {onSaveQuestions && !writing && (
+            {/* What Start is going to do, said before it is pressed. */}
+            <p className="text-[13px] text-white/60">
+              {writing ? (
+                <>Writing the questions from your lesson plan…</>
+              ) : writeFailed ? (
+                <>The questions could not be written: {writeFailed}</>
+              ) : rounds.length >= QUIZ_COUNT ? (
+                <>
+                  <b className="text-white">{rounds.length} questions</b> ready — press Edit
+                  questions to change them or add your own.
+                </>
+              ) : onWriteQuiz ? (
+                <>
+                  Press Start and whatever this lesson is short of is written from your plan —{" "}
+                  <b className="text-white">up to {QUIZ_COUNT} questions</b>
+                  {rounds.length > 0 ? `, behind the ${rounds.length} it already has` : ""}. You
+                  can add more of your own at any time.
+                </>
+              ) : (
+                <>
+                  <b className="text-white">{rounds.length}</b> question
+                  {rounds.length === 1 ? "" : "s"} ready.
+                </>
+              )}
+            </p>
+
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-wider text-[#FACC15]">
+                How many cards
+              </p>
+              <div className="mt-2 flex flex-wrap justify-center gap-2">
+                {CARD_COUNTS.map((c) => (
                   <button
-                    onClick={() => setPanel("edit")}
-                    className="mx-auto block rounded-xl bg-white/10 px-4 py-3 text-sm font-bold hover:bg-white/20"
+                    key={c}
+                    onClick={() => setClassSize(c)}
+                    className={`rounded-lg px-4 py-2 text-sm font-bold ${
+                      classSize === c
+                        ? "bg-[#FACC15] text-[#064E3B]"
+                        : "bg-white/10 hover:bg-white/20"
+                    }`}
                   >
-                    Write the questions yourself
+                    {c}
                   </button>
+                ))}
+              </div>
+            </div>
+
+            {relayOn && (
+              <div className="mx-auto flex max-w-md items-center gap-4 rounded-2xl bg-white/10 p-4 text-left">
+                {phoneQr && (
+                  <img
+                    src={phoneQr}
+                    alt="Scan to use your phone"
+                    className="h-28 w-28 shrink-0 rounded-lg bg-white p-1.5"
+                  />
                 )}
-              </>
-            ) : (
-              <>
-                {writing && (
-                  <p className="text-[12px] text-white/60">
-                    Writing {Math.max(QUIZ_COUNT - rounds.length, 1)} more question
-                    {QUIZ_COUNT - rounds.length === 1 ? "" : "s"} from your lesson plan… you can
-                    start without waiting.
+                <div className="min-w-0 text-[13px] text-white/80">
+                  <p className="font-bold text-white">Scan the room with your phone</p>
+                  <p className="mt-1">
+                    Point your phone&rsquo;s camera at this code and open
+                    the link. The question stays on this screen; the phone
+                    only reads the cards.
                   </p>
-                )}
-
-                <div>
-                  <p className="text-[11px] font-black uppercase tracking-wider text-[#FACC15]">
-                    How many cards
+                  <p className="mt-2 flex items-center gap-1.5 text-[12px]">
+                    <span
+                      className={`h-2 w-2 rounded-full ${
+                        phoneLive ? "bg-[#FACC15]" : "bg-white/30"
+                      }`}
+                    />
+                    {phoneLive ? "Phone connected" : "No phone yet"} · room {room}
                   </p>
-                  <div className="mt-2 flex flex-wrap justify-center gap-2">
-                    {CARD_COUNTS.map((c) => (
-                      <button
-                        key={c}
-                        onClick={() => setClassSize(c)}
-                        className={`rounded-lg px-4 py-2 text-sm font-bold ${
-                          classSize === c
-                            ? "bg-[#FACC15] text-[#064E3B]"
-                            : "bg-white/10 hover:bg-white/20"
-                        }`}
-                      >
-                        {c}
-                      </button>
-                    ))}
-                  </div>
                 </div>
-
-                {relayOn && (
-                  <div className="mx-auto flex max-w-md items-center gap-4 rounded-2xl bg-white/10 p-4 text-left">
-                    {phoneQr && (
-                      <img
-                        src={phoneQr}
-                        alt="Scan to use your phone"
-                        className="h-28 w-28 shrink-0 rounded-lg bg-white p-1.5"
-                      />
-                    )}
-                    <div className="min-w-0 text-[13px] text-white/80">
-                      <p className="font-bold text-white">Scan the room with your phone</p>
-                      <p className="mt-1">
-                        Point your phone&rsquo;s camera at this code and open
-                        the link. The question stays on this screen; the phone
-                        only reads the cards.
-                      </p>
-                      <p className="mt-2 flex items-center gap-1.5 text-[12px]">
-                        <span
-                          className={`h-2 w-2 rounded-full ${
-                            phoneLive ? "bg-[#FACC15]" : "bg-white/30"
-                          }`}
-                        />
-                        {phoneLive ? "Phone connected" : "No phone yet"} · room {room}
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex flex-wrap items-center justify-center gap-3">
-                  <button
-                    onClick={() => void printCards()}
-                    className="rounded-xl bg-white/10 px-4 py-3 text-sm font-bold hover:bg-white/20"
-                  >
-                    Print cards 1–{classSize}
-                  </button>
-                  <button
-                    onClick={() => setPanel("guide")}
-                    className="rounded-xl bg-white/10 px-4 py-3 text-sm font-bold hover:bg-white/20"
-                  >
-                    How it works
-                  </button>
-                  {onSaveQuestions && (
-                    <button
-                      onClick={() => setPanel("edit")}
-                      title="Reword the questions, or mark different answers"
-                      className="rounded-xl bg-white/10 px-4 py-3 text-sm font-bold hover:bg-white/20"
-                    >
-                      Edit questions
-                    </button>
-                  )}
-                  <button
-                    onClick={() => setPhase("asking")}
-                    className="rounded-xl bg-[#FACC15] px-6 py-3 text-base font-black text-[#064E3B] hover:bg-yellow-300"
-                  >
-                    Start · {rounds.length} question{rounds.length === 1 ? "" : "s"}
-                  </button>
-                </div>
-              </>
+              </div>
             )}
+
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                onClick={() => void printCards()}
+                className="rounded-xl bg-white/10 px-4 py-3 text-sm font-bold hover:bg-white/20"
+              >
+                Print cards 1–{classSize}
+              </button>
+              <button
+                onClick={() => setPanel("guide")}
+                className="rounded-xl bg-white/10 px-4 py-3 text-sm font-bold hover:bg-white/20"
+              >
+                How it works
+              </button>
+              {onSaveQuestions && (
+                <button
+                  onClick={() => setPanel("edit")}
+                  title="Reword the questions, or mark different answers"
+                  className="rounded-xl bg-white/10 px-4 py-3 text-sm font-bold hover:bg-white/20"
+                >
+                  Edit questions
+                </button>
+              )}
+              <button
+                onClick={() => void start()}
+                disabled={writing || (!rounds.length && !onWriteQuiz)}
+                className="rounded-xl bg-[#FACC15] px-8 py-3 text-base font-black text-[#064E3B] hover:bg-yellow-300 disabled:opacity-60"
+              >
+                {writing ? "Writing the questions…" : "Start"}
+              </button>
+            </div>
             {note && <p className="text-[12px] text-white/60">{note}</p>}
           </div>
         )}

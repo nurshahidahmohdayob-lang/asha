@@ -354,10 +354,10 @@ const SLIDES: { title: string; render: () => ReactNode }[] = [
               The questions are saved into the lesson itself, so the cards ask them the next time
               this week is opened, on whichever device the plan is opened on.
             </Point>
-            <Point lead="A short quiz is filled out for you">
-              A lesson built with three questions is topped up to ten from the plan the first time
-              its cards are opened — your own wording stays first, and you can start while the
-              rest are written.
+            <Point lead="Start writes whatever the lesson is short of">
+              A lesson built with three questions is filled out to ten from the plan when you
+              press Start, the first time — your own wording stays first, and the written ones
+              go behind it. After that the set is yours.
             </Point>
             <Point lead="A question with no words is not asked">
               Nor is one with fewer than two options. The editor says so while you type.
@@ -396,7 +396,7 @@ const SLIDES: { title: string; render: () => ReactNode }[] = [
             ],
             [
               "There are only a few questions",
-              "A short quiz is filled out to ten from the plan the first time the cards are opened. After that the set is yours: press Edit questions and add your own.",
+              "Press Start: a short quiz is filled out to ten from the lesson plan the first time, with your own questions kept in front. After that the set is yours — press Edit questions to add more.",
             ],
             [
               "Children can see each other's answers",
