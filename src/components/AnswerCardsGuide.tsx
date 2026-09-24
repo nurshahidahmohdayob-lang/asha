@@ -282,12 +282,13 @@ const SLIDES: { title: string; render: () => ReactNode }[] = [
     render: () => (
       <Slide title="The lesson, step by step" tag="about 15 minutes">
         <ol className="grid gap-x-10 gap-y-4 sm:grid-cols-2">
-          <Step n={1} lead="Open the week and press Answer Cards">
-            In your lesson plan, on the row for the week you are teaching, the yellow{" "}
-            <b className="text-white">Answer Cards</b> button sits beside Rebuild and the
-            worksheet buttons. It appears once that week&rsquo;s lesson has been built, because
-            the cards ask that lesson&rsquo;s questions. Pressing it fills the screen with the
-            game, the week&rsquo;s topic and class along the top — put it on the projector.
+          <Step n={1} lead="Project the lesson, then press Answer Cards">
+            The cards ask the lesson&rsquo;s own questions, so the lesson has to exist first. On
+            the week&rsquo;s row in your lesson plan press{" "}
+            <b className="text-white">Project Lesson</b>; once it has built, the yellow{" "}
+            <b className="text-white">Answer Cards</b> button appears beside it. One week&rsquo;s
+            lesson is loaded at a time, so it sits on the week you last projected. Pressing it
+            fills the screen with the game — put that on the projector.
           </Step>
           <Step n={2} lead="Choose how many cards are out">
             20, 30 or 40 — enough to cover the register in front of you.
@@ -382,6 +383,10 @@ const SLIDES: { title: string; render: () => ReactNode }[] = [
       <Slide title="When something goes wrong">
         <dl className="grid gap-x-10 gap-y-0 sm:grid-cols-2">
           {[
+            [
+              "There is no Answer Cards button on the week",
+              "The week's lesson has not been built yet. Press Project Lesson on that row and the yellow Answer Cards button appears beside it — the cards ask that lesson's questions, so there is nothing to ask until it exists.",
+            ],
             [
               "The camera was blocked",
               "Allow it from the icon beside the address bar, then press the camera button again. iPhone: Settings, Safari, Camera, Allow. Android: the icon beside the address, Camera, Allow.",
