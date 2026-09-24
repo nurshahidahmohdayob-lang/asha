@@ -1,7 +1,7 @@
 /* ═══════════════ Answer cards the whole class can hold up ═════════════
-   One printed card per child. A QR code in the middle says which child it
+   One printed card per student. A QR code in the middle says which student it
    is; the four edges are lettered A, B, C and D, and the letter that ends
-   up at the top is the answer. A child turns the card rather than owning a
+   up at the top is the answer. A student turns the card rather than owning a
    device, and one camera reads the whole room.
 
    The letters are laid out so that exactly one of them reads the right way
@@ -70,8 +70,8 @@ export type CardSheetMeta = {
 
 /**
  * The printable sheet. The cards carry a number and nobody's name, so one set
- * serves every class: card 3 is the third child on whichever register is
- * open, and the screen shows that child's name when the card is read.
+ * serves every class: card 3 is the third student in whichever class is
+ * playing, and the screen counts that number in as the card is read.
  */
 export async function buildCardsHtml(count: number, meta: CardSheetMeta): Promise<string> {
   const numbers = Array.from({ length: count }, (_, i) => i + 1);
@@ -163,10 +163,10 @@ export async function buildCardsHtml(count: number, meta: CardSheetMeta): Promis
   </header>
   <div class="how">
     <b>How they work.</b> One card to a sheet of A4, so a phone can read it across the
-    room &mdash; no cutting. <b>Card 1 goes to the first child
-    on the register, card 2 to the second</b>, and so on — the same cards work for every
-    class, and the screen shows each child's name when their card is read. To answer, a
-    child turns the card so that <b>the letter they want is at the top, reading the right way
+    room &mdash; no cutting. <b>Card 1 goes to the first student, card 2 to the
+    second</b>, and so on — the same cards work for every class, as long as they go out in
+    the same order each lesson. To answer, a student turns the card so that <b>the letter
+    they want is at the top, reading the right way
     up</b>, then holds it in the air. Card stock, or a glued-on piece of card, lasts the year.
   </div>
   <div class="sheet">${cards}</div>
@@ -177,7 +177,7 @@ export async function buildCardsHtml(count: number, meta: CardSheetMeta): Promis
 /* ─────────────────── Reading a frame full of cards ───────────────────
    A QR reader finds one code per image and a classroom holds twenty, so the
    frame is read whole and then in nine overlapping tiles. The whole-frame
-   pass is for a phone held close to one child, where a single card fills the
+   pass is for a phone held close to one student, where a single card fills the
    picture and every tile would see only part of it. Shared by the class
    screen's own camera and the phone, so both read a room the same way. */
 export function readCardsInFrame(

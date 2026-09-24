@@ -1,5 +1,5 @@
 /* ══════════════ The whole class answers at once ══════════════════════
-   Every child holds up a printed card, turned so their answer is the letter
+   Every student holds up a printed card, turned so their answer is the letter
    at the top. One camera reads the room: the teacher's phone, or this
    device's own camera if no phone joins. Nobody needs a device but the
    teacher, and nobody can copy — the letters are small and the answers stay
@@ -273,7 +273,7 @@ export default function AnswerCardsGame({
           const found: Record<number, number> = {};
           for (const [k, letter] of Object.entries(readCardsInFrame(ctx, w, h, jsQR)))
             if (Number(k) <= classSize) found[Number(k)] = letter;
-          // A child may turn the card again; the latest reading is the answer.
+          // A student may turn the card again; the latest reading is the answer.
           if (Object.keys(found).length && phaseRef.current === "asking")
             setAnswers((a) => ({ ...a, ...found }));
         }
@@ -361,7 +361,7 @@ export default function AnswerCardsGame({
           <div className="mx-auto w-full max-w-2xl space-y-5 text-center">
             <h2 className="text-3xl font-black">Answer cards</h2>
             <p className="text-white/75">
-              Every child holds up their card, turned so their answer is the
+              Every student holds up their card, turned so their answer is the
               letter at the top. You sweep the room with your phone&rsquo;s
               camera, or this device&rsquo;s, and the answers tick in. Nobody
               can copy: the letters are small and the answers stay hidden until
@@ -369,8 +369,8 @@ export default function AnswerCardsGame({
             </p>
             <p className="text-[13px] text-white/60">
               The cards are numbered, so one printed set serves every class:{" "}
-              <b className="text-white">card 1 goes to the first child on the register</b>, card 2
-              to the second.
+              <b className="text-white">card 1 goes to the first student</b>, card 2 to the
+              second — the same order every lesson.
             </p>
 
             {/* What Start is going to do, said before it is pressed. */}

@@ -196,8 +196,8 @@ const SLIDES: { title: string; render: () => ReactNode }[] = [
           The whole class answers at once, on paper
         </h2>
         <p className="mx-auto max-w-2xl text-[clamp(1rem,1.6vw,1.2rem)] leading-relaxed text-white/75">
-          The lesson&rsquo;s own questions, one printed card per child, and your phone reads the
-          room — no pupil devices, no logins, nothing to collect in.
+          The lesson&rsquo;s own questions, one printed card per student, and your phone reads the
+          room — no student devices, no logins, nothing to collect in.
         </p>
         <p className="text-[13px] text-white/45">
           Arrow keys or the buttons below to move · Esc closes · Print gives you the whole deck
@@ -218,15 +218,16 @@ const SLIDES: { title: string; render: () => ReactNode }[] = [
                 lets the code be read from the back of the room, so there is nothing to cut out.
                 Card stock, or paper glued to card, lasts the year.
               </Step>
-              <Step n={2} lead="Hand them out in register order">
+              <Step n={2} lead="Hand them out in the same order every time">
                 The cards carry a number, not a name, so one printed set serves every class: card
-                1 goes to the first child on the register, card 2 to the second. Keep the spare
-                numbers for a new child or a lost card.
+                1 goes to the first student, card 2 to the second. Keep the spare numbers for a
+                new student or a lost card.
               </Step>
             </ol>
             <p className="rounded-r-xl border-l-2 border-[#FACC15] bg-white/5 px-4 py-3 text-[13.5px]">
-              The one thing to get right: if the cards go out in a different order from the
-              register, the marks on the board belong to the wrong children.
+              The one thing to get right: card 1 has to reach the same student every lesson. Hand
+              them out in a different order and the marks on the board belong to the wrong
+              students.
             </p>
           </div>
           <Shot
@@ -239,16 +240,16 @@ const SLIDES: { title: string; render: () => ReactNode }[] = [
     ),
   },
   {
-    title: "How a child answers",
+    title: "How a student answers",
     render: () => (
-      <Slide title="How a child answers" tag="turn, don't tick">
+      <Slide title="How a student answers" tag="turn, don't tick">
         <div className="flex h-full flex-col gap-5">
           <p className="max-w-3xl text-[15px] leading-relaxed text-white/75">
             All four letters are on every card, one to an edge.{" "}
             <b className="text-white">
               The answer is whichever letter is at the top, reading the right way up
             </b>{" "}
-            — so a child answers by turning the card, then holding it in the air. A card held a
+            — so a student answers by turning the card, then holding it in the air. A card held a
             little crookedly still reads.
           </p>
           <div className="flex flex-wrap items-center gap-8">
@@ -291,7 +292,7 @@ const SLIDES: { title: string; render: () => ReactNode }[] = [
             fills the screen with the game — put that on the projector.
           </Step>
           <Step n={2} lead="Choose how many cards are out">
-            20, 30 or 40 — enough to cover the register in front of you.
+            20, 30 or 40 — enough for the class in front of you.
           </Step>
           <Step n={3} lead="Link your phone, or use this device's camera">
             Point your phone&rsquo;s camera at the QR code and open the link. The dot turns yellow
@@ -303,7 +304,7 @@ const SLIDES: { title: string; render: () => ReactNode }[] = [
           </Step>
           <Step n={5} lead="Sweep the room">
             Walk the aisles slowly with the phone held up, a few rows at a time. Each card&rsquo;s
-            latest reading counts, so a child who changes their mind simply turns it again.
+            latest reading counts, so a student who changes their mind simply turns it again.
           </Step>
           <Step n={6} lead="Show the answer, then move on">
             The right option lights, the readings freeze, and your line is read out underneath.
@@ -330,7 +331,7 @@ const SLIDES: { title: string; render: () => ReactNode }[] = [
             <Point lead="The reveal freezes it">
               Whatever is showing when you press Show the answer is what is banked.
             </Point>
-            <Point lead="Nothing about the children is saved">
+            <Point lead="Nothing about the students is saved">
               Readings go from the camera to this screen and are gone; the marks live only while
               the game is open. Note the board before you close it if you want a record.
             </Point>
@@ -396,8 +397,8 @@ const SLIDES: { title: string; render: () => ReactNode }[] = [
               "Hold it higher, flat and still, with no fingers over the code; stand a metre or two closer; turn away from a light reflecting off the paper. A creased card reads badly — swap it for a spare.",
             ],
             [
-              "The marks are against the wrong children",
-              "The cards are out of register order. Check card 1 is with the first child on the register.",
+              "The marks are against the wrong students",
+              "The cards went out in a different order this lesson. Check card 1 is with the student it belongs to, and the rest follow in number order.",
             ],
             [
               "The phone will not connect",
@@ -408,7 +409,7 @@ const SLIDES: { title: string; render: () => ReactNode }[] = [
               "Press Start: a short quiz is filled out to ten from the lesson plan the first time, with your own questions kept in front. After that the set is yours — press Edit questions to add more.",
             ],
             [
-              "Children can see each other's answers",
+              "Students can see each other's answers",
               "Ask for cards held high and flat rather than tilted towards a neighbour. The count in the bar tells you everyone has answered without anyone's answer being on show.",
             ],
           ].map(([problem, fix]) => (
@@ -430,7 +431,7 @@ const SLIDES: { title: string; render: () => ReactNode }[] = [
         </h2>
         <ol className="space-y-4 text-left">
           {[
-            "Print the set once and hand it out in register order.",
+            "Print the set once and hand it out in the same order every time.",
             "Read the question; the class turns the card so their letter is at the top.",
             "Sweep the room, show the answer, move on.",
           ].map((line, i) => (
