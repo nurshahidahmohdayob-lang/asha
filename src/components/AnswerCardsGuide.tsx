@@ -282,8 +282,12 @@ const SLIDES: { title: string; render: () => ReactNode }[] = [
     render: () => (
       <Slide title="The lesson, step by step" tag="about 15 minutes">
         <ol className="grid gap-x-10 gap-y-4 sm:grid-cols-2">
-          <Step n={1} lead="Open the week and press Cards">
-            The game fills the screen and names the lesson in the bar. Project it.
+          <Step n={1} lead="Open the week and press Answer Cards">
+            In your lesson plan, on the row for the week you are teaching, the yellow{" "}
+            <b className="text-white">Answer Cards</b> button sits beside Rebuild and the
+            worksheet buttons. It appears once that week&rsquo;s lesson has been built, because
+            the cards ask that lesson&rsquo;s questions. Pressing it fills the screen with the
+            game, the week&rsquo;s topic and class along the top — put it on the projector.
           </Step>
           <Step n={2} lead="Choose how many cards are out">
             20, 30 or 40 — enough to cover the register in front of you.
