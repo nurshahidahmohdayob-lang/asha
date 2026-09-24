@@ -42,6 +42,75 @@ async function googleCerts(): Promise<Record<string, string>> {
   return keys;
 }
 
+/* ── Telling the browsers something changed ───────────────────────────────
+   Watching used to be polling: every open tab asked every table for its
+   change markers every fifteen seconds. Correct, and ruinously expensive —
+   roughly 158,000 function calls a day, which is what exhausted the compute
+   allowance. Nearly all of them found nothing had changed.
+
+   So the server says so instead. After a write it posts one line to a
+   Supabase broadcast channel and the browsers watching that table re-read.
+   An idle tab now costs nothing at all.
+
+   Broadcast carries no rows and touches no table, which matters because the
+   channel is readable by anyone holding the anon key — that key ships in the
+   browser. The payload is the table's NAME and nothing else: no ids, no
+   owners, no content. A listener learns "submitted_plans changed" and must
+   still ask the server, with its own token, to find out what.
+
+   Plain HTTP on purpose. A serverless function cannot hold a websocket open,
+   but it can make one POST before it exits. */
+
+export const CHANGE_TOPIC = "zera-data-changes";
+export const CHANGE_EVENT = "changed";
+
+function makeAnnouncer(): (table: string) => Promise<void> {
+  const url = process.env.SUPABASE_URL || "";
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (!url || !key) return async () => {};
+
+  return async (table: string) => {
+    /* AWAITED, not fired and forgotten.
+
+       The instinct is to let this go and answer the caller immediately, and
+       on a long-lived server that would be right. On a serverless one it is
+       a bug: the instance can be frozen the moment it responds, and a fetch
+       still in flight then never leaves — the notice would be lost precisely
+       when the write had succeeded, intermittently and invisibly.
+
+       The cost is one small POST, and only on writes, which are the rare
+       path — it is reads this whole change exists to get rid of.
+
+       Bounded, so trouble at the notification service can never hold up a
+       teacher's save. Past the deadline the write has already happened and
+       the periodic read will carry the change instead: later, but never
+       lost. */
+    const stop = new AbortController();
+    const deadline = setTimeout(() => stop.abort(), 1500);
+    try {
+      await fetch(`${url}/realtime/v1/api/broadcast`, {
+        method: "POST",
+        headers: {
+          apikey: key,
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messages: [{ topic: CHANGE_TOPIC, event: CHANGE_EVENT, payload: { table } }],
+        }),
+        signal: stop.signal,
+      });
+    } catch (err: any) {
+      // Worth knowing about, never worth failing the write over.
+      console.warn("[data-api] change notice not sent:", err?.message || err);
+    } finally {
+      clearTimeout(deadline);
+    }
+  };
+}
+
+const announce = makeAnnouncer();
+
 export type Caller = { uid: string; email: string };
 
 /** A verified caller plus the roles read from the database. */
@@ -185,6 +254,11 @@ const ADMIN_EMAILS = new Set([
 const isAdminEmail = (email: string): boolean =>
   ADMIN_EMAILS.has(email.trim().toLowerCase());
 
+/** Roles, held for a moment so a burst of calls is one database read rather
+ *  than one each. Per warm instance; a cold start simply reads again. */
+const ROLE_TTL_MS = 60_000;
+const roleCache = new Map<string, { roles: string[]; until: number }>();
+
 export function mountDataApi(app: Express, projectId: string) {
   // Absent config is not an error — the app runs on Firestore until the
   // switch is flipped, and these routes simply say so if called. Which
@@ -211,16 +285,33 @@ export function mountDataApi(app: Express, projectId: string) {
 
     // Roles come from the database, never from the request — a caller cannot
     // promote themselves by claiming to be an admin.
+    //
+    // Read on EVERY request, this was a second round trip to the database
+    // behind every single call, including the ones that turned out to have
+    // nothing to fetch. Held briefly instead: roles change a couple of times
+    // a term, and the cost of being a minute out of date is that someone
+    // just promoted waits a minute, or someone just demoted keeps a power a
+    // minute longer. Short enough to be a non-event, long enough that a
+    // busy tab stops asking again and again.
     let roles: string[] = ["educator"];
     if (driver) {
-      const row = await driver.get("users", "uid", caller.uid);
-      // MySQL hands back a JSON column parsed; a string would mean an older
-      // server or a hand-written row, so parse defensively rather than trust.
-      let stored = row?.roles;
-      if (typeof stored === "string") {
-        try { stored = JSON.parse(stored); } catch { stored = null; }
+      const now = Date.now();
+      const held = roleCache.get(caller.uid);
+      if (held && held.until > now) {
+        roles = held.roles;
+      } else {
+        const row = await driver.get("users", "uid", caller.uid);
+        // MySQL hands back a JSON column parsed; a string would mean an older
+        // server or a hand-written row, so parse defensively rather than trust.
+        let stored = row?.roles;
+        if (typeof stored === "string") {
+          try { stored = JSON.parse(stored); } catch { stored = null; }
+        }
+        if (Array.isArray(stored) && stored.length) roles = stored;
+        roleCache.set(caller.uid, { roles, until: now + ROLE_TTL_MS });
+        // A warm instance serves one school; this only bounds a slow leak.
+        if (roleCache.size > 500) roleCache.clear();
       }
-      if (Array.isArray(stored) && stored.length) roles = stored;
     }
     return { ...caller, roles };
   }
@@ -443,6 +534,7 @@ export function mountDataApi(app: Express, projectId: string) {
       if (rule.owner && !mayWriteAll) record[rule.owner] = caller.uid;
 
       await driver!.upsert(table, idCol, record);
+      await announce(table);
       res.json({ ok: true, id });
     } catch (err: any) {
       send(res, err);
@@ -470,6 +562,7 @@ export function mountDataApi(app: Express, projectId: string) {
       const patched = vetFields(rule, caller, id, changes || {});
       if (await driver!.supportsStamps(table)) patched.updated_at = Date.now();
       await driver!.update(table, idCol, id, patched, pinOwner);
+      await announce(table);
       res.json({ ok: true });
     } catch (err: any) {
       send(res, err);
@@ -497,6 +590,7 @@ export function mountDataApi(app: Express, projectId: string) {
           ? ([rule.owner, caller.uid] as [string, unknown])
           : undefined;
       await driver!.remove(table, idCol, id, pinOwner);
+      await announce(table);
       res.json({ ok: true });
     } catch (err: any) {
       send(res, err);

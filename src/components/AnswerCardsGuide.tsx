@@ -6,8 +6,8 @@
    Every slide is in the DOM the whole time; only the one being shown is on
    screen. Printing lets the rest back in, a slide to a page, so the deck and
    the handout are the same thing. */
-import { useEffect, useState, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, Printer, X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ChevronLeft, ChevronRight, Download, Printer, X } from "lucide-react";
 
 const TURNS = [
   { letter: "A", turn: "No turn", rest: "as it is printed." },
@@ -451,9 +451,159 @@ const SLIDES: { title: string; render: () => ReactNode }[] = [
   },
 ];
 
+/* ─────────────────── The deck as a file of its own ────────────────────
+   Printing the live deck printed nothing worth having: it sits in a fixed,
+   scrolling overlay inside the app, and a browser prints such a thing as one
+   clipped page. So the deck is written out as a page of its own — the real
+   slides, the app's own stylesheet, and the screenshots carried inside the
+   file as data — which prints a slide to a sheet and can be sent to a
+   teacher who has no login. */
+
+/** Everything the app's own stylesheets say, as far as they can be read. A
+ *  sheet loaded from another origin (the font service) refuses, and the file
+ *  asks for those fonts by link instead. */
+function appCss(): string {
+  let out = "";
+  for (const sheet of Array.from(document.styleSheets)) {
+    try {
+      for (const rule of Array.from((sheet as CSSStyleSheet).cssRules)) out += rule.cssText + "\n";
+    } catch {
+      /* another origin — nothing to read, and nothing that matters is lost */
+    }
+  }
+  return out;
+}
+
+/** The pictures, carried inside the file: a guide mailed to a teacher has to
+ *  show the screens it is talking about without asking the school's site for
+ *  them. */
+async function inlineImages(el: HTMLElement): Promise<void> {
+  await Promise.all(
+    Array.from(el.querySelectorAll("img")).map(async (img) => {
+      const src = img.getAttribute("src");
+      if (!src || src.startsWith("data:")) return;
+      try {
+        const blob = await (await fetch(src)).blob();
+        const data = await new Promise<string>((done, fail) => {
+          const reader = new FileReader();
+          reader.onload = () => done(String(reader.result));
+          reader.onerror = () => fail(reader.error);
+          reader.readAsDataURL(blob);
+        });
+        img.setAttribute("src", data);
+        img.removeAttribute("loading");
+      } catch {
+        // Left pointing at the school's site: still right, just not offline.
+      }
+    }),
+  );
+}
+
+const FILE_NAME = "How Answer Cards work";
+
+async function buildFile(deck: HTMLElement): Promise<string> {
+  const holder = document.createElement("div");
+  for (const slide of Array.from(deck.querySelectorAll(".cards-guide-slide"))) {
+    const sheet = document.createElement("div");
+    sheet.className = "cards-guide-sheet";
+    const clone = slide.cloneNode(true) as HTMLElement;
+    clone.classList.remove("hidden");
+    clone.removeAttribute("aria-hidden");
+    sheet.appendChild(clone);
+    holder.appendChild(sheet);
+  }
+  await inlineImages(holder);
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${FILE_NAME}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap">
+<style>${appCss()}</style>
+<style>
+  html, body { margin: 0; background: #053D2E; }
+  body { font-family: "DM Sans", system-ui, -apple-system, sans-serif; color: #fff; }
+  /* One slide to a screen, and one to a sheet of paper. */
+  .cards-guide-sheet {
+    display: flex; align-items: stretch;
+    width: 100%; max-width: 1200px; margin: 0 auto;
+    min-height: 86vh; padding: 34px 28px;
+    border-bottom: 1px solid rgba(255,255,255,.08);
+  }
+  .cards-guide-sheet > * { width: 100%; }
+  .cards-guide-chrome { display: none !important; }
+  @page { size: A4 landscape; margin: 10mm; }
+  @media print {
+    .cards-guide-sheet {
+      min-height: 0; height: auto; padding: 0 0 8mm;
+      border: 0; break-after: page; page-break-after: always;
+    }
+    .cards-guide-sheet:last-child { break-after: auto; page-break-after: auto; }
+  }
+</style>
+</head>
+<body>${holder.innerHTML}</body>
+</html>`;
+}
+
 export default function AnswerCardsGuide({ onClose }: { onClose: () => void }) {
   const n = SLIDES.length;
   const [i, setI] = useState(0);
+  const deckRef = useRef<HTMLDivElement | null>(null);
+  const [making, setMaking] = useState<"print" | "download" | null>(null);
+
+  /** Saved as a page of its own, to keep or to send to the rest of the staff. */
+  const download = async () => {
+    const deck = deckRef.current;
+    if (!deck || making) return;
+    setMaking("download");
+    try {
+      const html = await buildFile(deck);
+      const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${FILE_NAME}.html`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } finally {
+      setMaking(null);
+    }
+  };
+
+  /** Printed from that same page, where a browser can lay it out — the deck
+   *  itself sits in a fixed overlay, which prints as one clipped sheet. The
+   *  window is opened on the press, while the click still counts as one, and
+   *  filled when the file is ready. */
+  const print = async () => {
+    const deck = deckRef.current;
+    if (!deck || making) return;
+    const out = window.open("", "_blank");
+    setMaking("print");
+    try {
+      const html = await buildFile(deck);
+      if (!out) {
+        // A blocked pop-up still gets the guide: it saves instead.
+        const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${FILE_NAME}.html`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        return;
+      }
+      out.document.write(html);
+      out.document.close();
+      // The pictures and the fonts have to land before it is worth printing.
+      out.addEventListener("load", () => out.print());
+      window.setTimeout(() => out.print(), 1200);
+    } finally {
+      setMaking(null);
+    }
+  };
   const back = () => setI((c) => Math.max(0, c - 1));
   const on = () => setI((c) => Math.min(n - 1, c + 1));
 
@@ -477,29 +627,29 @@ export default function AnswerCardsGuide({ onClose }: { onClose: () => void }) {
   }, [n, onClose]);
 
   return (
-    <div className="absolute inset-0 z-[10] flex flex-col bg-[#053D2E] print:static print:h-auto print:bg-white print:text-black">
-      {/* Printing wants the deck as a handout: every slide back on the page,
-          one to a sheet, and none of the furniture that moves between them. */}
-      <style>{`
-        @media print {
-          .cards-guide-slide { display: block !important; break-after: page; page-break-after: always; }
-          .cards-guide-slide:last-child { break-after: auto; page-break-after: auto; }
-          .cards-guide-chrome { display: none !important; }
-        }
-      `}</style>
-
+    <div className="absolute inset-0 z-[10] flex flex-col bg-[#053D2E]">
       <div className="cards-guide-chrome flex shrink-0 items-center gap-3 border-b border-white/10 px-4 py-3">
         <span className="rounded bg-white/15 px-2 py-0.5 text-[11px] font-black uppercase tracking-wider text-[#FACC15]">
           Guide
         </span>
         <p className="min-w-0 flex-1 truncate text-sm font-bold">How Answer Cards work</p>
         <button
-          onClick={() => window.print()}
-          title="Print the whole deck, a slide to a page"
-          className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm font-bold hover:bg-white/20"
+          onClick={() => void download()}
+          disabled={Boolean(making)}
+          title="Save the whole guide as a file — send it to the rest of the staff"
+          className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm font-bold hover:bg-white/20 disabled:opacity-50"
+        >
+          <Download className="h-4 w-4" />
+          {making === "download" ? "Saving…" : "Download"}
+        </button>
+        <button
+          onClick={() => void print()}
+          disabled={Boolean(making)}
+          title="Print the whole deck, a slide to a sheet"
+          className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5 text-sm font-bold hover:bg-white/20 disabled:opacity-50"
         >
           <Printer className="h-4 w-4" />
-          Print
+          {making === "print" ? "Preparing…" : "Print"}
         </button>
         <button
           onClick={onClose}
@@ -510,7 +660,7 @@ export default function AnswerCardsGuide({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-6 sm:px-8 print:overflow-visible">
+      <div ref={deckRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-6 sm:px-8">
         {SLIDES.map((s, k) => (
           <div
             key={s.title}

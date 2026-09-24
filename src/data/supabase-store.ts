@@ -196,16 +196,91 @@ const autoId = (): string => {
   return Array.from(bytes, (b) => AUTO_ID_CHARS[b % AUTO_ID_CHARS.length]).join("");
 };
 
-/** How often a watcher re-reads. There is no realtime channel here — that
- *  would need a database key in the browser, which is the whole thing this
- *  design avoids — so watching is polling, plus an immediate re-read whenever
- *  the teacher comes back to the tab.
+/** How often a watcher re-reads WITHOUT being told to.
  *
- *  A hidden tab polls not at all. Reviewers leave the queue open all day, and
- *  a background tab re-reading every 15 seconds is pure cost for something
- *  nobody is looking at; coming back to the tab refetches immediately anyway,
- *  so nothing is stale by the time it is seen. */
-const POLL_MS = 15000;
+ *  This was fifteen seconds, and it was the whole cost of the app: every open
+ *  tab asked every table it watched, four times a minute, whether anything
+ *  had changed. Almost always nothing had. Across a school that came to some
+ *  158,000 server calls a day and exhausted the compute allowance.
+ *
+ *  The server announces its own writes now (see changeChannel below), so a
+ *  screen updates the moment something happens rather than up to fifteen
+ *  seconds later — faster than before, for a fraction of the traffic. This
+ *  interval is only the safety net beneath that: if a notice is missed, or
+ *  the channel cannot be reached at all, a tab still comes right on its own.
+ *
+ *  A hidden tab reads nothing regardless, and coming back to the tab always
+ *  forces a read, so five minutes is never five minutes of staleness in
+ *  front of anybody. */
+const POLL_MS = 300_000;
+
+/* ── Being told, instead of asking ────────────────────────────────────────
+   One channel for the whole app, opened once and shared by every watcher.
+   The server posts the NAME of a table it has written to; nothing else
+   travels, because the channel is readable by anyone holding the anon key.
+   Hearing "submitted_plans changed" tells a tab to go and ask the server,
+   with its own token, what it is now allowed to see.
+
+   The client is imported lazily. It is a sizeable library and the app must
+   paint before it matters; loading it eagerly would trade compute cost for
+   a slower start, which is no trade at all. */
+
+const CHANGE_TOPIC = "zera-data-changes";
+const CHANGE_EVENT = "changed";
+
+/** Notices are collapsed before they are acted on.
+ *
+ *  A lesson plan autosaves about once a second while it is being typed into,
+ *  and every save is a write, and every write is announced. Acting on each
+ *  one would have every open tab re-reading once a second — worse than the
+ *  polling this replaces. Held for a moment instead, so a burst of saves
+ *  costs ONE read; an idle tab still costs nothing at all.
+ *
+ *  Comfortably longer than the plan editor's own 1.2s save debounce, so a
+ *  teacher typing steadily produces a steady trickle rather than a flood. */
+const NOTICE_COALESCE_MS = 2500;
+const noticePending = new Map<string, ReturnType<typeof setTimeout>>();
+
+const noticeReceived = (table: string): void => {
+  const already = noticePending.get(table);
+  if (already) clearTimeout(already);
+  noticePending.set(
+    table,
+    setTimeout(() => {
+      noticePending.delete(table);
+      announceChange(table);
+    }, NOTICE_COALESCE_MS),
+  );
+};
+
+let channelStarted = false;
+
+function startChangeChannel(): void {
+  if (channelStarted || typeof window === "undefined") return;
+  channelStarted = true;
+
+  void (async () => {
+    try {
+      const { browserSupabase, relayConfigured } = await import("../lib/browserSupabase");
+      // Without the anon key there is no channel, and the fallback read is
+      // the whole mechanism. That is a slower app, not a broken one.
+      if (!relayConfigured()) return;
+
+      browserSupabase()
+        .channel(CHANGE_TOPIC)
+        .on("broadcast", { event: CHANGE_EVENT }, (msg: any) => {
+          const table = String(msg?.payload?.table || "");
+          // Only tables this tab is actually watching do anything, and a
+          // burst of them is one read rather than one each.
+          if (table) noticeReceived(table);
+        })
+        .subscribe();
+    } catch (err) {
+      // A missing channel costs freshness, never correctness.
+      console.warn("Live updates are unavailable; falling back to periodic reads.", err);
+    }
+  })();
+}
 
 /** Watching is polling, so a change this tab just made would otherwise sit
  *  invisible until the next tick — up to POLL_MS away. Firestore reflected a
@@ -527,10 +602,12 @@ export function createSupabaseStore(getToken: TokenGetter) {
       };
 
       void tick();
+      // Opened on the first watcher and shared by all of them.
+      startChangeChannel();
       const timer = setInterval(() => void tick(), POLL_MS);
-      // Coming back to the tab refetches at once, so a tab that polled nothing
+      // Coming back to the tab refetches at once, so a tab that read nothing
       // while hidden is up to date the moment it is looked at again. Forced,
-      // because a poll already in flight was started while the tab was hidden
+      // because a read already in flight was started while the tab was hidden
       // and may have been cut short — dropping the wake behind it is how a
       // screen sits on stale rows until it is reloaded.
       const wake = () => void tick(true);
@@ -637,6 +714,7 @@ export function createSupabaseStore(getToken: TokenGetter) {
       };
 
       void tick(true);
+      startChangeChannel();
       const timer = setInterval(() => void tick(), POLL_MS);
       const wake = () => void tick(true);
       window.addEventListener("focus", wake);
