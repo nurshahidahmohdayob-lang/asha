@@ -199,8 +199,11 @@ const SLIDES: { title: string; render: () => ReactNode }[] = [
           The lesson&rsquo;s own questions, one printed card per student, and your phone reads the
           room — no student devices, no logins, nothing to collect in.
         </p>
-        <p className="text-[13px] text-white/45">
-          Arrow keys or the buttons below to move · Esc closes · Print gives you the whole deck
+        {/* How to drive the deck — true on screen, meaningless in the file it
+            writes out, which is why it carries the chrome class. */}
+        <p className="cards-guide-chrome text-[13px] text-white/45">
+          Arrow keys or the buttons below to move · Esc closes · Download gives you the whole
+          guide to send to the rest of the staff
         </p>
       </div>
     ),
@@ -527,14 +530,16 @@ async function buildFile(deck: HTMLElement): Promise<string> {
 <style>
   html, body { margin: 0; background: #053D2E; }
   body { font-family: "DM Sans", system-ui, -apple-system, sans-serif; color: #fff; }
-  /* One slide to a screen, and one to a sheet of paper. */
+  /* A slide to a block on screen, a slide to a sheet on paper. The slides
+     are built to fill a screen they no longer have, so they are let size
+     themselves here rather than being stretched into a page of empty green. */
   .cards-guide-sheet {
-    display: flex; align-items: stretch;
     width: 100%; max-width: 1200px; margin: 0 auto;
-    min-height: 86vh; padding: 34px 28px;
+    padding: 40px 28px;
     border-bottom: 1px solid rgba(255,255,255,.08);
   }
-  .cards-guide-sheet > * { width: 100%; }
+  .cards-guide-sheet > *,
+  .cards-guide-sheet > * > * { height: auto !important; width: 100%; }
   .cards-guide-chrome { display: none !important; }
   @page { size: A4 landscape; margin: 10mm; }
   @media print {
