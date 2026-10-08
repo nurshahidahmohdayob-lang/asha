@@ -63,6 +63,14 @@ async function serverError(response: Response): Promise<Error> {
     said = body.trim().slice(0, 400);
   }
   const status = `${response.status}${response.statusText ? ` ${response.statusText}` : ""}`;
+  // Vercel's own timeout page, not ours: raw platform codes tell a teacher
+  // nothing. The AI service was slow or busy — waiting a moment usually works.
+  if (response.status === 504 || /FUNCTION_INVOCATION_TIMEOUT/.test(said)) {
+    return new Error(
+      "The AI service took too long to answer — it is probably busy right now. " +
+        "Please wait a moment and try again.",
+    );
+  }
   return new Error(
     said
       ? `${said} (${status})`
@@ -4296,6 +4304,7 @@ function groqModelsFor(models: string[], neededTokens: number): string[] {
 async function groqGenerate(
   request: { contents: any; config?: any },
   model: string,
+  timeoutMs: number = GROQ_CALL_TIMEOUT_MS,
 ): Promise<{ text: string }> {
   const promptText = groqPromptText(request);
   const wantsJson = request?.config?.responseMimeType === "application/json";
@@ -4327,7 +4336,7 @@ async function groqGenerate(
   // abort we throw a "timeout" error so generateContentWithRetry treats it as
   // transient and retries / falls back instead of waiting endlessly.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GROQ_CALL_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res: Response;
   try {
     res = await fetch(GROQ_URL, {
@@ -4341,7 +4350,7 @@ async function groqGenerate(
     });
   } catch (err: any) {
     if (err?.name === "AbortError" || controller.signal.aborted) {
-      throw new Error(`Groq request timeout after ${GROQ_CALL_TIMEOUT_MS}ms (model ${model})`);
+      throw new Error(`Groq request timeout after ${timeoutMs}ms (model ${model})`);
     }
     throw err;
   } finally {
@@ -4488,6 +4497,21 @@ const RATE_LIMIT_PATIENCE_MS = 3000;
  *  indefinite queue. */
 const GROQ_CHAIN_BUDGET_MS = 25000;
 
+/** The longest one generation may take, Groq and the Gemini fallback together.
+ *
+ *  On Vercel the whole function is killed at 60s (maxDuration in api/ai/*),
+ *  and the teacher gets FUNCTION_INVOCATION_TIMEOUT instead of anything this
+ *  file can explain. A single Groq call was allowed the full 60s on its own,
+ *  the chain budget above was only checked between attempts, and the Gemini
+ *  fallback had no limit at all — so one slow reply ran straight past the
+ *  platform's cutoff. Every wait below now comes out of this one budget, with
+ *  headroom left for the handler to send the answer back. */
+const AI_REQUEST_BUDGET_MS = 50000;
+
+/** Kept back from Groq so the Gemini fallback still has time to answer when
+ *  Groq stalls, rather than being started with nothing left. */
+const GEMINI_FALLBACK_RESERVE_MS = 15000;
+
 /** A limit that will NOT clear while the teacher waits.
  *
  *  Groq reports two very different things as 429. A per-minute limit clears in
@@ -4550,16 +4574,21 @@ async function geminiFallback(
   systemInstruction: string,
   promptText: string,
   wantsJson: boolean,
+  /** When to give up (epoch ms). Without one, each call is still capped. */
+  deadline: number = Date.now() + AI_REQUEST_BUDGET_MS,
 ): Promise<string> {
   const client = gemini();
   let lastErr: any;
   for (const model of GEMINI_MODELS) {
     for (let attempt = 0; attempt < 2; attempt++) {
+      const left = deadline - Date.now();
+      if (left < 3000) throw lastErr || new Error("timeout: no time left for the Gemini fallback");
       try {
         const res: any = await client.models.generateContent({
           model,
           contents: promptText,
           config: {
+            abortSignal: AbortSignal.timeout(left),
             systemInstruction,
             ...(wantsJson ? { responseMimeType: "application/json" } : {}),
           },
@@ -4585,8 +4614,10 @@ async function geminiFallback(
           msg.includes("503") ||
           msg.includes("429") ||
           msg.includes("500") ||
-          /high demand|unavailable|overloaded|timeout/i.test(msg);
+          /high demand|unavailable|overloaded|timeout|abort/i.test(msg);
         if (!transient) break;
+        // Out of time is not worth another model: nothing would finish either.
+        if (/abort|timeout/i.test(msg) && deadline - Date.now() < 3000) throw err;
         await sleep(600 * (attempt + 1));
       }
     }
@@ -4626,14 +4657,18 @@ async function generateContentWithRetry(
   const attempts = chain.length === 1 ? Math.max(attemptsPerModel, 4) : attemptsPerModel;
 
   const startedAt = Date.now();
+  const deadline = startedAt + AI_REQUEST_BUDGET_MS;
+  const groqDeadline = deadline - GEMINI_FALLBACK_RESERVE_MS;
   let lastErr: any;
   for (const model of chain) {
     // Already known to be out of allowance — asking again only buys the wait.
     if (exhaustedModels.has(model)) continue;
     if (Date.now() - startedAt > GROQ_CHAIN_BUDGET_MS) break;
     for (let attempt = 0; attempt < attempts; attempt++) {
+      const left = groqDeadline - Date.now();
+      if (left < 3000) break;
       try {
-        return await groqGenerate(request, model);
+        return await groqGenerate(request, model, Math.min(GROQ_CALL_TIMEOUT_MS, left));
       } catch (err: any) {
         lastErr = err;
         const msg = String(err?.message || err);
@@ -4675,6 +4710,7 @@ async function generateContentWithRetry(
       ),
       groqPromptText(request),
       request?.config?.responseMimeType === "application/json",
+      deadline,
     );
     if (text) return { text };
   } catch {
@@ -4689,6 +4725,12 @@ async function generateContentWithRetry(
       "This is too large for the AI service's current per-minute limit. " +
         "Try generating fewer weeks at once, shortening the input, or waiting " +
         "a minute before trying again.",
+    );
+  }
+  if (/timeout/i.test(String(lastErr?.message || lastErr || ""))) {
+    throw new Error(
+      "The AI service took too long to answer — it is probably busy right now. " +
+        "Please wait a moment and try again.",
     );
   }
   throw lastErr;
