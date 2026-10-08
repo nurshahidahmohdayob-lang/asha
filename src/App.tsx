@@ -4763,6 +4763,239 @@ const lessonPlanHasContent = (c: any): boolean => {
 const weekCurriculumLink = (plan: any, week: any): string =>
   curriculumLinkForTerm(plan?.term, plan?.subject) || week?.strand || "";
 
+/** A submitted lesson plan as a Word document, for filing outside the app.
+ *
+ *  Same sections and order as the editable HTML download, so a plan reads the
+ *  same in SharePoint as it does on the Lesson Design page. Word rather than
+ *  HTML because SharePoint previews and edits a .docx in the browser, and
+ *  downloads an .html file instead of showing it. */
+const buildLessonPlanDocx = async (lp: any, title: string): Promise<Blob> => {
+  const GREEN = "064E3B";
+  const MINT = "F0FDF4";
+  // Widths in twentieths of a point, not percentages: Word copes with
+  // percentages, but SharePoint's preview, Pages and LibreOffice squash every
+  // column to a sliver without a fixed grid. A4 (the default page) less the margins.
+  const PAGE = 9900;
+  const dxa = (pct: number) => Math.round((PAGE * pct) / 100);
+  const border = { style: BorderStyle.SINGLE, size: 4, color: "E5E7EB" };
+  const borders = { top: border, bottom: border, left: border, right: border };
+  const lines = (v: any): string[] =>
+    (Array.isArray(v) ? v : String(v ?? "").split("\n"))
+      .map((x: any) => String(x ?? "").trim())
+      .filter(Boolean);
+  // A value that may run to several lines, one paragraph per line.
+  const paras = (v: any, bold = false) => {
+    const ls = lines(v);
+    return (ls.length ? ls : [""]).map(
+      (t) =>
+        new Paragraph({
+          spacing: { after: 40 },
+          children: [new TextRun({ text: t, bold, size: 20 })],
+        }),
+    );
+  };
+  const labelCell = (text: string, pct: number) =>
+    new TableCell({
+      borders,
+      width: { size: dxa(pct), type: WidthType.DXA },
+      shading: { type: "clear" as any, color: "auto", fill: MINT },
+      children: [
+        new Paragraph({
+          children: [new TextRun({ text, bold: true, color: GREEN, size: 20 })],
+        }),
+      ],
+    });
+  const valueCell = (v: any, pct: number, columnSpan?: number) =>
+    new TableCell({
+      borders,
+      width: { size: dxa(pct), type: WidthType.DXA },
+      columnSpan,
+      children: paras(v),
+    });
+  const table = (rows: TableRow[], cols: number[] = [22, 78]) =>
+    new Table({
+      width: { size: PAGE, type: WidthType.DXA },
+      columnWidths: cols.map(dxa),
+      layout: "fixed" as any,
+      rows,
+    });
+  const row = (label: string, value: any) =>
+    new TableRow({ children: [labelCell(label, 22), valueCell(value, 78)] });
+  const heading = (text: string) =>
+    new Paragraph({
+      spacing: { before: 280, after: 120 },
+      children: [new TextRun({ text: text.toUpperCase(), bold: true, color: GREEN, size: 20 })],
+    });
+  const bullets = (label: string, value: any) => {
+    const items = lines(value);
+    if (!items.length) return [];
+    return [
+      heading(label),
+      ...items.map(
+        (t) =>
+          new Paragraph({
+            bullet: { level: 0 },
+            children: [new TextRun({ text: t, size: 20 })],
+          }),
+      ),
+    ];
+  };
+
+  const children: any[] = [
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      spacing: { after: 80 },
+      children: [new TextRun({ text: "Lesson Plan", bold: true, color: GREEN, size: 36 })],
+    }),
+    new Paragraph({
+      spacing: { after: 200 },
+      children: [new TextRun({ text: title, color: "4B5563", size: 22 })],
+    }),
+    heading("Details"),
+    table(
+      [
+        ["Term", lp?.term, "Academic Year", lp?.academicYear],
+        ["Subject", lp?.subject, "Year Group", lp?.class],
+        ["Class", lp?.classGroup, "Target Lesson Duration", lp?.duration],
+        ["Prepared by", lp?.preparedBy, "Approved by", lp?.checkedBy],
+        ["Date of lesson", lp?.date, "", ""],
+      ].map(
+        ([l1, v1, l2, v2]) =>
+          new TableRow({
+            children: [labelCell(l1, 16), valueCell(v1, 34), labelCell(l2, 16), valueCell(v2, 34)],
+          }),
+      ),
+      [16, 34, 16, 34],
+    ),
+    new Paragraph({ spacing: { after: 160 }, children: [] }),
+    table([
+      row("Strand", lp?.strandSummary),
+      row("Topic", lp?.overallTopic),
+      row("Subtopic", lp?.subTopic),
+      new TableRow({
+        children: [
+          labelCell("Learning Objective", 22),
+          new TableCell({
+            borders,
+            width: { size: dxa(78), type: WidthType.DXA },
+            children: [
+              ...paras(lp?.learningObjectiveSummary),
+              new Paragraph({
+                spacing: { before: 120, after: 40 },
+                children: [
+                  new TextRun({ text: "Success criteria (I can…):", bold: true, color: GREEN, size: 20 }),
+                ],
+              }),
+              ...paras(lp?.successCriteria),
+            ],
+          }),
+        ],
+      }),
+    ]),
+  ];
+
+  for (const [i, w] of (lp?.weeklyBreakdown || []).entries()) {
+    // A week may hold several lessons, one per day; older plans are read as
+    // the single lesson their own fields describe — as the HTML download does.
+    const lessons: any[] =
+      Array.isArray(w?.lessons) && w.lessons.length
+        ? w.lessons
+        : [{ introduction: w?.introduction, activities: w?.activities, assessment: w?.assessment }];
+    const many = lessons.length > 1;
+    const rows: TableRow[] = [];
+    if (w?.unit) rows.push(row("Unit", w.unit));
+    lessons.forEach((l: any, li: number) => {
+      const head = [
+        many ? `Lesson ${li + 1}` : "",
+        l?.day || "",
+        l?.period || "",
+        String(l?.duration || "").trim() || lp?.duration || "",
+        l?.focus || "",
+      ]
+        .filter(Boolean)
+        .join(" • ");
+      if (head && (many || l?.day)) {
+        rows.push(
+          new TableRow({
+            children: [
+              new TableCell({
+                borders,
+                columnSpan: 2,
+                width: { size: PAGE, type: WidthType.DXA },
+                shading: { type: "clear" as any, color: "auto", fill: "FEF9C3" },
+                children: [
+                  new Paragraph({
+                    children: [new TextRun({ text: head, bold: true, color: GREEN, size: 20 })],
+                  }),
+                ],
+              }),
+            ],
+          }),
+        );
+      }
+      rows.push(row("Introduction / Do Now", l?.introduction));
+      rows.push(row("Activities", l?.activities));
+      rows.push(row("Assessment", l?.assessment));
+      if (l?.resources) rows.push(row("Resources", l.resources));
+    });
+    rows.push(row("Curriculum Link", weekCurriculumLink(lp, w)));
+    const attachments = (w?.attachments || [])
+      .map((a: any) => [a?.name, a?.url].filter(Boolean).join(": "))
+      .filter(Boolean);
+    rows.push(
+      row("Resources (Attachment: File, Picture, Video)", [...lines(w?.resources), ...attachments]),
+    );
+    children.push(
+      heading(`Week ${w?.week ?? i + 1}${w?.topic ? ` — ${w.topic}` : ""}`),
+      table(rows),
+    );
+  }
+
+  if (lines(lp?.reflection).length) children.push(heading("Reflection"), ...paras(lp?.reflection));
+  children.push(
+    ...bullets("Essential Questions", lp?.essentialQuestions),
+    ...bullets("Key Competencies Developed", lp?.keyCompetencies),
+    ...bullets("Suggested Portfolio Evidence", lp?.portfolioEvidence),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 400 },
+      children: [
+        new TextRun({
+          text: "Zera International School • Cambridge Aligned Lesson Program",
+          color: "9CA3AF",
+          size: 16,
+        }),
+      ],
+    }),
+  );
+
+  const doc = new Document({
+    sections: [
+      {
+        properties: { page: { margin: { top: 1000, right: 1000, bottom: 1000, left: 1000 } } },
+        children,
+      },
+    ],
+  });
+  return Packer.toBlob(doc);
+};
+
+/** A name Windows, macOS and SharePoint will all accept as a file or folder.
+ *  SharePoint also refuses a name ending in a dot or starting with "~$". */
+const sharepointSafeName = (raw: string, fallback: string): string =>
+  String(raw || "")
+    // Typographic punctuation as plain characters: some unzip tools (macOS's
+    // own among them) refuse to extract a name containing an en dash.
+    .replace(/\s*[•—–]\s*/g, " - ")
+    .replace(/[‘’]/g, "'")
+    .replace(/[“”]/g, "")
+    .replace(/[\\/:*?"<>|#%{}~&]+/g, "")
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/[.\s]+$/, "")
+    .trim()
+    .slice(0, 120) || fallback;
+
 /** Is this saved project a lesson plan?
  *
  *  Its content decides, not the category it was filed under: plans saved
@@ -16490,6 +16723,91 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
     !myScopedTeachers ||
     myScopedTeachers.some((n) => sameTeacherIdentity(name, n));
 
+  /** The submissions the list below is showing, under every filter pressed. */
+  const submissionsOnScreen = (): any[] =>
+    submittedProjects
+      .filter(isSupervisedSubmission)
+      .filter(inCurrentFolderView)
+      .filter((p) => reviewFilter === "all" || getReviewStage(p) === reviewFilter)
+      .filter(atSelectedWeek)
+      .filter(inSelectedDivision);
+
+  /* Download the plans on screen as one zip, a folder per teacher, ready to
+     drag into the school SharePoint. "Whatever is on screen" rather than a
+     fixed set, so the filters above decide: everything, one week, only the
+     approved ones, one teacher. Built in the browser from data already loaded —
+     nothing is fetched or written. */
+  const [submissionsZipBusy, setSubmissionsZipBusy] = useState(false);
+  // The running count is written straight into the button. Held in state, each
+  // tick redrew the entire dashboard — hundreds of rows — and that redraw, not
+  // the documents, was where nearly all the time went.
+  const submissionsZipCountRef = useRef<HTMLSpanElement>(null);
+  const downloadSubmissionsZip = async () => {
+    if (submissionsZipBusy) return;
+    const plans = submissionsOnScreen().filter((p: any) => p?.content?.lessonPlan);
+    if (!plans.length) {
+      alert("There are no lesson plans in this view to download.");
+      return;
+    }
+    // The folder is the teacher, named as their tile above names them —
+    // even for a plan an admin moved into a hand-made folder.
+    const teacherOf = (p: any): string => {
+      const group = submittedFolderGroups.find(
+        (g) => g.teacherFolder && g.ids.includes(p.folderId),
+      );
+      return sharepointSafeName(
+        group?.name || teacherDisplayName(p.teacherName || "") || p.teacherName,
+        "Unknown teacher",
+      );
+    };
+    const showCount = (done: number) => {
+      if (submissionsZipCountRef.current)
+        submissionsZipCountRef.current.textContent = `${done}/${plans.length}`;
+    };
+    setSubmissionsZipBusy(true);
+    try {
+      const zip = new JSZip();
+      const used = new Set<string>();
+      for (const [i, p] of plans.entries()) {
+        const lp = p.content.lessonPlan;
+        const title = p.title || buildSubmissionTitle(p.content, p.weekId);
+        const folder = teacherOf(p);
+        // Week first, so a teacher's folder sorts in teaching order.
+        const week = Number(p.weekId) > 0 ? `Week ${String(p.weekId).padStart(2, "0")} - ` : "";
+        const base = sharepointSafeName(`${week}${title.replace(/\s*•\s*Week \d+/i, "")}`, "Lesson Plan");
+        // Two plans can share a title; neither may overwrite the other.
+        let name = `${folder}/${base}.docx`;
+        for (let n = 2; used.has(name.toLowerCase()); n++) name = `${folder}/${base} (${n}).docx`;
+        used.add(name.toLowerCase());
+        zip.file(name, await buildLessonPlanDocx(lp, title));
+        showCount(i + 1);
+      }
+      // The documents are already compressed; zipping them again only costs time.
+      const blob = await zip.generateAsync({ type: "blob", compression: "STORE" });
+      const scope = [
+        reviewFilter !== "all" ? REVIEW_STAGES[reviewFilter as ReviewStage]?.label : "",
+        submissionWeekFilter > 0 ? `Week ${submissionWeekFilter}` : "",
+        submissionDivisionFilter,
+      ].filter(Boolean);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${sharepointSafeName(
+        ["Lesson Plans", ...scope, new Date().toISOString().slice(0, 10)].join(" - "),
+        "Lesson Plans",
+      )}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch (err: any) {
+      console.error("Lesson plan zip failed:", err);
+      alert(`The lesson plans could not be downloaded:\n\n${err?.message || err}`);
+    } finally {
+      setSubmissionsZipBusy(false);
+    }
+  };
+
   // One-off cleanup: "SHA", "SHAHIDAH" and "Shahidah.A" are the same person.
   // Fold them into the record named SHA, moving every subject, quota, timetable
   // slot and duty across first. Deliberately narrow — it matches only SHA and
@@ -24411,6 +24729,32 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                         </span>
                       )}
                     </button>
+                    {(() => {
+                      const count = submissionsOnScreen().filter(
+                        (p: any) => p?.content?.lessonPlan,
+                      ).length;
+                      return (
+                        <button
+                          onClick={downloadSubmissionsZip}
+                          disabled={count === 0 || submissionsZipBusy}
+                          title="Download the plans shown below as Word documents, in one folder per teacher — ready to upload to SharePoint"
+                          className="px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border-2 border-[#064E3B] bg-[#064E3B] text-white hover:bg-[#059669] hover:border-[#059669] transition-all flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          {submissionsZipBusy ? (
+                            <>
+                              <Loader2 size={12} className="animate-spin" />
+                              Preparing{" "}
+                              <span ref={submissionsZipCountRef}>0/{count}</span>
+                            </>
+                          ) : (
+                            <>
+                              <Download size={12} />
+                              Download {count} Plan{count === 1 ? "" : "s"}
+                            </>
+                          )}
+                        </button>
+                      );
+                    })()}
                   </div>
                 </div>
 
