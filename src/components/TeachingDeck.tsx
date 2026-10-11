@@ -15,6 +15,7 @@
 import {
   createContext,
   createElement,
+  Fragment,
   useContext,
   useEffect,
   useMemo,
@@ -2200,6 +2201,7 @@ function buildSequence(
 
   // 3a-iii · How it changes — only when the topic actually has an order.
   if (pack?.sequence?.steps?.length) {
+    const seqSteps = pack.sequence.steps.length;
     slides.push({
       kicker: pack.sequence.title,
       tone: "start",
@@ -2213,14 +2215,41 @@ function buildSequence(
               if (d.sequence) d.sequence.title = t;
             }}
           />
-          <div className="mt-8 flex items-center justify-center gap-6">
+          {/* The cards share the slide's width rather than each taking a
+              fixed 15rem: five steps and four arrows came to well over the
+              frame, and the first and last cards were cut off at the edges.
+              Capped at the old size, so a short sequence looks as it did. */}
+          <div className="mt-8 flex w-full items-center justify-center gap-3">
             {pack.sequence.steps.map((s, i) => (
-              <div key={i} className="flex items-center gap-6">
-                {i > 0 && <span className="text-5xl text-white/80">→</span>}
-                <div className="w-[15rem] rounded-[2rem] border-4 border-silver bg-white p-5">
+              // Arrow and card are separate items so every card gets the same
+              // share of the row — inside one wrapper, the first card (with no
+              // arrow before it) came out wider than the rest.
+              <Fragment key={i}>
+                {i > 0 && (
+                  <span
+                    className={`shrink-0 text-white/80 ${
+                      seqSteps > 4 ? "text-2xl lg:text-3xl" : "text-3xl lg:text-5xl"
+                    }`}
+                  >
+                    →
+                  </span>
+                )}
+                <div
+                  className={`min-w-0 max-w-[15rem] flex-1 basis-0 rounded-[2rem] border-4 border-silver bg-white py-5 ${
+                    seqSteps > 5 ? "px-1.5" : "px-3"
+                  }`}
+                >
                   <Ed
                     as="span"
-                    className="block text-7xl leading-tight"
+                    className={`block leading-tight ${
+                      // Smaller on a narrow screen or a zoomed-in browser
+                      // too, not only when there are more steps.
+                      seqSteps > 5
+                        ? "text-4xl lg:text-5xl"
+                        : seqSteps > 4
+                          ? "text-5xl lg:text-6xl"
+                          : "text-5xl lg:text-7xl"
+                    }`}
                     value={s.emoji}
                     apply={(d, t) => {
                       const step = d.sequence?.steps?.[i];
@@ -2229,7 +2258,13 @@ function buildSequence(
                   />
                   <Ed
                     as="span"
-                    className="mt-2 block text-2xl font-bold text-ink"
+                    className={`mt-2 block font-bold leading-tight text-ink [hyphens:auto] [overflow-wrap:break-word] ${
+                      seqSteps > 5
+                        ? "text-sm lg:text-base"
+                        : seqSteps > 4
+                          ? "text-base lg:text-xl"
+                          : "text-lg lg:text-2xl"
+                    }`}
                     value={s.label}
                     apply={(d, t) => {
                       const step = d.sequence?.steps?.[i];
@@ -2237,7 +2272,7 @@ function buildSequence(
                     }}
                   />
                 </div>
-              </div>
+              </Fragment>
             ))}
           </div>
           {pack.sequence.line && (
