@@ -349,6 +349,9 @@ export interface DayLesson {
   focus?: string;
   introduction?: string;
   activities?: string;
+  /** What the pupils themselves do — a group, pair or solo task — set apart
+   *  from the teacher-led activities. Optional: most plans never had one. */
+  studentActivity?: string;
   assessment?: string;
   resources?: string;
 }
@@ -365,6 +368,8 @@ export interface WeeklyPlan {
   strand: string;
   introduction: string;
   activities: string;
+  /** See DayLesson.studentActivity. */
+  studentActivity?: string;
   assessment: string;
   resources: string;
   /** The individual lessons taught this week, for subjects timetabled more

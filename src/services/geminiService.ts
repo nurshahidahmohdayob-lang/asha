@@ -2725,6 +2725,7 @@ export async function importLessonPlan(
     strand: { type: Type.STRING },
     introduction: { type: Type.STRING },
     activities: { type: Type.STRING },
+    studentActivity: { type: Type.STRING },
     assessment: { type: Type.STRING },
     resources: { type: Type.STRING },
     // A week timetabled more than once has a row per day, not one row per week.
@@ -2738,6 +2739,7 @@ export async function importLessonPlan(
           focus: { type: Type.STRING },
           introduction: { type: Type.STRING },
           activities: { type: Type.STRING },
+          studentActivity: { type: Type.STRING },
           assessment: { type: Type.STRING },
           resources: { type: Type.STRING },
         },
@@ -2803,6 +2805,10 @@ RULES — these matter more than completeness:
   and portfolioEvidence — NOT in the weekly rows. Missing this block is the most
   common way an imported plan comes back half empty, so look for it.
 - A Reflection or Evaluation section, usually at the very end, goes in reflection.
+- A row labelled "Student Activity", "Pupil Activity", "Group activity" or
+  "Pair work" — what the pupils do themselves, apart from the main Activities —
+  goes in studentActivity, kept whole (its kind, name and description). Never
+  fold it into activities.
 - A weekly row labelled "Curriculum Link", "Framework", "LO code" or "Standard"
   is that week's strand — put it in "strand", never in learningObjective.
 - Where a week names the days it is taught (a "Day" column, or Monday/Tuesday
@@ -2900,12 +2906,16 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
         focus: str(l?.focus),
         introduction: str(l?.introduction),
         activities: str(l?.activities),
+        studentActivity: str(l?.studentActivity),
         assessment: str(l?.assessment),
         resources: str(l?.resources),
       }))
       // A "lesson" with nothing in it prints as an empty day card, which is
       // worse than no day at all.
-      .filter((l: any) => l.day || l.introduction || l.activities || l.assessment);
+      .filter(
+        (l: any) =>
+          l.day || l.introduction || l.activities || l.studentActivity || l.assessment,
+      );
     return {
       week: Number(w?.week) > 0 ? Number(w.week) : i + 1,
       unit: str(w?.unit),
@@ -2915,6 +2925,7 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
       strand: termLink || str(w?.strand),
       introduction: str(w?.introduction),
       activities: str(w?.activities),
+      studentActivity: str(w?.studentActivity),
       assessment: str(w?.assessment),
       resources: str(w?.resources),
       ...(lessons.length ? { lessons } : {}),

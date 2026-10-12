@@ -162,6 +162,12 @@ const extractTextFromDocx = async (file: File): Promise<string> => {
     // having — better a plan with no links than no plan.
     return (await mammoth.extractRawText({ arrayBuffer })).value || "";
   }
+  return htmlToPlainText(html);
+};
+
+/** Markup to the plain lines the importer reads. Shared by Word (via its
+ *  HTML) and uploaded .html files, so a link keeps its address either way. */
+const htmlToPlainText = (html: string): string => {
   return (
     html
       // An anchor becomes "words <address>", so the address survives as text
@@ -320,6 +326,28 @@ const extractTextFromPptx = async (file: File): Promise<string> => {
   return out.trim();
 };
 
+/** An uploaded web page, down to its words.
+ *
+ *  A plan downloaded from this app is ~80 KB of styles and scripts around
+ *  ~2 KB of plan, and the importer reads only the first 24,000 characters —
+ *  so the raw page arrived as mostly CSS and came back with a title and
+ *  nothing else. Only the page's main content is kept: the toolbar and
+ *  anything a browser extension saved into the page are not the plan. */
+const extractTextFromHtmlFile = async (file: File): Promise<string> => {
+  const raw = await file.text();
+  const doc = new DOMParser().parseFromString(raw, "text/html");
+  doc
+    .querySelectorAll("script, style, noscript, template, iframe, svg, button, .bar, .foot, gdiv")
+    .forEach((el) => el.remove());
+  // The page sets a label and its value side by side in separate spans and
+  // links one after another, which reads fine on screen but stripped of tags
+  // runs together ("25 minMaking…"). Spacing them out first keeps the words.
+  doc.querySelectorAll("span, b, strong").forEach((el) => el.after(" "));
+  doc.querySelectorAll("div, li, a, section, ol, ul").forEach((el) => el.after("\n"));
+  const root = doc.querySelector("main") || doc.body;
+  return htmlToPlainText(root ? root.innerHTML : raw);
+};
+
 const extractTextFromTextFile = async (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -435,7 +463,26 @@ const prepareFileForGemini = async (
     }
   }
 
-  // 4. Default / Text Fallback (Plain Text, Markdown, html, JSON, code, etc.)
+  // 3c. A web page — read as its words, not its markup.
+  if (
+    fileName.endsWith(".html") ||
+    fileName.endsWith(".htm") ||
+    mimeType === "text/html"
+  ) {
+    try {
+      const extractedText = await extractTextFromHtmlFile(file);
+      if (extractedText.trim()) {
+        return {
+          mimeType: "text/plain",
+          data: btoa(unescape(encodeURIComponent(extractedText))),
+        };
+      }
+    } catch (err) {
+      console.error("Error reading web page:", err);
+    }
+  }
+
+  // 4. Default / Text Fallback (Plain Text, Markdown, JSON, code, etc.)
   try {
     const text = await extractTextFromTextFile(file);
     const base64Text = btoa(unescape(encodeURIComponent(text)));
@@ -4122,6 +4169,7 @@ const buildLessonPlanEditableHTML = (lp: any, title: string): string => {
               day: "",
               introduction: w?.introduction,
               activities: w?.activities,
+              studentActivity: w?.studentActivity,
               assessment: w?.assessment,
             },
           ];
@@ -4144,6 +4192,9 @@ const buildLessonPlanEditableHTML = (lp: any, title: string): string => {
         const body = [
           ["Introduction / Do Now", l?.introduction],
           ["Activities", l?.activities],
+          // Only where the plan has one — 600-odd plans written before the
+          // field existed would otherwise print an empty row each.
+          ...(l?.studentActivity ? [["Student Activity", l.studentActivity]] : []),
           ["Assessment", l?.assessment],
           ...(l?.resources ? [["Resources", l.resources]] : []),
         ]
@@ -10031,6 +10082,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             focus: "",
             introduction: week?.introduction || "",
             activities: week?.activities || "",
+            studentActivity: week?.studentActivity || "",
             assessment: week?.assessment || "",
             resources: week?.resources || "",
           },
@@ -40767,6 +40819,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                   field: "introduction",
                                 },
                                 { label: "Activities", field: "activities" },
+                                {
+                                  label: "Student Activity",
+                                  field: "studentActivity",
+                                },
                                 { label: "Assessment", field: "assessment" },
                               ];
                               const weekLessons = lessonsOf(week);
@@ -41794,6 +41850,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                     t(l?.activities),
                                   )}
                                   {renderSug(
+                                    `w${i}-l${li}-student`,
+                                    "Student Activity",
+                                    t(l?.studentActivity),
+                                  )}
+                                  {renderSug(
                                     `w${i}-l${li}-assess`,
                                     "Assessment",
                                     t(l?.assessment),
@@ -41812,6 +41873,11 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                 `w${i}-act`,
                                 "Activities",
                                 t(w.activities),
+                              )}
+                              {renderSug(
+                                `w${i}-student`,
+                                "Student Activity",
+                                t(w.studentActivity),
                               )}
                               {renderSug(
                                 `w${i}-assess`,
