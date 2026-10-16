@@ -4124,15 +4124,14 @@ const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
    qwen3.6-27b is deliberately not here: it writes its <think> reasoning into
    the message content, which would end up inside teachers' lesson plans.
 
-   ORDER MATTERS, and it is about allowances rather than quality. On this tier
-   the gpt-oss models allow 8,000 tokens per minute, and a real lesson-plan
-   prompt runs to roughly 9,000-10,000 — so they answer "413 Request too large"
-   for most of the work this app actually does. compound-mini allows 70,000 and
-   has taken a 10,092-token prompt in testing, so it leads; the gpt-oss models
-   sit behind it for when it is busy. Full groq/compound is NOT here: it shares
-   the 70,000 allowance but refused that same prompt outright. */
+   ALLOWANCES. On this tier every model allows 8,000 tokens per minute, and a
+   real lesson-plan prompt runs to roughly 9,000-10,000 — so Groq answers
+   "413 Request too large" for most of the work this app actually does. Those
+   requests go to Gemini instead (see generateContentWithRetry). groq/compound-
+   mini used to take them on a 70,000 allowance; it was withdrawn in October
+   2026 and now 404s, which is what turned every week build into "too large
+   for the per-minute limit". */
 const GROQ_MODELS = [
-  "groq/compound-mini",
   "openai/gpt-oss-120b",
   "openai/gpt-oss-20b",
 ];
@@ -4288,7 +4287,6 @@ function groqPromptText(request: { contents: any; config?: any }): string {
  *
  *  Unlisted models are assumed small, which errs towards not sending. */
 const GROQ_MODEL_TPM: Record<string, number> = {
-  "groq/compound-mini": 70000,
   "openai/gpt-oss-120b": 8000,
   "openai/gpt-oss-20b": 8000,
 };
@@ -4576,9 +4574,15 @@ function backoffMs(message: string, isRateLimit: boolean, attempt: number): numb
  *  and note the listing includes RETIRED models — gemini-2.5-flash is listed
  *  and answers 404 — so a name being there is not proof it works. */
 const GEMINI_MODELS = [
-  "gemini-3.7-flash",
+  // Checked 16 Oct 2026: 3.6 and 3.5 answered while 3.7, 3.8 and the
+  // "-latest" alias were all refusing with 503 "high demand". The newest is
+  // not the most available, so the steadier ones lead.
   "gemini-3.6-flash",
-  "gemini-3.1-flash-lite",
+  "gemini-3.5-flash",
+  "gemini-3.7-flash",
+  "gemini-3.8-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-flash-lite-latest",
 ];
 
 async function geminiFallback(
@@ -4629,6 +4633,9 @@ async function geminiFallback(
         if (!transient) break;
         // Out of time is not worth another model: nothing would finish either.
         if (/abort|timeout/i.test(msg) && deadline - Date.now() < 3000) throw err;
+        // "High demand" is that model being full, and it stays full for longer
+        // than a teacher waits. The next model is usually free, so go there.
+        if (msg.includes("503") || /high demand|unavailable|overloaded/i.test(msg)) break;
         await sleep(600 * (attempt + 1));
       }
     }
@@ -4661,7 +4668,11 @@ async function generateContentWithRetry(
       ? Math.min(Number(request.config.maxOutputTokens), 7000)
       : 7000;
   const needed = estimateTokens(groqPromptText(request)) + outputCap;
-  const chain = groqModelsFor(models, needed);
+  // Nothing on Groq can hold it: every call would come back 413. Going
+  // straight to Gemini gives it the whole time budget instead of what is left
+  // after Groq has refused.
+  const fitsGroq = models.some((m) => tpmFor(m) >= needed);
+  const chain = fitsGroq ? groqModelsFor(models, needed) : [];
   // With one model left there is nothing to fall through to, so waiting out a
   // rate limit is the only way through — worth more attempts than usual. The
   // backoff already honours the "try again in Xs" Groq sends back.
@@ -4670,7 +4681,9 @@ async function generateContentWithRetry(
   const startedAt = Date.now();
   const deadline = startedAt + AI_REQUEST_BUDGET_MS;
   const groqDeadline = deadline - GEMINI_FALLBACK_RESERVE_MS;
-  let lastErr: any;
+  let lastErr: any = fitsGroq
+    ? undefined
+    : new Error(`413 Request too large for Groq (${needed} tokens)`);
   for (const model of chain) {
     // Already known to be out of allowance — asking again only buys the wait.
     if (exhaustedModels.has(model)) continue;
@@ -4710,6 +4723,7 @@ async function generateContentWithRetry(
       }
     }
   }
+  let geminiErr: any;
   // Groq is spent — busy, rate-limited or refusing the size. Before failing,
   // ask the other free provider. A teacher waiting on a suggestion does not
   // care which service answers, only that one does.
@@ -4724,13 +4738,20 @@ async function generateContentWithRetry(
       deadline,
     );
     if (text) return { text };
-  } catch {
-    // Report the Groq failure rather than this one: it is the limit the
-    // teacher actually hit, and the fallback being unconfigured is not news.
+  } catch (err: any) {
+    geminiErr = err;
   }
 
   // Both pools are spent. Raw provider JSON in an alert box tells a teacher
-  // nothing they can do; say what would actually help.
+  // nothing they can do; say what would actually help. A busy Gemini is the
+  // likelier story than a request that is genuinely too big, and it clears.
+  const geminiMsg = String(geminiErr?.message || geminiErr || "");
+  if (/503|high demand|unavailable|overloaded|429|quota/i.test(geminiMsg)) {
+    throw new Error(
+      "The AI service is very busy right now. Please wait a minute and try " +
+        "again — nothing you entered was lost.",
+    );
+  }
   if (modelCannotServe(String(lastErr?.message || lastErr || ""))) {
     throw new Error(
       "This is too large for the AI service's current per-minute limit. " +
