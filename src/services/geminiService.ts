@@ -4752,6 +4752,14 @@ async function generateContentWithRetry(
         "again — nothing you entered was lost.",
     );
   }
+  // Gemini ran out of time — a long answer on a slow afternoon. Saying
+  // "too large" here sent teachers off trimming plans that were fine.
+  if (/timeout|abort|no time left/i.test(geminiMsg)) {
+    throw new Error(
+      "The AI service took too long to answer — it is probably busy right now. " +
+        "Please wait a moment and try again.",
+    );
+  }
   if (modelCannotServe(String(lastErr?.message || lastErr || ""))) {
     throw new Error(
       "This is too large for the AI service's current per-minute limit. " +
