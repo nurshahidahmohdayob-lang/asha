@@ -25389,7 +25389,24 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                             // The row toggles on click; this
                                             // opens the plan instead.
                                             e.stopPropagation();
-                                            loadProject(forWeek[0], true);
+                                            // One plan opens straight away.
+                                            // Several are listed so each can be
+                                            // reached — opening the first alone
+                                            // made a "5" look like just 1.
+                                            if (forWeek.length === 1) {
+                                              loadProject(forWeek[0], true);
+                                              return;
+                                            }
+                                            setTrackerCell({
+                                              teacher: teacherDisplayName(
+                                                teacher.name,
+                                              ),
+                                              subject: "All subjects",
+                                              yearGroup: "",
+                                              week: week.label,
+                                              dates: week.dates,
+                                              plans: forWeek,
+                                            });
                                           }}
                                           title={`${forWeek.length} submitted for ${week.label} (${week.dates})`}
                                           className="relative w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 border-2 border-emerald-200 flex items-center justify-center mx-auto hover:bg-emerald-200 transition-all shadow-sm"
