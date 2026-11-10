@@ -8457,9 +8457,22 @@ export default function App() {
     `</style></head><body><div class="bar"><button onclick="window.print()">🖨️ Print / Save as PDF</button></div>` +
     `<div class="sheet">${bodyHtml}</div></body></html>`;
 
+  /** The print button added to a published page: its own row at the end. */
+  const PRINT_BAR =
+    `<div class="zera-print-hide" style="display:flex;justify-content:center;width:100%;flex-basis:100%;` +
+    `clear:both;padding:28px 16px 36px">` +
+    `<button onclick="window.print()" ` +
+    `style="font:600 14px/1 system-ui,-apple-system,sans-serif;background:#0d9488;` +
+    `color:#fff;border:0;padding:12px 22px;border-radius:999px;` +
+    `box-shadow:0 4px 14px rgba(0,0,0,.18);cursor:pointer">` +
+    `🖨️ Print / Save as PDF</button></div>`;
+  /** The button pages used to get: pinned top-right, over the page's header. */
+  const OLD_FLOATING_PRINT =
+    /<button class="zera-print-hide" onclick="window\.print\(\)" style="position:fixed[^"]*">[\s\S]*?<\/button>/i;
+
   /* Make any HTML print cleanly on A4 before it is published: an @page A4 rule,
-     white background, sensible page-break avoidance, and a floating print
-     button. Idempotent and safe for already-styled pages -- a page that already
+     white background, sensible page-break avoidance, and a print button at
+     the end of the page. Idempotent and safe for already-styled pages -- a page that already
      has its own print button keeps it (we don't add a second). Fragments (no
      <html>/<body>) are wrapped in the printable A4 sheet above. */
   const ensurePrintableA4 = (raw: string) => {
@@ -8472,7 +8485,15 @@ export default function App() {
       /<body[\s>]/i.test(html);
     if (!isFullDoc) return wrapDocHtml("Zera Worksheet", html);
 
-    if (html.includes("zera-a4-print")) return html; // already processed
+    if (html.includes("zera-a4-print")) {
+      // Already processed. A page published before the button moved still
+      // has it floating over its header, so move that one down to the end.
+      if (!OLD_FLOATING_PRINT.test(html)) return html;
+      html = html.replace(OLD_FLOATING_PRINT, "");
+      return /<\/body>/i.test(html)
+        ? html.replace(/<\/body>(?![\s\S]*<\/body>)/i, `${PRINT_BAR}</body>`)
+        : html + PRINT_BAR;
+    }
 
     const style =
       `<style id="zera-a4-print">@media print{` +
@@ -8491,18 +8512,13 @@ export default function App() {
       html = html.replace(/(<body[^>]*>)/i, `$1${style}`);
     else html = style + html;
 
-    // Add a floating print button only if the page has none of its own.
+    // Add a print button only if the page has none of its own. It sits in its
+    // own row after everything else, in the normal flow: pinned to a corner it
+    // covered the page's own header and buttons.
     if (!/window\.print\s*\(/i.test(raw)) {
-      const btn =
-        `<button class="zera-print-hide" onclick="window.print()" ` +
-        `style="position:fixed;top:14px;right:14px;z-index:2147483647;` +
-        `font:600 13px/1 system-ui,-apple-system,sans-serif;background:#0d9488;` +
-        `color:#fff;border:0;padding:10px 16px;border-radius:999px;` +
-        `box-shadow:0 4px 14px rgba(0,0,0,.18);cursor:pointer">` +
-        `🖨️ Print / Save as PDF</button>`;
-      if (/<body[^>]*>/i.test(html))
-        html = html.replace(/(<body[^>]*>)/i, `$1${btn}`);
-      else html = btn + html;
+      if (/<\/body>/i.test(html))
+        html = html.replace(/<\/body>(?![\s\S]*<\/body>)/i, `${PRINT_BAR}</body>`);
+      else html = html + PRINT_BAR;
     }
     return html;
   };
