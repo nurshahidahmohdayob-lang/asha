@@ -2684,6 +2684,41 @@ async function readLink(
   }
 }
 
+/** Activities with the student activity at the end, as one box.
+ *
+ *  Plans used to carry Student Activity as a row of its own beside Activities.
+ *  Teachers read the two as the same thing, so they are one box now; this
+ *  folds an older plan's separate row in rather than losing it. */
+const joinActivities = (activities: any, student: any): string =>
+  [activities, student]
+    .map((v) => (typeof v === "string" ? v.trim() : ""))
+    .filter(Boolean)
+    .join("\n");
+
+/** The same plan with every Student Activity folded into its Activities.
+ *  Returns the plan untouched when there is nothing to fold. */
+export function combineStudentActivity<T = any>(plan: T): T {
+  const lp: any = plan;
+  const weeks = lp?.weeklyBreakdown;
+  if (!Array.isArray(weeks)) return plan;
+  const has = (x: any) => typeof x?.studentActivity === "string" && x.studentActivity.trim();
+  if (!weeks.some((w: any) => has(w) || (w?.lessons || []).some(has))) return plan;
+  const fold = (x: any) => {
+    if (!x || !("studentActivity" in x)) return x;
+    const { studentActivity, ...rest } = x;
+    return { ...rest, activities: joinActivities(x.activities, studentActivity) };
+  };
+  return {
+    ...lp,
+    weeklyBreakdown: weeks.map((w: any) => {
+      const folded = fold(w);
+      return Array.isArray(w?.lessons)
+        ? { ...folded, lessons: w.lessons.map(fold) }
+        : folded;
+    }),
+  };
+}
+
 /** Turn a lesson plan the teacher already wrote into a plan this app can hold.
  *
  *  Teachers arrive with terms of planning in Word, Excel or PDF, and retyping
@@ -2807,8 +2842,8 @@ RULES — these matter more than completeness:
 - A Reflection or Evaluation section, usually at the very end, goes in reflection.
 - A row labelled "Student Activity", "Pupil Activity", "Group activity" or
   "Pair work" — what the pupils do themselves, apart from the main Activities —
-  goes in studentActivity, kept whole (its kind, name and description). Never
-  fold it into activities.
+  goes in studentActivity, kept whole (its kind, name and description). It is
+  added to the end of activities afterwards, so do not copy it there yourself.
 - A weekly row labelled "Curriculum Link", "Framework", "LO code" or "Standard"
   is that week's strand — put it in "strand", never in learningObjective.
 - Where a week names the days it is taught (a "Day" column, or Monday/Tuesday
@@ -2905,8 +2940,7 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
         period: str(l?.period),
         focus: str(l?.focus),
         introduction: str(l?.introduction),
-        activities: str(l?.activities),
-        studentActivity: str(l?.studentActivity),
+        activities: joinActivities(l?.activities, l?.studentActivity),
         assessment: str(l?.assessment),
         resources: str(l?.resources),
       }))
@@ -2914,7 +2948,7 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
       // worse than no day at all.
       .filter(
         (l: any) =>
-          l.day || l.introduction || l.activities || l.studentActivity || l.assessment,
+          l.day || l.introduction || l.activities || l.assessment,
       );
     return {
       week: Number(w?.week) > 0 ? Number(w.week) : i + 1,
@@ -2924,8 +2958,7 @@ Return the plan as JSON. Leave any field the document does not cover as "".`;
       learningObjective: str(w?.learningObjective),
       strand: termLink || str(w?.strand),
       introduction: str(w?.introduction),
-      activities: str(w?.activities),
-      studentActivity: str(w?.studentActivity),
+      activities: joinActivities(w?.activities, w?.studentActivity),
       assessment: str(w?.assessment),
       resources: str(w?.resources),
       ...(lessons.length ? { lessons } : {}),

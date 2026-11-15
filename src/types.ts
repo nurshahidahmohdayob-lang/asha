@@ -349,8 +349,8 @@ export interface DayLesson {
   focus?: string;
   introduction?: string;
   activities?: string;
-  /** What the pupils themselves do — a group, pair or solo task — set apart
-   *  from the teacher-led activities. Optional: most plans never had one. */
+  /** Retired: now part of `activities`. Only plans saved between 13 Oct and
+   *  15 Nov 2026 carry it, and combineStudentActivity folds it in on open. */
   studentActivity?: string;
   assessment?: string;
   resources?: string;

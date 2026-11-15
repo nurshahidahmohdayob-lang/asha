@@ -3649,6 +3649,7 @@ import {
   suggestWeeklyInput,
   suggestReflection,
   importLessonPlan,
+  combineStudentActivity,
   competenciesForTerm,
   valuesForTerm,
   curriculumLinkForTerm,
@@ -4115,7 +4116,10 @@ const buildSlidesHTML = (images: string[], title: string): string => {
 </html>`;
 };
 
-const buildLessonPlanEditableHTML = (lp: any, title: string): string => {
+const buildLessonPlanEditableHTML = (rawPlan: any, title: string): string => {
+  // A plan submitted while Student Activity was its own row prints it at the
+  // end of Activities, the same as it now opens in the editor.
+  const lp = combineStudentActivity(rawPlan);
   const esc = (v: any) =>
     (v ?? "")
       .toString()
@@ -4169,7 +4173,6 @@ const buildLessonPlanEditableHTML = (lp: any, title: string): string => {
               day: "",
               introduction: w?.introduction,
               activities: w?.activities,
-              studentActivity: w?.studentActivity,
               assessment: w?.assessment,
             },
           ];
@@ -4192,9 +4195,6 @@ const buildLessonPlanEditableHTML = (lp: any, title: string): string => {
         const body = [
           ["Introduction / Do Now", l?.introduction],
           ["Activities", l?.activities],
-          // Only where the plan has one — 600-odd plans written before the
-          // field existed would otherwise print an empty row each.
-          ...(l?.studentActivity ? [["Student Activity", l.studentActivity]] : []),
           ["Assessment", l?.assessment],
           ...(l?.resources ? [["Resources", l.resources]] : []),
         ]
@@ -10098,7 +10098,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
             focus: "",
             introduction: week?.introduction || "",
             activities: week?.activities || "",
-            studentActivity: week?.studentActivity || "",
             assessment: week?.assessment || "",
             resources: week?.resources || "",
           },
@@ -13103,7 +13102,16 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
   const loadProject = (project: any, reviewMode: boolean = false) => {
     setCurrentProjectId(project.id);
-    setContent(project.content);
+    // A plan saved while Student Activity was its own row opens with it
+    // already part of Activities, so nothing in it goes missing.
+    setContent(
+      project.content?.lessonPlan
+        ? {
+            ...project.content,
+            lessonPlan: combineStudentActivity(project.content.lessonPlan),
+          }
+        : project.content,
+    );
     setIsReviewMode(reviewMode);
     setLpBoardOpen(false);
     // Opening anything else ends a revision, so Submit can't update the wrong
@@ -16567,6 +16575,10 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
 
   // Does this submission belong to a teacher the reviewer supervises?
   const isSupervisedSubmission = (p: any): boolean => {
+    // Archived: reviewed, downloaded to SharePoint and cleared off the
+    // pipeline so the counts start again. Kept in the database — the
+    // submission tracker still ticks it — but no longer review work.
+    if (p?.archivedAt) return false;
     // A scoped reviewer never sees past their own teachers. This is checked
     // before the toggle below, which is the reviewer's own preference and so
     // must not be able to widen what they are allowed to review.
@@ -24985,6 +24997,7 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                     // same totals whichever chip is pressed.
                     const folderCount = submittedProjects.filter(
                       (p: any) =>
+                        !p?.archivedAt &&
                         folder.ids.includes(p.folderId) &&
                         (reviewFilter === "all" ||
                           getReviewStage(p) === reviewFilter),
@@ -40852,10 +40865,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                   field: "introduction",
                                 },
                                 { label: "Activities", field: "activities" },
-                                {
-                                  label: "Student Activity",
-                                  field: "studentActivity",
-                                },
                                 { label: "Assessment", field: "assessment" },
                               ];
                               const weekLessons = lessonsOf(week);
@@ -41883,11 +41892,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                     t(l?.activities),
                                   )}
                                   {renderSug(
-                                    `w${i}-l${li}-student`,
-                                    "Student Activity",
-                                    t(l?.studentActivity),
-                                  )}
-                                  {renderSug(
                                     `w${i}-l${li}-assess`,
                                     "Assessment",
                                     t(l?.assessment),
@@ -41906,11 +41910,6 @@ Return ONLY the raw HTML starting at <!doctype html> — no markdown fences, no 
                                 `w${i}-act`,
                                 "Activities",
                                 t(w.activities),
-                              )}
-                              {renderSug(
-                                `w${i}-student`,
-                                "Student Activity",
-                                t(w.studentActivity),
                               )}
                               {renderSug(
                                 `w${i}-assess`,
