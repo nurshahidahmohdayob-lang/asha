@@ -5701,11 +5701,12 @@ const TERM_WEEKS: { id: number; start: string; end: string }[] = [
   { id: 9, start: "2026-10-19", end: "2026-10-23" },
   { id: 10, start: "2026-10-26", end: "2026-10-30" },
   { id: 11, start: "2026-11-02", end: "2026-11-06" },
-  { id: 12, start: "2026-11-09", end: "2026-11-13" },
-  { id: 13, start: "2026-11-16", end: "2026-11-20" },
-  { id: 14, start: "2026-11-23", end: "2026-11-27" },
-  { id: 15, start: "2026-11-30", end: "2026-12-04" },
-  { id: 16, start: "2026-12-07", end: "2026-12-11" },
+  // 9–13 Nov is a school holiday: no teaching, so no week number. A date in
+  // it counts to Week 11, the last week that had begun.
+  { id: 12, start: "2026-11-16", end: "2026-11-20" },
+  { id: 13, start: "2026-11-23", end: "2026-11-27" },
+  { id: 14, start: "2026-11-30", end: "2026-12-04" },
+  { id: 15, start: "2026-12-07", end: "2026-12-11" }, // term ends
 ];
 
 /** "2026-08-26" → 826. Day-and-month only, so a plan dated in another year
